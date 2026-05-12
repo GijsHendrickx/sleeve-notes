@@ -832,12 +832,22 @@ def cascade_lookup(artist: str, title: str, cached: dict | None, rl: RateLimiter
 # ============================================================================
 
 def is_continuous_mix(position: str, duration_s: int | None) -> bool:
-    if not position:
+    """Flag a track as a continuous DJ-mix only on positive evidence.
+
+    Requires a known duration: bare-side position (e.g. "A", "B") with
+    duration > 12 min, OR any position with duration > 24 min. When the
+    duration is unknown we fall back to "regular track" — Discogs often
+    omits durations on single-track-per-side EPs, and treating those as
+    mixes mislabels them and suppresses the BPM lookup. If the lookup
+    later fails the sticker just shows the empty BPM box, which is the
+    right outcome for a missing data point.
+    """
+    if not position or duration_s is None:
         return False
     bare_side = re.fullmatch(r"[A-Z]+", position.strip())
-    if bare_side and (duration_s is None or duration_s > CONTINUOUS_MIX_SECONDS):
+    if bare_side and duration_s > CONTINUOUS_MIX_SECONDS:
         return True
-    if duration_s is not None and duration_s > CONTINUOUS_MIX_SECONDS * 2:
+    if duration_s > CONTINUOUS_MIX_SECONDS * 2:
         return True
     return False
 
