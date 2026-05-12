@@ -211,6 +211,8 @@ python tools/generate_sticker_pdf.py --sticker-w 70 --sticker-h 40   # smaller s
 python tools/generate_sticker_pdf.py --sticker-w 140 --sticker-h 80  # bigger stickers, fewer per page
 python tools/generate_sticker_pdf.py --tile                    # edge-to-edge: exactly 10 stickers per A4, slice with 5 ruler cuts
 python tools/generate_sticker_pdf.py --tile --tile-cols 3 --tile-rows 4   # 12-per-A4 tile (70 x 74.2 mm)
+python tools/generate_sticker_pdf.py --new-only                # only releases not yet in the print history
+python tools/generate_sticker_pdf.py --new-only --mark-printed # render new + record the print in history
 ```
 
 - Output: `.tmp/stickers.pdf`.
@@ -221,6 +223,19 @@ python tools/generate_sticker_pdf.py --tile --tile-cols 3 --tile-rows 4   # 12-p
 - **Header**: the artist line shows the playback **RPM** (`33⅓` / `45`) in grey when Discogs lists it. Releases where the Discogs `formats[*].descriptions` array doesn't include an RPM string simply have no badge — about 30–40 % of community-submitted releases.
 - **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
+
+**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. The tool keeps a per-print history in `.tmp/printed.json` (each entry: timestamp + list of release IDs). `--new-only` filters the render to releases not yet in that history; `--mark-printed` appends the rendered IDs to history after a successful render. Typical workflow:
+
+```bash
+# First time: print everything, mark them all as printed
+python tools/generate_sticker_pdf.py --mark-printed
+
+# Later, after adding new records to Discogs and re-fetching:
+python tools/generate_sticker_pdf.py --new-only                  # preview new arrivals
+python tools/generate_sticker_pdf.py --new-only --mark-printed   # ready to print → commit to history
+```
+
+The two flags compose cleanly: alone, `--new-only` just filters; alone, `--mark-printed` marks the entire current collection (handy for marking pre-existing prints as already done). Releases that drop out of your Discogs collection later are ignored — `--new-only` only adds, never removes.
 
 ---
 
@@ -238,6 +253,7 @@ After a complete run, `.tmp/` contains:
 | `bpm_cache.json` | Persistent v2 cache: per-source raw results so consensus can be recomputed without re-fetching |
 | `bpm_cache.v1.json.bak` | (Only if migrated.) Backup of the pre-consensus cache from before the parallel/consensus rewrite — safe to delete |
 | `beatport_tokens.json` | Beatport access + refresh tokens (auto-refreshed) |
+| `printed.json` | Per-print history (timestamp + release IDs) maintained by `--mark-printed` |
 | **`stickers.pdf`** | **The final printable PDF** |
 
 `.tmp/` is entirely **disposable** — delete it and re-run the steps and you will get the same result (slower the first time, because the caches need to repopulate).

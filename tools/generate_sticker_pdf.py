@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from reportlab.graphics import renderPDF
@@ -27,6 +28,7 @@ TMP = ROOT / ".tmp"
 DJ_IN = TMP / "dj_releases.json"
 BPM_IN = TMP / "bpm_results.json"
 PDF_OUT = TMP / "stickers.pdf"
+PRINTED_HISTORY_FILE = TMP / "printed.json"
 
 PAGE_W, PAGE_H = A4
 DEFAULT_STICKER_W_MM = 96.0
@@ -491,6 +493,62 @@ def build_bpm_lookup(bpm_results: list[dict]) -> dict[int, dict[str, dict]]:
     return lookup
 
 
+def load_print_history() -> dict:
+    """Load the local print-history file. Schema:
+
+        {
+          "_meta": {"version": 1},
+          "prints": [
+              {"timestamp": "2026-05-12T11:42:00+00:00", "release_ids": [12345, ...]},
+              ...
+          ]
+        }
+    """
+    if not PRINTED_HISTORY_FILE.exists():
+        return {"_meta": {"version": 1}, "prints": []}
+    try:
+        with PRINTED_HISTORY_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"_meta": {"version": 1}, "prints": []}
+    if not isinstance(data, dict) or "prints" not in data:
+        return {"_meta": {"version": 1}, "prints": []}
+    return data
+
+
+def already_printed_ids(history: dict) -> set[int]:
+    """Flat set of every release ID across every recorded print run."""
+    out: set[int] = set()
+    for entry in history.get("prints") or []:
+        for rid in entry.get("release_ids") or []:
+            try:
+                out.add(int(rid))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def append_print_run(history: dict, release_ids: list[int]) -> None:
+    """Append a print run record and persist atomically."""
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    history.setdefault("prints", []).append({
+        "timestamp": timestamp,
+        "release_ids": sorted(set(release_ids)),
+    })
+    PRINTED_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PRINTED_HISTORY_FILE.with_suffix(PRINTED_HISTORY_FILE.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+    tmp.replace(PRINTED_HISTORY_FILE)
+
+
+def last_print_timestamp(history: dict) -> str | None:
+    prints = history.get("prints") or []
+    if not prints:
+        return None
+    return prints[-1].get("timestamp")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -527,6 +585,20 @@ def main() -> int:
         default=5,
         help="(with --tile) rows per page. Default 5.",
     )
+    parser.add_argument(
+        "--new-only",
+        action="store_true",
+        help="Only include releases that aren't already in the local print history "
+        f"({PRINTED_HISTORY_FILE.name}). Use with --mark-printed to commit the new "
+        "additions to history after a successful print.",
+    )
+    parser.add_argument(
+        "--mark-printed",
+        action="store_true",
+        help="After a successful render, append the rendered release IDs to the print "
+        "history. Combine with --new-only for the typical 'print what's new and remember' "
+        "flow; use alone after a full reprint to mark the whole collection as printed.",
+    )
     args = parser.parse_args()
 
     configure_layout(
@@ -542,6 +614,23 @@ def main() -> int:
         releases = json.load(f)
     with BPM_IN.open("r", encoding="utf-8") as f:
         bpm_results = json.load(f)
+
+    history = load_print_history()
+    if args.new_only:
+        already = already_printed_ids(history)
+        before = len(releases)
+        releases = [r for r in releases if int(r["id"]) not in already]
+        skipped = before - len(releases)
+        last_ts = last_print_timestamp(history)
+        last_str = f" (last print: {last_ts})" if last_ts else ""
+        if not releases:
+            print(
+                f"Nothing new to print. All {before} release(s) are already in the "
+                f"print history{last_str}.",
+                file=sys.stderr,
+            )
+            return 0
+        print(f"--new-only: rendering {len(releases)} new release(s); skipping {skipped} already-printed{last_str}.")
 
     bpm_lookup = build_bpm_lookup(bpm_results)
     TMP.mkdir(parents=True, exist_ok=True)
@@ -578,6 +667,16 @@ def main() -> int:
         )
     if missing_count:
         print(f"  {missing_count} tracks have an empty BPM box for handwriting.")
+
+    if args.mark_printed:
+        rendered_ids = [int(r["id"]) for r in releases]
+        append_print_run(history, rendered_ids)
+        total_in_history = len(already_printed_ids(history))
+        print(
+            f"  --mark-printed: appended {len(rendered_ids)} release(s) to "
+            f"{PRINTED_HISTORY_FILE.name}. Total in print history: {total_in_history}."
+        )
+
     return 0
 
 
