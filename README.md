@@ -1,4 +1,4 @@
-# Vinyl BPM Stickers
+# Sleeve Notes
 
 Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Stickers are 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12" so you can read everything at a glance while DJing.
 

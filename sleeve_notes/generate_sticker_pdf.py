@@ -203,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
         "print history (print_runs / print_run_releases tables).",
     )
     parser.add_argument(
+        "--no-qr", dest="qr", action="store_false",
+        help="Don't render the Discogs-release QR code in the top-right of each "
+        "sticker. The header expands to use the full sticker width.",
+    )
+    parser.set_defaults(qr=True)
+    parser.add_argument(
         "-o", "--output", type=Path, default=DEFAULT_PDF_OUT,
         help=f"Output PDF path (default: {DEFAULT_PDF_OUT.relative_to(ROOT)}). "
         "Parent directory is created if needed. A bare filename writes to the "
@@ -261,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         sticker_count = L.draw_sticker_pages(
             drawer, releases, bpm_lookup, layout,
             on_page_break=lambda _page: c.showPage(),
+            qr=args.qr,
         )
         c.save()
 

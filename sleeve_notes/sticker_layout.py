@@ -336,6 +336,7 @@ def draw_sticker(
     bpm_tracks_by_pos: dict[str, dict],
     layout: LayoutConfig,
     sticker_count: int = 1,
+    qr: bool = True,
 ) -> None:
     draw_sticker_border(drawer, x, y, layout)
 
@@ -344,7 +345,7 @@ def draw_sticker(
     top = y + layout.sticker_h - PAD_Y
 
     release_id = release.get("id")
-    if release_id:
+    if qr and release_id:
         qr_x = x + layout.sticker_w - QR_CORNER_PAD - QR_SIZE
         qr_y = y + layout.sticker_h - QR_CORNER_PAD - QR_SIZE
         drawer.qr(qr_x, qr_y, QR_SIZE, DISCOGS_RELEASE_URL.format(id=release_id))
@@ -363,27 +364,37 @@ def draw_sticker(
         title_text = f"{title_text}  [{'·'.join(side_labels)}]"
 
     rpm_list = release.get("rpm") or []
-    rpm_label = "/".join(display_rpm(r) for r in rpm_list) if rpm_list else ""
+    rpm_top = display_rpm(rpm_list[0]) if rpm_list else ""
+    rpm_bot = "/".join(display_rpm(r) for r in rpm_list[1:]) if len(rpm_list) > 1 else ""
     artist_baseline = top - HEADER_ARTIST_PT
+    title_baseline = artist_baseline - HEADER_TITLE_PT - 1
 
     artist_text_w = header_inner_w
-    if rpm_label:
-        rpm_w = stringWidth(rpm_label, "Helvetica", HEADER_TITLE_PT)
+    title_text_w = header_inner_w
+    if rpm_top:
+        rpm_top_w = stringWidth(rpm_top, "Helvetica", HEADER_TITLE_PT)
         drawer.text(
-            inner_x + header_inner_w, artist_baseline, rpm_label,
+            inner_x + header_inner_w, artist_baseline, rpm_top,
             font="Helvetica", size=HEADER_TITLE_PT, color=GREY, anchor="end",
         )
-        artist_text_w = header_inner_w - rpm_w - 4
+        artist_text_w = header_inner_w - rpm_top_w - 4
+    if rpm_bot:
+        rpm_bot_w = stringWidth(rpm_bot, "Helvetica", HEADER_TITLE_PT)
+        drawer.text(
+            inner_x + header_inner_w, title_baseline, rpm_bot,
+            font="Helvetica", size=HEADER_TITLE_PT, color=GREY, anchor="end",
+        )
+        title_text_w = header_inner_w - rpm_bot_w - 4
 
     artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
-    title_line = ellipsize(title_text, header_inner_w, "Helvetica-Oblique", HEADER_TITLE_PT)
+    title_line = ellipsize(title_text, title_text_w, "Helvetica-Oblique", HEADER_TITLE_PT)
 
     drawer.text(
         inner_x, artist_baseline, artist_line,
         font="Helvetica-Bold", size=HEADER_ARTIST_PT, color=BLACK,
     )
     drawer.text(
-        inner_x, artist_baseline - HEADER_TITLE_PT - 1, title_line,
+        inner_x, title_baseline, title_line,
         font="Helvetica-Oblique", size=HEADER_TITLE_PT, color=BLACK,
     )
 
@@ -483,6 +494,7 @@ def draw_sticker_pages(
     bpm_lookup: dict[int, dict[str, dict]],
     layout: LayoutConfig,
     on_page_break,
+    qr: bool = True,
 ) -> int:
     """Draw all releases across as many pages as needed.
 
@@ -501,7 +513,7 @@ def draw_sticker_pages(
             x, y = origins[slot]
             if not layout.tile_mode:
                 draw_crop_marks(drawer, x, y, layout)
-            draw_sticker(drawer, x, y, release, sides_map, bpm_tracks, layout, len(stickers))
+            draw_sticker(drawer, x, y, release, sides_map, bpm_tracks, layout, len(stickers), qr=qr)
             slot += 1
             total_stickers += 1
             if slot >= len(origins):
