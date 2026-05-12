@@ -1,8 +1,16 @@
-"""Fetch a Discogs collection folder + per-release tracklists into .tmp/."""
+"""Fetch a Discogs collection folder + per-release tracklists into .tmp/.
+
+Two sources are supported for the release listing:
+- Default: paginated Discogs collection API (needs DISCOGS_USERNAME).
+- `--csv PATH`: a Discogs CSV export (Collection → Export). The CSV provides
+  release_ids (and `CollectionFolder` for folder filtering); tracklists are
+  still fetched from the per-release endpoint (cached in `.tmp/release_cache/`).
+"""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -25,7 +33,8 @@ COLLECTION_OUT = TMP / "collection.json"
 
 API_BASE = "https://api.discogs.com"
 USER_AGENT = "discogs-dj-stickers/0.1"
-REQUEST_GAP_S = 1.1
+REQUEST_GAP_S = 1.1            # authenticated: 60 req/min
+REQUEST_GAP_PUBLIC_S = 2.5     # unauthenticated: 25 req/min
 
 
 class RetryableHTTPError(Exception):
@@ -35,6 +44,14 @@ class RetryableHTTPError(Exception):
 def auth_headers(token: str) -> dict[str, str]:
     return {
         "Authorization": f"Discogs token={token}",
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+    }
+
+
+def public_headers() -> dict[str, str]:
+    """Unauthenticated headers — works for `/releases/{id}` at 25 req/min."""
+    return {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
     }
@@ -88,7 +105,9 @@ def resolve_folder(folder_arg: str | None, username: str, headers: dict[str, str
     raise SystemExit(f"Folder {folder_arg!r} not found. Available folders: {names}")
 
 
-def fetch_release_detail(release_id: int, headers: dict[str, str]) -> dict:
+def fetch_release_detail(
+    release_id: int, headers: dict[str, str], gap_s: float = REQUEST_GAP_S
+) -> dict:
     cache_path = RELEASE_CACHE / f"{release_id}.json"
     if cache_path.exists():
         with cache_path.open("r", encoding="utf-8") as f:
@@ -98,8 +117,71 @@ def fetch_release_detail(release_id: int, headers: dict[str, str]) -> dict:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w", encoding="utf-8") as f:
         json.dump(detail, f, ensure_ascii=False, indent=2)
-    time.sleep(REQUEST_GAP_S)
+    time.sleep(gap_s)
     return detail
+
+
+def load_release_ids_from_csv(
+    csv_path: Path, folder_filter: str | None
+) -> list[int]:
+    """Read release_ids from a Discogs CSV export, optionally filtered by folder.
+
+    `folder_filter` is matched case-insensitively against the `CollectionFolder`
+    column. Pass None (or the literal "all"/"0") to keep every row.
+    """
+    keep_all = folder_filter is None or folder_filter.strip().lower() in {"all", "0", ""}
+    needle = None if keep_all else folder_filter.strip().lower()
+
+    ids: list[int] = []
+    seen: set[int] = set()
+    available_folders: set[str] = set()
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if "release_id" not in (reader.fieldnames or []):
+            raise SystemExit(
+                f"CSV {csv_path} has no 'release_id' column. "
+                f"Columns: {reader.fieldnames}"
+            )
+        for row in reader:
+            folder = (row.get("CollectionFolder") or "").strip()
+            available_folders.add(folder)
+            if needle is not None and folder.lower() != needle:
+                continue
+            rid_raw = (row.get("release_id") or "").strip()
+            if not rid_raw.isdigit():
+                continue
+            rid = int(rid_raw)
+            if rid in seen:
+                continue
+            seen.add(rid)
+            ids.append(rid)
+
+    if needle is not None and not ids:
+        names = ", ".join(sorted(repr(n) for n in available_folders if n))
+        raise SystemExit(
+            f"Folder {folder_filter!r} not found in {csv_path}. "
+            f"Available folders: {names}"
+        )
+    return ids
+
+
+def basic_from_detail(detail: dict) -> dict:
+    """Shape a release-detail JSON to match the collection-API basic_information."""
+    return {
+        "id": detail.get("id"),
+        "master_id": detail.get("master_id"),
+        "master_url": detail.get("master_url"),
+        "resource_url": detail.get("resource_url"),
+        "thumb": detail.get("thumb"),
+        "cover_image": (detail.get("images") or [{}])[0].get("uri") if detail.get("images") else None,
+        "title": detail.get("title"),
+        "year": detail.get("year"),
+        "formats": detail.get("formats") or [],
+        "labels": detail.get("labels") or [],
+        "artists": detail.get("artists") or [],
+        "genres": detail.get("genres") or [],
+        "styles": detail.get("styles") or [],
+    }
 
 
 def main() -> int:
@@ -110,18 +192,104 @@ def main() -> int:
         default=None,
         help="Discogs folder name or id. Default: hele collectie (folder 'All', id 0).",
     )
+    parser.add_argument(
+        "--csv",
+        type=str,
+        default=None,
+        help="Path to a Discogs CSV export. When set, release_ids come from the "
+        "CSV and the collection-listing API is skipped; per-release tracklists "
+        "are still fetched (cache-aware). With --folder, filters on the CSV's "
+        "CollectionFolder column.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Stop after N releases")
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
     token = os.environ.get("DISCOGS_TOKEN")
     username = os.environ.get("DISCOGS_USERNAME")
+
+    TMP.mkdir(parents=True, exist_ok=True)
+    RELEASE_CACHE.mkdir(parents=True, exist_ok=True)
+
+    if args.csv:
+        csv_path = Path(args.csv).expanduser()
+        if not csv_path.is_absolute():
+            csv_path = (ROOT / csv_path).resolve()
+        if not csv_path.exists():
+            print(f"ERROR: CSV file not found: {csv_path}", file=sys.stderr)
+            return 2
+        if args.folder and args.folder.isdigit():
+            print(
+                "ERROR: --csv expects a folder name (the CSV has no folder ids); "
+                f"got {args.folder!r}.",
+                file=sys.stderr,
+            )
+            return 2
+
+        release_ids = load_release_ids_from_csv(csv_path, args.folder)
+        if args.limit:
+            release_ids = release_ids[: args.limit]
+        folder_label = args.folder if args.folder else "All"
+        print(
+            f"Loaded {len(release_ids)} release ids from {csv_path.name} "
+            f"(folder {folder_label!r})"
+        )
+
+        missing = [rid for rid in release_ids if not (RELEASE_CACHE / f"{rid}.json").exists()]
+        headers: dict[str, str] = {}
+        gap_s = REQUEST_GAP_S
+        if missing:
+            if token:
+                headers = auth_headers(token)
+                gap_s = REQUEST_GAP_S
+                eta_min = len(missing) * gap_s / 60
+                print(
+                    f"  {len(missing)} releases need a tracklist fetch "
+                    f"(authenticated, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
+                    "rest served from cache."
+                )
+            else:
+                headers = public_headers()
+                gap_s = REQUEST_GAP_PUBLIC_S
+                eta_min = len(missing) * gap_s / 60
+                print(
+                    f"  {len(missing)} releases need a tracklist fetch "
+                    f"(unauthenticated, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
+                    "rest served from cache."
+                )
+                print(
+                    "  TIP: set DISCOGS_TOKEN in .env for ~2× faster fetches (60 req/min)."
+                )
+        else:
+            print("  all releases already cached; no API calls needed.")
+
+        merged: list[dict] = []
+        for i, release_id in enumerate(release_ids, start=1):
+            try:
+                detail = fetch_release_detail(release_id, headers, gap_s)
+            except Exception as e:
+                print(f"  [{i}/{len(release_ids)}] release {release_id}: ERROR {e}", file=sys.stderr)
+                continue
+            merged.append(
+                {
+                    "id": release_id,
+                    "basic_information": basic_from_detail(detail),
+                    "tracklist": detail.get("tracklist", []),
+                    "notes": detail.get("notes"),
+                }
+            )
+            if i % 25 == 0 or i == len(release_ids):
+                print(f"  [{i}/{len(release_ids)}] cached")
+
+        with COLLECTION_OUT.open("w", encoding="utf-8") as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+        print(f"Wrote {COLLECTION_OUT} ({len(merged)} releases)")
+        return 0
+
     if not token or not username:
         print("ERROR: set DISCOGS_TOKEN and DISCOGS_USERNAME in .env", file=sys.stderr)
         return 2
 
-    TMP.mkdir(parents=True, exist_ok=True)
-    RELEASE_CACHE.mkdir(parents=True, exist_ok=True)
     headers = auth_headers(token)
 
     folder_id, folder_name = resolve_folder(args.folder, username, headers)
@@ -146,7 +314,7 @@ def main() -> int:
         basics = basics[: args.limit]
     print(f"Fetched {len(basics)} release rows; fetching tracklists...")
 
-    merged: list[dict] = []
+    merged = []
     for i, row in enumerate(basics, start=1):
         basic = row.get("basic_information", {})
         release_id = basic.get("id")

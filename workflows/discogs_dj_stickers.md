@@ -32,10 +32,13 @@ Genereer een print-bare A4-PDF met stickers (één per release) voor de DJ-bruik
 
 1. **Haal collectie op**
    ```
-   python tools/fetch_discogs_collection.py                 # hele collectie
+   python tools/fetch_discogs_collection.py                 # hele collectie via API
    python tools/fetch_discogs_collection.py --folder "DJ"   # alleen folder "DJ"
+   python tools/fetch_discogs_collection.py --csv path/to/discogs-export.csv
+   python tools/fetch_discogs_collection.py --csv path/to/discogs-export.csv --folder "DJ"
    ```
    - `--folder` accepteert een folder-naam (case-insensitive) of een folder-id. Bij onbekende naam toont de tool de beschikbare folders.
+   - `--csv PATH`: gebruik een Discogs CSV-export (Collection → Export) als bron i.p.v. de collection-listing API. Folder-filter werkt dan tegen de `CollectionFolder`-kolom (alleen op naam, niet op id). Per-release tracklists worden nog wel via `/releases/{id}` opgehaald (cache-aware via `.tmp/release_cache/`). In CSV-mode is **geen Discogs-account nodig**: zonder `DISCOGS_TOKEN` werkt het public endpoint nog steeds, alleen op 25 req/min (i.p.v. 60 met token) — gap wordt automatisch 2.5s i.p.v. 1.1s. `DISCOGS_USERNAME` is nooit nodig in CSV-mode.
    - Output: `.tmp/collection.json` + per-release cache in `.tmp/release_cache/{id}.json`.
    - Runtime: ~1.1s per release (Discogs auth-limiet 60 req/min). 500 releases ≈ 10 min.
    - Hervatbaar: bestaande cache-bestanden worden overgeslagen.
