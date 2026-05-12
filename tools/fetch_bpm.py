@@ -52,6 +52,7 @@ DJ_IN = TMP / "dj_releases.json"
 BPM_OUT = TMP / "bpm_results.json"
 BPM_CACHE = TMP / "bpm_cache.json"
 BEATPORT_TOKENS_FILE = TMP / "beatport_tokens.json"
+OVERRIDES_FILE = ROOT / "overrides.json"
 
 # Sources, in the order they are tried.
 ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
@@ -852,6 +853,111 @@ def is_continuous_mix(position: str, duration_s: int | None) -> bool:
     return False
 
 
+def load_overrides() -> tuple[dict, dict, list[str]]:
+    """Read overrides.json (if present) into two lookup tables.
+
+    Returns (by_release_position, by_track_key, warnings).
+      by_release_position: dict[(release_id, position), entry] — most precise
+      by_track_key:        dict[cache_key(artist, title), entry] — broader
+
+    Each entry is a dict from the JSON file; only validated keys are indexed.
+    Invalid entries are skipped with a warning rather than raising — we never
+    want a typo in overrides.json to fail the whole run.
+    """
+    if not OVERRIDES_FILE.exists():
+        return {}, {}, []
+    try:
+        with OVERRIDES_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return {}, {}, [f"failed to parse {OVERRIDES_FILE.name}: {e}"]
+
+    if not isinstance(data, list):
+        return {}, {}, [f"{OVERRIDES_FILE.name}: expected a JSON list of entries"]
+
+    by_rp: dict[tuple[int, str], dict] = {}
+    by_tk: dict[str, dict] = {}
+    warnings: list[str] = []
+
+    for i, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            warnings.append(f"entry #{i}: not a JSON object")
+            continue
+
+        bpm = entry.get("bpm")
+        if bpm is not None:
+            try:
+                bpm_int = int(round(float(bpm)))
+            except (TypeError, ValueError):
+                warnings.append(f"entry #{i}: invalid bpm {bpm!r}")
+                continue
+            if not (BPM_MIN <= bpm_int <= BPM_MAX):
+                warnings.append(
+                    f"entry #{i}: bpm {bpm_int} outside {BPM_MIN}-{BPM_MAX}"
+                )
+                continue
+            entry["bpm"] = bpm_int
+
+        if "release_id" in entry and "position" in entry:
+            try:
+                rid = int(entry["release_id"])
+            except (TypeError, ValueError):
+                warnings.append(f"entry #{i}: invalid release_id {entry['release_id']!r}")
+                continue
+            pos = str(entry["position"])
+            if (rid, pos) in by_rp:
+                warnings.append(f"entry #{i}: duplicate (release_id={rid}, position={pos!r})")
+            by_rp[(rid, pos)] = entry
+        elif "artist" in entry and "title" in entry:
+            key = cache_key(str(entry["artist"]), str(entry["title"]))
+            if key in by_tk:
+                warnings.append(
+                    f"entry #{i}: duplicate artist+title "
+                    f"({entry['artist']!r} - {entry['title']!r})"
+                )
+            by_tk[key] = entry
+        else:
+            warnings.append(
+                f"entry #{i}: must have (release_id, position) or (artist, title)"
+            )
+
+    return by_rp, by_tk, warnings
+
+
+def override_to_result(entry: dict) -> dict:
+    """Convert a validated override entry into a cascade-shaped result dict.
+
+    Uses source="manual" so the BPM is traceable in bpm_results.json. The
+    PDF generator only inspects `bpm` and `reason` so manual hits render
+    identically to source-supplied BPMs.
+    """
+    if entry.get("continuous_mix"):
+        return {
+            "bpm": None,
+            "source": "manual",
+            "source_url": None,
+            "confidence": "manual",
+            "reason": "continuous_mix",
+        }
+    bpm = entry.get("bpm")
+    if bpm is None:
+        return {
+            "bpm": None,
+            "source": "manual",
+            "source_url": None,
+            "confidence": "manual",
+            "reason": "manual_no_bpm",
+        }
+    return {
+        "bpm": bpm,
+        "source": "manual",
+        "source_url": None,
+        "confidence": "manual",
+        "score": None,
+        "reason": "manual",
+    }
+
+
 def load_cache() -> dict:
     if BPM_CACHE.exists():
         with BPM_CACHE.open("r", encoding="utf-8") as f:
@@ -879,10 +985,18 @@ def main() -> int:
     rl = RateLimiter()
     results: list[dict] = []
 
+    by_rp, by_tk, override_warnings = load_overrides()
+    for w in override_warnings:
+        print(f"  override warning: {w}", file=sys.stderr)
+    if by_rp or by_tk:
+        print(f"Loaded {len(by_rp) + len(by_tk)} override(s) from {OVERRIDES_FILE.name}.")
+    used_overrides: set[tuple] = set()
+
     total_tracks = sum(len(r["tracks"]) for r in releases)
     print(f"Looking up BPM for {total_tracks} tracks across {len(releases)} releases...")
     done = 0
     cached_hits = 0
+    override_hits = 0
     new_hits_by_source: dict[str, int] = {s: 0 for s in ALL_SOURCES}
 
     for release in releases:
@@ -893,6 +1007,27 @@ def main() -> int:
             title = track.get("title", "")
             position = track.get("position", "")
             duration_s = track.get("duration_s")
+
+            # Manual overrides win over everything (cache, continuous-mix
+            # detection, the cascade). (release_id, position) is the precise
+            # match; artist+title is the fallback.
+            override = by_rp.get((release["id"], position))
+            override_id: tuple | None = None
+            if override is not None:
+                override_id = ("rp", release["id"], position)
+            else:
+                tk = cache_key(artist, title)
+                if tk in by_tk:
+                    override = by_tk[tk]
+                    override_id = ("tk", tk)
+            if override is not None:
+                used_overrides.add(override_id)
+                override_hits += 1
+                result = override_to_result(override)
+                track_results.append({
+                    "position": position, "artist": artist, "title": title, **result,
+                })
+                continue
 
             if is_continuous_mix(position, duration_s):
                 track_results.append({
@@ -939,7 +1074,22 @@ def main() -> int:
     missing = total_tracks - found
     hits_str = ", ".join(f"{s}={new_hits_by_source[s]}" for s in ALL_SOURCES)
     print(f"Wrote {BPM_OUT}: {found}/{total_tracks} BPMs found, {missing} missing.")
-    print(f"  new this run by source: {hits_str}   (cached hits: {cached_hits})")
+    print(f"  new this run by source: {hits_str}   (cached hits: {cached_hits}, overrides: {override_hits})")
+
+    unused_rp = [k for k in by_rp if ("rp", k[0], k[1]) not in used_overrides]
+    unused_tk = [k for k in by_tk if ("tk", k) not in used_overrides]
+    if unused_rp or unused_tk:
+        print(
+            f"  WARNING: {len(unused_rp) + len(unused_tk)} override entry/entries "
+            f"matched nothing — check for typos in {OVERRIDES_FILE.name}:",
+            file=sys.stderr,
+        )
+        for rid, pos in unused_rp:
+            print(f"    - release_id={rid} position={pos!r}", file=sys.stderr)
+        for tk in unused_tk:
+            e = by_tk[tk]
+            print(f"    - artist={e.get('artist')!r} title={e.get('title')!r}", file=sys.stderr)
+
     return 0
 
 

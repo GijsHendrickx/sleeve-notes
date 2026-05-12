@@ -1,0 +1,26 @@
+[
+  {
+    "release_id": 123456,
+    "position": "A1",
+    "bpm": 128,
+    "note": "needle-dropped after Beatport returned the wrong mix"
+  },
+  {
+    "release_id": 123456,
+    "position": "B2",
+    "bpm": null,
+    "note": "force the empty box even though songbpm returned 174"
+  },
+  {
+    "release_id": 789012,
+    "position": "A",
+    "continuous_mix": true,
+    "note": "DJ mix side that auto-detection missed because no duration on Discogs"
+  },
+  {
+    "artist": "Daft Punk",
+    "title": "Around the World",
+    "bpm": 121,
+    "note": "broad match: every track with this artist+title gets 121"
+  }
+]

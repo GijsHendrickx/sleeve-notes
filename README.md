@@ -18,6 +18,7 @@ BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats
 - [The CSV-export shortcut](#the-csv-export-shortcut)
 - [Resumability, caches and re-runs](#resumability-caches-and-re-runs)
 - [BPM cascade details](#bpm-cascade-details)
+- [Manual overrides](#manual-overrides)
 - [Beatport: one-time auth](#beatport-one-time-auth)
 - [Printing](#printing)
 - [Edge cases](#edge-cases)
@@ -296,6 +297,43 @@ To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` fo
 
 ---
 
+## Manual overrides
+
+When a source returns the wrong BPM (e.g. picked up a remix, picked up a same-titled but unrelated track), or you have a needle-dropped value you trust over any online source, drop it in `overrides.json` at the repo root. Overrides win over the cache, the continuous-mix detector, and the entire cascade — they are checked **before** anything else for a given track.
+
+Copy `overrides.example.json` to `overrides.json` and edit. The file is a flat JSON list; each entry uses one of two keying strategies:
+
+```json
+[
+  { "release_id": 123456, "position": "A1", "bpm": 128 },
+  { "release_id": 123456, "position": "B2", "bpm": null,
+    "note": "force empty box even though songbpm returned 174" },
+  { "release_id": 789012, "position": "A", "continuous_mix": true },
+  { "artist": "Daft Punk", "title": "Around the World", "bpm": 121 }
+]
+```
+
+- **`release_id` + `position`** — most precise. Both are printed on the sticker itself, so an override is a one-line edit after a needle-drop.
+- **`artist` + `title`** — broader. Matches every track in the collection whose normalized artist+title hash to the same key. Useful when the same track appears on multiple releases.
+- `release_id`+`position` takes priority when an entry of each shape matches the same track.
+
+Per-entry fields:
+
+| Field | Meaning |
+|---|---|
+| `bpm: <int>` (50–250) | Override the BPM. Sticker shows the digits. |
+| `bpm: null` | Force "no BPM" — sticker shows the empty fill-in box. Use to suppress a wrong source hit. |
+| `continuous_mix: true` | Mark the track as a continuous DJ mix — sticker shows `(mix)` instead of a number. |
+| `note` | Free-text reminder for yourself. Ignored by the script. |
+
+Re-run `python tools/fetch_bpm.py` after editing — overrides are applied on the fly, the cache is not poisoned, so removing an override later restores the previously-cached value (or sends the track back through the cascade if it was never cached).
+
+**Validation:** parsing errors, out-of-range BPMs, and entries that match no track in your collection are reported as warnings — never fatal. The unmatched-entry warning is the one to watch for: a typo'd `release_id` produces no override and would otherwise be silent.
+
+`overrides.json` is **not** gitignored by default. Decide for yourself whether to commit it: handy for sharing your hard-earned needle-drops with the repo, fine to leave local.
+
+---
+
 ## Beatport: one-time auth
 
 Beatport coverage is opt-in. To enable it:
@@ -369,6 +407,8 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 ├── CLAUDE.md                              ← agent instructions (WAT framework)
 ├── requirements.txt                       ← Python deps
 ├── .env                                   ← your secrets (gitignored)
+├── overrides.example.json                 ← template for manual BPM overrides
+├── overrides.json                         ← (optional) your manual BPM overrides
 ├── tools/
 │   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV)
 │   ├── filter_dj_releases.py              ← Step 2: keep only 12"/LP vinyl
