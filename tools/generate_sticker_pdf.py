@@ -13,6 +13,9 @@ import json
 import sys
 from pathlib import Path
 
+from reportlab.graphics import renderPDF
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
 from reportlab.lib.colors import HexColor, black, grey
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -34,6 +37,20 @@ CROP_LEN = 2.5 * mm
 PAD_X = 3.5 * mm
 PAD_Y = 2.8 * mm
 GREY = HexColor("#888888")
+
+# QR code linking to the Discogs release page. Bumped to 14 mm so each module
+# is ~0.48 mm at print size — well above the threshold for reliable phone-camera
+# scanning. Mixed case is required: Discogs treats URL paths case-sensitively
+# so we can't uppercase to trigger QR alphanumeric mode (would 404).
+QR_SIZE = 14 * mm
+QR_GAP = 1.5 * mm           # space between QR and surrounding text
+QR_CORNER_PAD = 1 * mm      # inset from the sticker corner — small so the
+                            # header text reclaims most of PAD_X / PAD_Y
+DISCOGS_RELEASE_URL = "https://www.discogs.com/release/{id}"
+
+# Vulgar-fraction characters Helvetica's PostScript encoding lacks. We render
+# them as ASCII so the RPM badge is always readable.
+_RPM_FRACTION_FALLBACK = {"⅓": " 1/3", "⅔": " 2/3", "½": " 1/2", "¼": " 1/4", "¾": " 3/4"}
 
 # Populated by main() from CLI args; module-level so the draw functions
 # (which already read them as globals) keep working unchanged.
@@ -132,6 +149,24 @@ def draw_sticker_border(c: canvas.Canvas, x: float, y: float) -> None:
     c.rect(x, y, STICKER_W, STICKER_H, stroke=1, fill=0)
 
 
+def draw_qr(c: canvas.Canvas, x: float, y: float, size: float, data: str) -> None:
+    """Render a QR widget at (x, y) with edge length `size`. Bottom-left origin."""
+    qr = QrCodeWidget(data, barLevel="M")
+    bx, by, bx2, by2 = qr.getBounds()
+    w = bx2 - bx
+    h = by2 - by
+    drawing = Drawing(size, size, transform=[size / w, 0, 0, size / h, -bx, -by])
+    drawing.add(qr)
+    renderPDF.draw(drawing, c, x, y)
+
+
+def display_rpm(rpm_token: str) -> str:
+    """Render a normalized RPM token like '33⅓' for Helvetica (no vulgar fractions)."""
+    for k, v in _RPM_FRACTION_FALLBACK.items():
+        rpm_token = rpm_token.replace(k, v)
+    return rpm_token
+
+
 def ellipsize(text: str, max_w: float, font_name: str, font_size: float) -> str:
     if stringWidth(text, font_name, font_size) <= max_w:
         return text
@@ -186,12 +221,22 @@ def label_for_track(t: dict, compilation: bool, release_artist: str) -> str:
     return title
 
 
-def column_widths(track_font: float, inner_w: float) -> tuple[float, float, float, float]:
-    bpm_col_w = stringWidth("888", "Helvetica-Bold", bpm_font_for(track_font)) + 2
+def column_widths(
+    track_font: float, inner_w: float
+) -> tuple[float, float, float, float, float]:
+    """Return (pos, middle, duration, key, bpm) column widths.
+
+    The BPM column reserves room for an optional confidence dot drawn to the
+    left of the digits — the dot is ~0.4× the BPM font height.
+    """
+    bpm_size = bpm_font_for(track_font)
+    bpm_digits_w = stringWidth("888", "Helvetica-Bold", bpm_size)
+    bpm_col_w = bpm_digits_w + bpm_size * 0.6 + 2  # extra for confidence dot
+    key_col_w = stringWidth("12B", "Helvetica-Bold", track_font) + 4
     dur_col_w = stringWidth("88:88", "Helvetica", track_font) + 4
     pos_col_w = stringWidth("AA1", "Courier-Bold", track_font) + 4
-    middle_w = inner_w - pos_col_w - dur_col_w - bpm_col_w - 4
-    return pos_col_w, middle_w, dur_col_w, bpm_col_w
+    middle_w = inner_w - pos_col_w - dur_col_w - key_col_w - bpm_col_w - 4
+    return pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w
 
 
 def split_release_into_stickers(release: dict) -> list[dict[str, list[dict]]]:
@@ -255,7 +300,7 @@ def fit_track_font(
         if content_h > inner_h:
             continue
         last_fit_vertically = size
-        _, middle_w, _, _ = column_widths(size, inner_w)
+        _, middle_w, _, _, _ = column_widths(size, inner_w)
         max_w = max((stringWidth(lbl, "Helvetica", size) for lbl in labels), default=0)
         if max_w <= middle_w:
             return size, False
@@ -278,7 +323,26 @@ def draw_sticker(
     inner_x = x + PAD_X
     inner_w = STICKER_W - 2 * PAD_X
     top = y + STICKER_H - PAD_Y
-    inner_h = STICKER_H - 2 * PAD_Y - HEADER_H
+
+    # QR + RPM. The QR is anchored to the sticker corner (QR_CORNER_PAD inset,
+    # not PAD_X/PAD_Y) so the header reclaims the difference for text.
+    release_id = release.get("id")
+    if release_id:
+        qr_x = x + STICKER_W - QR_CORNER_PAD - QR_SIZE
+        qr_y = y + STICKER_H - QR_CORNER_PAD - QR_SIZE
+        qr_payload = DISCOGS_RELEASE_URL.format(id=release_id)
+        draw_qr(c, qr_x, qr_y, QR_SIZE, qr_payload)
+        header_inner_w = qr_x - QR_GAP - inner_x
+        # Tracks must clear the QR's bottom edge. `top - qr_y` is how far the
+        # QR drops below the inner content top; effective_header_h ensures the
+        # track area starts below that (or below the text header, whichever
+        # is taller).
+        effective_header_h = max(HEADER_H, top - qr_y + 2)
+    else:
+        header_inner_w = inner_w
+        effective_header_h = HEADER_H
+
+    inner_h = STICKER_H - 2 * PAD_Y - effective_header_h
 
     side_labels = sorted(sides_map.keys())
     header_artist = "V/A" if release.get("compilation") else release["artist"]
@@ -286,14 +350,26 @@ def draw_sticker(
     if sticker_count > 1 and side_labels:
         title_text = f"{title_text}  [{'·'.join(side_labels)}]"
 
-    artist_line = ellipsize(header_artist or "V/A", inner_w, "Helvetica-Bold", HEADER_ARTIST_PT)
-    title_line = ellipsize(title_text, inner_w, "Helvetica-Oblique", HEADER_TITLE_PT)
+    rpm_list = release.get("rpm") or []
+    rpm_label = "/".join(display_rpm(r) for r in rpm_list) if rpm_list else ""
+    artist_baseline = top - HEADER_ARTIST_PT
+
+    artist_text_w = header_inner_w
+    if rpm_label:
+        rpm_w = stringWidth(rpm_label, "Helvetica", HEADER_TITLE_PT)
+        c.setFont("Helvetica", HEADER_TITLE_PT)
+        c.setFillColor(GREY)
+        c.drawRightString(inner_x + header_inner_w, artist_baseline, rpm_label)
+        artist_text_w = header_inner_w - rpm_w - 4
+
+    artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
+    title_line = ellipsize(title_text, header_inner_w, "Helvetica-Oblique", HEADER_TITLE_PT)
 
     c.setFillColor(black)
     c.setFont("Helvetica-Bold", HEADER_ARTIST_PT)
-    c.drawString(inner_x, top - HEADER_ARTIST_PT, artist_line)
+    c.drawString(inner_x, artist_baseline, artist_line)
     c.setFont("Helvetica-Oblique", HEADER_TITLE_PT)
-    c.drawString(inner_x, top - HEADER_ARTIST_PT - HEADER_TITLE_PT - 1, title_line)
+    c.drawString(inner_x, artist_baseline - HEADER_TITLE_PT - 1, title_line)
 
     if not side_labels:
         return
@@ -303,9 +379,14 @@ def draw_sticker(
     track_font, must_ellipsize = fit_track_font(sides_map, compilation, release_artist, inner_w, inner_h)
     bpm_size = bpm_font_for(track_font)
     line_h = track_font * LINE_GAP
-    pos_col_w, middle_w, dur_col_w, bpm_col_w = column_widths(track_font, inner_w)
+    pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w = column_widths(track_font, inner_w)
 
-    cursor_y = top - HEADER_H
+    # Column right edges (where each right-aligned column ends)
+    bpm_right = inner_x + inner_w
+    key_right = bpm_right - bpm_col_w
+    dur_right = key_right - key_col_w
+
+    cursor_y = top - effective_header_h
 
     for idx, side in enumerate(side_labels):
         tracks = sides_map[side]
@@ -320,13 +401,14 @@ def draw_sticker(
             pos = t.get("position", "")
             duration = t.get("duration", "") or ""
             label = label_for_track(t, compilation, release_artist)
-            # Final horizontal bounds guard — ellipsize whenever the label exceeds the column.
             if stringWidth(label, "Helvetica", track_font) > middle_w or must_ellipsize:
                 label = ellipsize(label, middle_w, "Helvetica", track_font)
 
             bpm_info = bpm_tracks_by_pos.get(pos, {})
             bpm = bpm_info.get("bpm")
+            key_cam = bpm_info.get("key_camelot")
             reason = bpm_info.get("reason")
+            bpm_conf = bpm_info.get("bpm_confidence")
 
             baseline = cursor_y - track_font
 
@@ -339,23 +421,33 @@ def draw_sticker(
 
             c.setFont("Helvetica", track_font)
             c.setFillColor(GREY)
-            c.drawRightString(inner_x + inner_w - bpm_col_w - 4, baseline, duration)
+            c.drawRightString(dur_right - 4, baseline, duration)
+
+            if key_cam:
+                c.setFont("Helvetica-Bold", track_font)
+                c.setFillColor(black)
+                c.drawRightString(key_right - 2, baseline, key_cam)
 
             c.setFont("Helvetica-Bold", bpm_size)
             if bpm:
                 c.setFillColor(black)
-                c.drawRightString(inner_x + inner_w, baseline, str(bpm))
+                c.drawRightString(bpm_right, baseline, str(bpm))
+                # Confidence marker: filled dot to the left of the digits when
+                # multiple sources agree or the user supplied the value.
+                if bpm_conf in ("high", "manual"):
+                    dot_r = bpm_size * 0.18
+                    digits_w = stringWidth(str(bpm), "Helvetica-Bold", bpm_size)
+                    dot_cx = bpm_right - digits_w - dot_r - 2
+                    dot_cy = baseline + bpm_size * 0.35
+                    c.setFillColor(black)
+                    c.circle(dot_cx, dot_cy, dot_r, stroke=0, fill=1)
             elif reason == "continuous_mix":
                 c.setFillColor(GREY)
-                c.drawRightString(inner_x + inner_w, baseline, "mix")
+                c.drawRightString(bpm_right, baseline, "mix")
             else:
-                # Unknown BPM → empty rectangle, pen the value in after printing.
-                # Box top matches the BPM cap-height; box bottom drops slightly
-                # below baseline so even the smallest case (6pt track / 9pt BPM)
-                # stays inside line_h.
                 box_top = baseline + 0.72 * bpm_size
                 box_bottom = baseline - 0.10 * bpm_size
-                box_left = inner_x + inner_w - bpm_col_w
+                box_left = bpm_right - bpm_col_w
                 c.setStrokeColor(GREY)
                 c.setLineWidth(0.4)
                 c.rect(box_left, box_bottom, bpm_col_w, box_top - box_bottom, stroke=1, fill=0)

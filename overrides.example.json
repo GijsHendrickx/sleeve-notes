@@ -3,6 +3,7 @@
     "release_id": 123456,
     "position": "A1",
     "bpm": 128,
+    "key_camelot": "8A",
     "note": "needle-dropped after Beatport returned the wrong mix"
   },
   {
@@ -21,6 +22,7 @@
     "artist": "Daft Punk",
     "title": "Around the World",
     "bpm": 121,
-    "note": "broad match: every track with this artist+title gets 121"
+    "key_camelot": "Am",
+    "note": "broad match: every track with this artist+title gets 121 in A minor. Key accepts Camelot ('8A'), musical ('Am', 'C#m', 'F# major'), or slash ('F♯/G♭ Major') — all normalised to Camelot."
   }
 ]

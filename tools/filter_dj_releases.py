@@ -15,6 +15,11 @@ SKIPPED_OUT = TMP / "skipped.json"
 
 VINYL_DESCRIPTIONS = {'12"', "LP"}
 
+# Discogs format descriptions encode RPM as "45 RPM" / "33 ⅓ RPM". Extract
+# the numeric prefix (with the unicode fraction if present) for display on
+# the sticker — wrong-RPM playback is the failure mode this catches.
+RPM_RE = re.compile(r"(\d{2,3}(?:\s*[⅓⅔½])?)\s*RPM", re.IGNORECASE)
+
 
 def parse_duration_to_seconds(duration: str) -> int | None:
     if not duration:
@@ -64,6 +69,24 @@ def check_format(formats: list[dict]) -> bool:
         for d in f.get("descriptions") or []:
             desc_set.add(d)
     return bool(desc_set & VINYL_DESCRIPTIONS)
+
+
+def extract_rpms(formats: list[dict]) -> list[str]:
+    """Pull unique RPM values from format descriptions, normalized for display.
+
+    Returns e.g. ["33⅓"], ["45"], ["33⅓", "45"] for the rare mixed-RPM release,
+    or [] when Discogs doesn't list an RPM (the sticker simply omits it).
+    """
+    found: list[str] = []
+    for f in formats:
+        for d in f.get("descriptions") or []:
+            m = RPM_RE.search(d)
+            if not m:
+                continue
+            normalized = re.sub(r"\s+", "", m.group(1))
+            if normalized not in found:
+                found.append(normalized)
+    return found
 
 
 def is_real_track(t: dict) -> bool:
@@ -153,6 +176,7 @@ def main() -> int:
                 "genres": genres,
                 "styles": basic.get("styles") or [],
                 "compilation": compilation,
+                "rpm": extract_rpms(formats),
                 "tracks": tracks,
             }
         )

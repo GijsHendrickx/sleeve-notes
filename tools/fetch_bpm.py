@@ -30,8 +30,11 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import unicodedata
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -54,8 +57,15 @@ BPM_CACHE = TMP / "bpm_cache.json"
 BEATPORT_TOKENS_FILE = TMP / "beatport_tokens.json"
 OVERRIDES_FILE = ROOT / "overrides.json"
 
-# Sources, in the order they are tried.
+# All sources in the cascade. Order here is informational; the cascade fires
+# them in parallel per track, then `consense()` picks the canonical value.
 ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
+
+# Tie-breaker order when sources disagree (no 2+ consensus). Beatport is
+# editorial — labels supply the BPM themselves — so it wins for the DJ-relevant
+# genres. SongBPM is broad coverage from analysis. AcousticBrainz is last
+# because the dataset is frozen since 2022.
+SOURCE_PRIORITY = ("beatport", "songbpm", "reccobeats", "deezer", "acousticbrainz")
 
 # --- songbpm.com scrape -------------------------------------------------------
 SONGBPM_BASE = "https://songbpm.com"
@@ -96,6 +106,15 @@ CONTINUOUS_MIX_SECONDS = 12 * 60
 TITLE_RE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
 BPM_RE = re.compile(r"\b(\d{2,3})\s*BPM\b", re.IGNORECASE)
 TITLE_PARSE_RE = re.compile(r"BPM and key for (.+?) by (.+?) \|", re.IGNORECASE)
+# songbpm.com renders key in several places; we try a few patterns and take
+# the first parseable hit. Order matters: prefer explicit Camelot, then
+# JSON-LD-ish, then loose "Key: X" text.
+SONGBPM_CAMELOT_RE = re.compile(r"\b(1[0-2]|[1-9])([AB])\b\s*[—\-–]?\s*camelot", re.IGNORECASE)
+SONGBPM_KEY_JSON_RE = re.compile(r'"key"\s*:\s*"([^"]{1,30})"', re.IGNORECASE)
+SONGBPM_KEY_TEXT_RE = re.compile(
+    r"Key</[^>]+>\s*<[^>]+>\s*([A-G][#b♭♯]?\s*[A-Za-z]+)",
+    re.IGNORECASE,
+)
 
 
 class RetryableHTTPError(Exception):
@@ -162,6 +181,87 @@ def cache_key(artist: str, title: str) -> str:
 
 
 # ============================================================================
+# Musical key → Camelot wheel
+# ============================================================================
+# Camelot wheel mapping. Letter = mode (B=major, A=minor), number = position.
+# Used by rekordbox, Serato, Mixed In Key, etc. Adjacent positions and same
+# numbers across A/B = compatible mixes.
+
+_NOTE_TO_PITCH_CLASS = {
+    "C": 0, "C#": 1, "Db": 1,
+    "D": 2, "D#": 3, "Eb": 3,
+    "E": 4,
+    "F": 5, "F#": 6, "Gb": 6,
+    "G": 7, "G#": 8, "Ab": 8,
+    "A": 9, "A#": 10, "Bb": 10,
+    "B": 11,
+}
+
+_PC_MAJOR_CAMELOT = {
+    0: "8B", 1: "3B", 2: "10B", 3: "5B", 4: "12B", 5: "7B",
+    6: "2B", 7: "9B", 8: "4B", 9: "11B", 10: "6B", 11: "1B",
+}
+_PC_MINOR_CAMELOT = {
+    0: "5A", 1: "12A", 2: "7A", 3: "2A", 4: "9A", 5: "4A",
+    6: "11A", 7: "6A", 8: "1A", 9: "8A", 10: "3A", 11: "10A",
+}
+
+_KEY_PARSE_RE = re.compile(
+    r"^\s*([A-G])\s*([#b♭♯])?\s*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def pc_mode_to_camelot(pc: int | None, mode_int: int | None) -> str | None:
+    """ReccoBeats/Spotify-style: pitch class (0=C..11=B), mode (0=minor, 1=major)."""
+    if pc is None or pc < 0 or pc > 11:
+        return None
+    if mode_int == 1:
+        return _PC_MAJOR_CAMELOT[pc]
+    if mode_int == 0:
+        return _PC_MINOR_CAMELOT[pc]
+    return None
+
+
+def parse_key_to_camelot(s: str | None) -> str | None:
+    """Parse free-form key strings to Camelot. Accepts:
+
+    - "A minor", "C# major", "Eb major"  (note + word)
+    - "Am", "C#m"                         (lead-sheet shorthand)
+    - "A", "C#"                           (bare note → assume major)
+    - "F♯/G♭ Major"                       (slash-form, takes first note)
+    - Pre-Camelot strings like "8A"       (passed through)
+    """
+    if not s:
+        return None
+    s = s.strip().replace("♭", "b").replace("♯", "#")
+    # Pass-through if already Camelot
+    cam = re.match(r"^\s*(1[0-2]|[1-9])([AB])\s*$", s, re.IGNORECASE)
+    if cam:
+        return f"{cam.group(1)}{cam.group(2).upper()}"
+    # Slash form: take the first note (e.g. "F#/Gb major" -> "F# major")
+    if "/" in s:
+        head, _, tail = s.partition("/")
+        # Strip trailing tail note, keep the mode word that follows
+        s = head + re.sub(r"^\s*[A-Ga-g][#b]?", "", tail)
+    m = _KEY_PARSE_RE.match(s)
+    if not m:
+        return None
+    note_letter = m.group(1).upper()
+    accidental = (m.group(2) or "").replace("♭", "b").replace("♯", "#")
+    suffix = (m.group(3) or "").strip().lower()
+    note = note_letter + accidental
+    pc = _NOTE_TO_PITCH_CLASS.get(note)
+    if pc is None:
+        return None
+    if suffix in ("minor", "min", "m"):
+        return _PC_MINOR_CAMELOT[pc]
+    if suffix in ("major", "maj", ""):
+        return _PC_MAJOR_CAMELOT[pc]
+    return None
+
+
+# ============================================================================
 # HTTP helpers
 # ============================================================================
 
@@ -223,15 +323,32 @@ def http_get_json(url: str, params: dict | None = None) -> tuple[int, dict | Non
 
 
 class RateLimiter:
-    """Per-host minimum interval between requests."""
+    """Per-host minimum interval between requests, thread-safe.
+
+    Each host has its own lock so different sources can fire truly in parallel,
+    but requests to the same host are serialized to respect the rate limit.
+    Without per-host locking, two threads racing on the same host would both
+    pass the gap check and fire requests within nanoseconds of each other.
+    """
     def __init__(self) -> None:
         self._last: dict[str, float] = {}
+        self._global_lock = threading.Lock()
+        self._host_locks: dict[str, threading.Lock] = {}
+
+    def _lock_for(self, host: str) -> threading.Lock:
+        with self._global_lock:
+            lock = self._host_locks.get(host)
+            if lock is None:
+                lock = threading.Lock()
+                self._host_locks[host] = lock
+            return lock
 
     def wait(self, host: str, min_interval_s: float) -> None:
-        elapsed = time.time() - self._last.get(host, 0.0)
-        if elapsed < min_interval_s:
-            time.sleep(min_interval_s - elapsed)
-        self._last[host] = time.time()
+        with self._lock_for(host):
+            elapsed = time.time() - self._last.get(host, 0.0)
+            if elapsed < min_interval_s:
+                time.sleep(min_interval_s - elapsed)
+            self._last[host] = time.time()
 
 
 # ============================================================================
@@ -261,25 +378,45 @@ def songbpm_candidate_urls(artist: str, title: str) -> list[str]:
     return urls
 
 
-def songbpm_validate(html: str, q_artist: str, q_title: str) -> tuple[int | None, float]:
+def songbpm_extract_key(html: str) -> str | None:
+    """Try several patterns to pull a key out of the page HTML. Best-effort."""
+    m = SONGBPM_CAMELOT_RE.search(html)
+    if m:
+        return f"{m.group(1)}{m.group(2).upper()}"
+    m = SONGBPM_KEY_JSON_RE.search(html)
+    if m:
+        cam = parse_key_to_camelot(m.group(1))
+        if cam:
+            return cam
+    m = SONGBPM_KEY_TEXT_RE.search(html)
+    if m:
+        cam = parse_key_to_camelot(m.group(1))
+        if cam:
+            return cam
+    return None
+
+
+def songbpm_validate(html: str, q_artist: str, q_title: str) -> tuple[int | None, str | None, float]:
     bpm_match = BPM_RE.search(html)
     if not bpm_match:
-        return None, 0.0
+        return None, None, 0.0
     bpm = int(bpm_match.group(1))
     if not (BPM_MIN <= bpm <= BPM_MAX):
-        return None, 0.0
+        return None, None, 0.0
+
+    key_cam = songbpm_extract_key(html)
 
     title_tag = TITLE_RE.search(html)
     if not title_tag:
-        return bpm, 60.0
+        return bpm, key_cam, 60.0
     m = TITLE_PARSE_RE.search(title_tag.group(1))
     if not m:
-        return bpm, 60.0
+        return bpm, key_cam, 60.0
     page_track, page_artist = m.group(1), m.group(2)
     score = fuzz_score(q_artist, q_title, page_artist, page_track)
     if score < ARTIST_TITLE_MIN_FUZZ:
-        return None, score
-    return bpm, score
+        return None, None, score
+    return bpm, key_cam, score
 
 
 def songbpm_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
@@ -294,16 +431,9 @@ def songbpm_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
             return None
         if status == 404:
             continue
-        bpm, score = songbpm_validate(html, artist, title)
+        bpm, key_cam, score = songbpm_validate(html, artist, title)
         if bpm:
-            return {
-                "bpm": bpm,
-                "source": "songbpm",
-                "source_url": url,
-                "confidence": "ok" if score >= 82 else "low",
-                "score": round(score, 1),
-                "reason": "match",
-            }
+            return {"bpm": bpm, "key_camelot": key_cam, "score": round(score, 1), "url": url}
     return None
 
 
@@ -366,11 +496,9 @@ def deezer_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
         return None
     return {
         "bpm": bpm,
-        "source": "deezer",
-        "source_url": detail.get("link") or f"https://www.deezer.com/track/{tid}",
-        "confidence": "ok" if score >= 82 else "low",
+        # Deezer's public track endpoint exposes BPM but not key.
         "score": round(score, 1),
-        "reason": "match",
+        "url": detail.get("link") or f"https://www.deezer.com/track/{tid}",
     }
 
 
@@ -379,36 +507,40 @@ def deezer_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
 # ============================================================================
 
 _spotify_token: dict | None = None  # {access_token, expires_at}
+_spotify_token_lock = threading.Lock()
 
 
 def _get_spotify_token() -> str:
     """Return a valid Spotify access token, refreshing if needed.
 
     Raises SourceUnavailable if SPOTIFY_CLIENT_ID/SECRET are not configured.
+    Thread-safe: concurrent callers serialize on _spotify_token_lock so only
+    one fetch happens per expiration window.
     """
     global _spotify_token
-    now = time.time()
-    if _spotify_token and _spotify_token["expires_at"] > now + 30:
+    with _spotify_token_lock:
+        now = time.time()
+        if _spotify_token and _spotify_token["expires_at"] > now + 30:
+            return _spotify_token["access_token"]
+        cid = os.environ.get("SPOTIFY_CLIENT_ID")
+        cs = os.environ.get("SPOTIFY_CLIENT_SECRET")
+        if not cid or not cs:
+            raise SourceUnavailable("missing SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET in .env")
+        auth = base64.b64encode(f"{cid}:{cs}".encode()).decode()
+        resp = requests.post(
+            SPOTIFY_TOKEN_URL,
+            headers={"Authorization": f"Basic {auth}"},
+            data={"grant_type": "client_credentials"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Spotify token request failed: {resp.status_code} {resp.text[:200]}")
+        data = resp.json()
+        _spotify_token = {
+            "access_token": data["access_token"],
+            "expires_at": now + int(data.get("expires_in", 3600)),
+        }
         return _spotify_token["access_token"]
-    cid = os.environ.get("SPOTIFY_CLIENT_ID")
-    cs = os.environ.get("SPOTIFY_CLIENT_SECRET")
-    if not cid or not cs:
-        raise SourceUnavailable("missing SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET in .env")
-    auth = base64.b64encode(f"{cid}:{cs}".encode()).decode()
-    resp = requests.post(
-        SPOTIFY_TOKEN_URL,
-        headers={"Authorization": f"Basic {auth}"},
-        data={"grant_type": "client_credentials"},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Spotify token request failed: {resp.status_code} {resp.text[:200]}")
-    data = resp.json()
-    _spotify_token = {
-        "access_token": data["access_token"],
-        "expires_at": now + int(data.get("expires_in", 3600)),
-    }
-    return _spotify_token["access_token"]
 
 
 def _spotify_search_best(artist: str, title: str, rl: RateLimiter) -> tuple[float, str, str, str] | None:
@@ -496,13 +628,19 @@ def reccobeats_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
     bpm = int(round(float(tempo)))
     if not (BPM_MIN <= bpm <= BPM_MAX):
         return None
+    # ReccoBeats audio-features uses the Spotify pitch-class + mode convention:
+    # key 0=C..11=B (or -1 = no key detected), mode 0=minor / 1=major.
+    key_pc = features.get("key")
+    mode_int = features.get("mode")
+    key_cam = pc_mode_to_camelot(
+        key_pc if isinstance(key_pc, int) and key_pc >= 0 else None,
+        mode_int if isinstance(mode_int, int) else None,
+    )
     return {
         "bpm": bpm,
-        "source": "reccobeats",
-        "source_url": track.get("href") or f"https://open.spotify.com/track/{spot_id}",
-        "confidence": "ok" if score >= 82 else "low",
+        "key_camelot": key_cam,
         "score": round(score, 1),
-        "reason": "match",
+        "url": track.get("href") or f"https://open.spotify.com/track/{spot_id}",
     }
 
 
@@ -564,6 +702,9 @@ def _full_reauth_beatport() -> dict | None:
     return authenticate(username, password)
 
 
+_beatport_token_lock = threading.Lock()
+
+
 def _get_beatport_token() -> str:
     """Return a valid Beatport access token.
 
@@ -574,28 +715,30 @@ def _get_beatport_token() -> str:
          tokens file if it doesn't exist yet).
 
     Raises SourceUnavailable only if no tokens file exists AND no credentials
-    are configured.
+    are configured. Thread-safe: concurrent callers serialize on the lock to
+    prevent duplicate refreshes.
     """
-    tokens = _load_beatport_tokens()
-    now = time.time()
-    if tokens and tokens.get("expires_at", 0) > now + 60:
-        return tokens["access_token"]
-    if tokens and tokens.get("refresh_token"):
-        try:
-            fresh = _refresh_beatport_access(tokens["refresh_token"])
+    with _beatport_token_lock:
+        tokens = _load_beatport_tokens()
+        now = time.time()
+        if tokens and tokens.get("expires_at", 0) > now + 60:
+            return tokens["access_token"]
+        if tokens and tokens.get("refresh_token"):
+            try:
+                fresh = _refresh_beatport_access(tokens["refresh_token"])
+                _save_beatport_tokens(fresh)
+                return fresh["access_token"]
+            except Exception:
+                # Refresh token expired/revoked — fall through to full re-auth.
+                pass
+        fresh = _full_reauth_beatport()
+        if fresh:
             _save_beatport_tokens(fresh)
             return fresh["access_token"]
-        except Exception:
-            # Refresh token expired/revoked — fall through to full re-auth.
-            pass
-    fresh = _full_reauth_beatport()
-    if fresh:
-        _save_beatport_tokens(fresh)
-        return fresh["access_token"]
-    raise SourceUnavailable(
-        "Beatport tokens missing/expired and no BEATPORT_USERNAME/PASSWORD in .env — "
-        "run `python tools/beatport_auth.py` to authorize"
-    )
+        raise SourceUnavailable(
+            "Beatport tokens missing/expired and no BEATPORT_USERNAME/PASSWORD in .env — "
+            "run `python tools/beatport_auth.py` to authorize"
+        )
 
 
 def _beatport_track_artist_title(t: dict) -> tuple[str, str]:
@@ -606,6 +749,26 @@ def _beatport_track_artist_title(t: dict) -> tuple[str, str]:
     artists = t.get("artists") or []
     artist = " ".join(a.get("name", "") for a in artists if isinstance(a, dict))
     return artist, full_title
+
+
+def _beatport_extract_key(t: dict) -> str | None:
+    """Beatport v4 returns key as a nested object with camelot_number+camelot_letter.
+
+    Older v3-style responses surface a string ('A Minor') in track['key'], so
+    handle both shapes defensively.
+    """
+    k = t.get("key")
+    if isinstance(k, dict):
+        num = k.get("camelot_number")
+        letter = k.get("camelot_letter")
+        if num and letter:
+            return f"{num}{str(letter).upper()}"
+        name = k.get("name") or ""
+        if name:
+            return parse_key_to_camelot(name)
+    if isinstance(k, str) and k:
+        return parse_key_to_camelot(k)
+    return None
 
 
 def beatport_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
@@ -666,23 +829,22 @@ def beatport_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
         return None
     score, hit = best
     bpm_raw = hit.get("bpm")
-    if not bpm_raw:
-        return None  # Beatport knows the track but doesn't have a BPM (rare).
     try:
-        bpm = int(round(float(bpm_raw)))
+        bpm = int(round(float(bpm_raw))) if bpm_raw else None
     except (TypeError, ValueError):
-        return None
-    if not (BPM_MIN <= bpm <= BPM_MAX):
-        return None
+        bpm = None
+    if bpm is not None and not (BPM_MIN <= bpm <= BPM_MAX):
+        bpm = None
+    key_cam = _beatport_extract_key(hit)
+    if bpm is None and key_cam is None:
+        return None  # Beatport had a match candidate but no useful fields.
     tid = hit.get("id")
     slug = hit.get("slug") or "_"
     return {
         "bpm": bpm,
-        "source": "beatport",
-        "source_url": f"https://www.beatport.com/track/{slug}/{tid}" if tid else None,
-        "confidence": "ok" if score >= 82 else "low",
+        "key_camelot": key_cam,
         "score": round(score, 1),
-        "reason": "match",
+        "url": f"https://www.beatport.com/track/{slug}/{tid}" if tid else None,
     }
 
 
@@ -733,18 +895,23 @@ def ab_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
         if status == 404 or not data:
             continue
         bpm_raw = data.get("rhythm", {}).get("bpm")
-        if not bpm_raw:
-            continue
-        bpm = int(round(float(bpm_raw)))
-        if not (BPM_MIN <= bpm <= BPM_MAX):
+        bpm = None
+        if bpm_raw:
+            bpm_int = int(round(float(bpm_raw)))
+            if BPM_MIN <= bpm_int <= BPM_MAX:
+                bpm = bpm_int
+        # AcousticBrainz tonal: key_key like "Ab", key_scale "minor"/"major".
+        tonal = data.get("tonal") or {}
+        key_cam = parse_key_to_camelot(
+            f"{tonal.get('key_key', '')} {tonal.get('key_scale', '')}".strip()
+        )
+        if bpm is None and key_cam is None:
             continue
         return {
             "bpm": bpm,
-            "source": "acousticbrainz",
-            "source_url": f"https://acousticbrainz.org/{mbid}",
-            "confidence": "ok" if score >= 82 else "low",
+            "key_camelot": key_cam,
             "score": round(score, 1),
-            "reason": "match",
+            "url": f"https://acousticbrainz.org/{mbid}",
             "mbid": mbid,
         }
     return None
@@ -763,69 +930,137 @@ _LOOKUP_FNS = {
 }
 
 
-def previously_tried(cached: dict | None) -> set[str]:
-    """Return the set of sources already attempted for a cached entry.
+def cascade_all(
+    artist: str,
+    title: str,
+    prev: dict | None,
+    rl: RateLimiter,
+) -> dict:
+    """Fire every untried source in parallel, return a merged v2 cache entry.
 
-    Back-compat: cache entries written before the cascade existed have no
-    `sources_tried` field. They were produced by the songbpm-only version of
-    this script, so we assume {"songbpm"} for them.
-    """
-    if not cached:
-        return set()
-    if "sources_tried" in cached:
-        return set(cached["sources_tried"])
-    if cached.get("source") in ALL_SOURCES:
-        return {cached["source"]}
-    return {"songbpm"}
+    `prev` is a v2 entry from the cache (or None). Sources already in
+    `prev['sources_tried']` are skipped — same incremental behaviour as the
+    serial cascade, but per-source instead of stop-on-first-hit. We always
+    query every source we can so the consensus has enough data to evaluate.
 
-
-def cascade_lookup(artist: str, title: str, cached: dict | None, rl: RateLimiter) -> dict:
-    tried = previously_tried(cached)
-    to_try = [s for s in ALL_SOURCES if s not in tried]
-    skipped: list[str] = []
-
-    for source in to_try:
-        fn = _LOOKUP_FNS[source]
-        try:
-            result = fn(artist, title, rl)
-        except SourceUnavailable:
-            # Credentials missing: skip without marking as tried. Configuring
-            # the source later will retry on the next run.
-            skipped.append(source)
-            continue
-        except Exception as e:
-            # Network/parse failure: don't mark as tried, so we retry next run.
-            return {
-                "bpm": None,
-                "source": None,
-                "source_url": None,
-                "confidence": None,
-                "reason": f"error:{source}:{e}",
-                "sources_tried": sorted(tried),
-            }
-        tried.add(source)
-        if result:
-            return {**result, "sources_tried": sorted(tried)}
-
-    # Only mark exhausted if every source was actually tried (none skipped).
-    if skipped:
-        return {
-            "bpm": None,
-            "source": None,
-            "source_url": None,
-            "confidence": None,
-            "reason": "skipped_unavailable:" + ",".join(skipped),
-            "sources_tried": sorted(tried),
+    Result shape (v2 cache entry):
+        {
+            "sources": {<source>: {bpm, key_camelot, score, url, ...}, ...},
+            "sources_tried":       [<source>, ...],   # completed (hit or miss)
+            "sources_unavailable": [<source>, ...],   # this run, e.g. no creds
+            "sources_errored":     [<source>, ...],   # this run, retry next time
         }
+    """
+    sources: dict[str, dict] = dict((prev or {}).get("sources") or {})
+    tried: set[str] = set((prev or {}).get("sources_tried") or [])
+    to_run = [s for s in ALL_SOURCES if s not in tried]
+    new_unavailable: list[str] = []
+    new_errored: list[str] = []
+
+    if not to_run:
+        return {
+            "sources": sources,
+            "sources_tried": sorted(tried),
+            "sources_unavailable": [],
+            "sources_errored": [],
+        }
+
+    with ThreadPoolExecutor(max_workers=len(to_run)) as ex:
+        futures = {ex.submit(_LOOKUP_FNS[s], artist, title, rl): s for s in to_run}
+        for fut in as_completed(futures):
+            src = futures[fut]
+            try:
+                hit = fut.result()
+            except SourceUnavailable:
+                # Credentials missing: don't mark as tried, configure later and retry.
+                new_unavailable.append(src)
+                continue
+            except Exception as e:
+                # Network/parse error: don't mark as tried, retry next run.
+                new_errored.append(f"{src}: {e}")
+                continue
+            tried.add(src)
+            if hit:
+                sources[src] = hit
+
     return {
-        "bpm": None,
-        "source": None,
-        "source_url": None,
-        "confidence": None,
-        "reason": "exhausted",
+        "sources": sources,
         "sources_tried": sorted(tried),
-        "exhausted": True,
+        "sources_unavailable": sorted(new_unavailable),
+        "sources_errored": sorted(new_errored),
     }
+
+
+def consense(entry: dict) -> dict:
+    """Derive canonical (bpm, key, confidence) from per-source results.
+
+    BPM consensus: cluster source BPMs within ±1 (handles ½-BPM rounding noise);
+    the largest cluster with ≥2 members wins, value = median. Otherwise:
+      - 1 source returned   -> that value, confidence="single"
+      - 2+ disagree         -> SOURCE_PRIORITY-ordered pick, confidence="disputed"
+      - 0 sources returned  -> None, confidence=None
+
+    Key consensus: exact Camelot string match (sources already normalised).
+    Same fall-through logic (single / disputed / none).
+    """
+    sources: dict = entry.get("sources") or {}
+    bpm_hits = [(name, int(s["bpm"])) for name, s in sources.items() if s.get("bpm")]
+    key_hits = [(name, s["key_camelot"]) for name, s in sources.items() if s.get("key_camelot")]
+
+    bpm, bpm_conf, bpm_sources = _consense_numeric(bpm_hits, tolerance=1)
+    key, key_conf, key_sources = _consense_categorical(key_hits)
+
+    return {
+        "bpm": bpm,
+        "bpm_confidence": bpm_conf,
+        "bpm_sources": bpm_sources,
+        "key_camelot": key,
+        "key_confidence": key_conf,
+        "key_sources": key_sources,
+    }
+
+
+def _consense_numeric(
+    hits: list[tuple[str, int]], tolerance: int = 1
+) -> tuple[int | None, str | None, list[str]]:
+    if not hits:
+        return None, None, []
+    if len(hits) == 1:
+        return hits[0][1], "single", [hits[0][0]]
+    # Cluster by adjacency on a sorted axis
+    by_val = sorted(hits, key=lambda x: x[1])
+    clusters: list[list[tuple[str, int]]] = [[by_val[0]]]
+    for name, val in by_val[1:]:
+        if val - clusters[-1][-1][1] <= tolerance:
+            clusters[-1].append((name, val))
+        else:
+            clusters.append([(name, val)])
+    clusters.sort(key=lambda c: -len(c))
+    winning = clusters[0]
+    if len(winning) >= 2:
+        sorted_vals = sorted(v for _, v in winning)
+        median = sorted_vals[len(sorted_vals) // 2]
+        return median, "high", sorted(n for n, _ in winning)
+    # No 2+ cluster. Disputed → priority pick.
+    priority = {s: i for i, s in enumerate(SOURCE_PRIORITY)}
+    by_priority = sorted(hits, key=lambda x: priority.get(x[0], 99))
+    return by_priority[0][1], "disputed", [by_priority[0][0]]
+
+
+def _consense_categorical(
+    hits: list[tuple[str, str]]
+) -> tuple[str | None, str | None, list[str]]:
+    if not hits:
+        return None, None, []
+    if len(hits) == 1:
+        return hits[0][1], "single", [hits[0][0]]
+    counts = Counter(v for _, v in hits)
+    most, count = counts.most_common(1)[0]
+    if count >= 2:
+        return most, "high", sorted(n for n, v in hits if v == most)
+    priority = {s: i for i, s in enumerate(SOURCE_PRIORITY)}
+    by_priority = sorted(hits, key=lambda x: priority.get(x[0], 99))
+    return by_priority[0][1], "disputed", [by_priority[0][0]]
 
 
 # ============================================================================
@@ -898,6 +1133,14 @@ def load_overrides() -> tuple[dict, dict, list[str]]:
                 continue
             entry["bpm"] = bpm_int
 
+        raw_key = entry.get("key_camelot")
+        if raw_key is not None:
+            normalized = parse_key_to_camelot(str(raw_key))
+            if normalized is None:
+                warnings.append(f"entry #{i}: unrecognised key_camelot {raw_key!r}")
+                continue
+            entry["key_camelot"] = normalized
+
         if "release_id" in entry and "position" in entry:
             try:
                 rid = int(entry["release_id"])
@@ -925,44 +1168,68 @@ def load_overrides() -> tuple[dict, dict, list[str]]:
 
 
 def override_to_result(entry: dict) -> dict:
-    """Convert a validated override entry into a cascade-shaped result dict.
+    """Convert a validated override entry into a final-result dict.
 
-    Uses source="manual" so the BPM is traceable in bpm_results.json. The
-    PDF generator only inspects `bpm` and `reason` so manual hits render
-    identically to source-supplied BPMs.
+    Manual values bypass the cascade and the consensus entirely. The PDF
+    generator inspects `bpm`, `key_camelot`, `bpm_confidence`, and `reason` —
+    manual entries carry confidence="manual" so the renderer can distinguish
+    them from source-derived high-confidence hits if desired.
     """
-    if entry.get("continuous_mix"):
-        return {
-            "bpm": None,
-            "source": "manual",
-            "source_url": None,
-            "confidence": "manual",
-            "reason": "continuous_mix",
-        }
-    bpm = entry.get("bpm")
-    if bpm is None:
-        return {
-            "bpm": None,
-            "source": "manual",
-            "source_url": None,
-            "confidence": "manual",
-            "reason": "manual_no_bpm",
-        }
-    return {
-        "bpm": bpm,
+    base = {
         "source": "manual",
-        "source_url": None,
-        "confidence": "manual",
-        "score": None,
-        "reason": "manual",
+        "bpm_confidence": "manual",
+        "key_confidence": "manual" if entry.get("key_camelot") else None,
+        "bpm_sources": ["manual"],
+        "key_sources": ["manual"] if entry.get("key_camelot") else [],
     }
+    if entry.get("continuous_mix"):
+        return {**base, "bpm": None, "key_camelot": None, "reason": "continuous_mix"}
+    bpm = entry.get("bpm")
+    key_cam = parse_key_to_camelot(entry.get("key_camelot")) if entry.get("key_camelot") else None
+    if bpm is None and key_cam is None:
+        return {**base, "bpm": None, "key_camelot": None, "reason": "manual_no_bpm"}
+    return {**base, "bpm": bpm, "key_camelot": key_cam, "reason": "manual"}
+
+
+CACHE_VERSION = 2
 
 
 def load_cache() -> dict:
-    if BPM_CACHE.exists():
-        with BPM_CACHE.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    """Load the v2 cache. On encountering an older schema, back it up and
+    start fresh — the v1 schema can't be migrated without re-querying every
+    source for the per-source results that didn't exist yet.
+
+    v2 shape:
+        {
+            "_meta": {"version": 2},
+            "tracks": {
+                "<cache_key>": {
+                    "sources": {...},
+                    "sources_tried": [...],
+                    ...
+                }
+            }
+        }
+    """
+    if not BPM_CACHE.exists():
+        return {"_meta": {"version": CACHE_VERSION}, "tracks": {}}
+    with BPM_CACHE.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    version = (data.get("_meta") or {}).get("version") if isinstance(data, dict) else None
+    if version == CACHE_VERSION:
+        return data
+    # Pre-v2 cache (flat dict of cache_key → single-source result). Migrating
+    # without re-fetching would lose the per-source data needed for consensus,
+    # so we archive and start over.
+    backup = BPM_CACHE.with_name("bpm_cache.v1.json.bak")
+    os.replace(BPM_CACHE, backup)
+    print(
+        f"  notice: existing cache uses the pre-consensus schema; backed up to "
+        f"{backup.name} and starting a fresh v{CACHE_VERSION} cache. "
+        "Sources will be re-queried — same speed as a cold first run.",
+        file=sys.stderr,
+    )
+    return {"_meta": {"version": CACHE_VERSION}, "tracks": {}}
 
 
 def save_cache(cache: dict) -> None:
@@ -970,6 +1237,36 @@ def save_cache(cache: dict) -> None:
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
     os.replace(tmp, BPM_CACHE)
+
+
+def build_track_result(position: str, artist: str, title: str, entry: dict) -> dict:
+    """Combine a v2 cache entry with derived consensus into the per-track
+    result that goes into bpm_results.json (and ultimately the PDF)."""
+    derived = consense(entry)
+    sources = entry.get("sources") or {}
+    bpm = derived["bpm"]
+    if bpm is None:
+        # Distinguish "we tried everything" from "still incremental" so the
+        # PDF knows when to lock in the empty box vs. wait for a later run.
+        all_tried = set(ALL_SOURCES).issubset(set(entry.get("sources_tried") or []))
+        reason = "exhausted" if all_tried else "incomplete"
+    else:
+        reason = "match"
+    return {
+        "position": position,
+        "artist": artist,
+        "title": title,
+        "bpm": bpm,
+        "key_camelot": derived["key_camelot"],
+        "bpm_confidence": derived["bpm_confidence"],
+        "key_confidence": derived["key_confidence"],
+        "bpm_sources": derived["bpm_sources"],
+        "key_sources": derived["key_sources"],
+        "source": derived["bpm_sources"][0] if derived["bpm_sources"] else None,
+        "source_url": (sources.get(derived["bpm_sources"][0]) or {}).get("url")
+            if derived["bpm_sources"] else None,
+        "reason": reason,
+    }
 
 
 def main() -> int:
@@ -982,6 +1279,7 @@ def main() -> int:
 
     TMP.mkdir(parents=True, exist_ok=True)
     cache = load_cache()
+    tracks_cache: dict = cache.setdefault("tracks", {})
     rl = RateLimiter()
     results: list[dict] = []
 
@@ -993,11 +1291,12 @@ def main() -> int:
     used_overrides: set[tuple] = set()
 
     total_tracks = sum(len(r["tracks"]) for r in releases)
-    print(f"Looking up BPM for {total_tracks} tracks across {len(releases)} releases...")
+    print(f"Looking up BPM/key for {total_tracks} tracks across {len(releases)} releases...")
     done = 0
     cached_hits = 0
     override_hits = 0
-    new_hits_by_source: dict[str, int] = {s: 0 for s in ALL_SOURCES}
+    cascade_runs = 0
+    hits_by_source: dict[str, int] = {s: 0 for s in ALL_SOURCES}
 
     for release in releases:
         track_results: list[dict] = []
@@ -1008,9 +1307,7 @@ def main() -> int:
             position = track.get("position", "")
             duration_s = track.get("duration_s")
 
-            # Manual overrides win over everything (cache, continuous-mix
-            # detection, the cascade). (release_id, position) is the precise
-            # match; artist+title is the fallback.
+            # Manual overrides win over everything.
             override = by_rp.get((release["id"], position))
             override_id: tuple | None = None
             if override is not None:
@@ -1023,57 +1320,74 @@ def main() -> int:
             if override is not None:
                 used_overrides.add(override_id)
                 override_hits += 1
-                result = override_to_result(override)
                 track_results.append({
-                    "position": position, "artist": artist, "title": title, **result,
+                    "position": position, "artist": artist, "title": title,
+                    **override_to_result(override),
                 })
                 continue
 
             if is_continuous_mix(position, duration_s):
                 track_results.append({
                     "position": position, "artist": artist, "title": title,
-                    "bpm": None, "confidence": None, "reason": "continuous_mix", "source_url": None,
+                    "bpm": None, "key_camelot": None,
+                    "bpm_confidence": None, "key_confidence": None,
+                    "bpm_sources": [], "key_sources": [],
+                    "source": None, "source_url": None,
+                    "reason": "continuous_mix",
                 })
                 continue
 
-            key = cache_key(artist, title)
-            cached = cache.get(key)
+            ck = cache_key(artist, title)
+            cached = tracks_cache.get(ck)
 
-            # Serve from cache on a hit, or on an exhausted miss IF every current
-            # source has actually been tried. When new sources are added (e.g.
-            # we extended the cascade from 3→5), old `exhausted: True` entries
-            # fall through and cascade tries only the new ones.
-            if cached and cached.get("bpm"):
+            # Decide whether to call the cascade. Skip if every source has
+            # already been tried for this track (hit or no-hit). Configuring
+            # a new source later automatically retries on the next run because
+            # untried sources fall back through to_run.
+            tried = set((cached or {}).get("sources_tried") or [])
+            if cached and set(ALL_SOURCES).issubset(tried):
                 cached_hits += 1
-                track_results.append({"position": position, "artist": artist, "title": title, **cached})
-                continue
-            if cached and cached.get("exhausted") and set(ALL_SOURCES).issubset(previously_tried(cached)):
-                track_results.append({"position": position, "artist": artist, "title": title, **cached})
+                track_results.append(build_track_result(position, artist, title, cached))
                 continue
 
-            # Cascade through whatever sources are left.
-            result = cascade_lookup(artist, title, cached, rl)
-            cache[key] = result
-            save_cache(cache)
-            if result.get("bpm"):
-                src = result.get("source") or "?"
-                new_hits_by_source[src] = new_hits_by_source.get(src, 0) + 1
-                print(f"  [{done}/{total_tracks}] {src}: {artist} - {title} -> {result['bpm']} (score {result.get('score')})")
-            track_results.append({"position": position, "artist": artist, "title": title, **result})
+            entry = cascade_all(artist, title, cached, rl)
+            tracks_cache[ck] = entry
+            cascade_runs += 1
+            if cascade_runs % 5 == 0 or done == total_tracks:
+                save_cache(cache)
+            result = build_track_result(position, artist, title, entry)
+            for src in entry.get("sources") or {}:
+                if cached is None or src not in (cached.get("sources") or {}):
+                    hits_by_source[src] = hits_by_source.get(src, 0) + 1
+            if result["bpm"]:
+                marker = {"high": "●●", "single": "○", "disputed": "?"}.get(
+                    result["bpm_confidence"], "·"
+                )
+                key_str = f" key={result['key_camelot']}" if result["key_camelot"] else ""
+                print(
+                    f"  [{done}/{total_tracks}] {marker} {artist} - {title} -> "
+                    f"{result['bpm']}{key_str}  sources={result['bpm_sources']}"
+                )
 
             if done % 25 == 0 or done == total_tracks:
-                hits_str = " ".join(f"{s}={new_hits_by_source[s]}" for s in ALL_SOURCES)
+                hits_str = " ".join(f"{s}={hits_by_source[s]}" for s in ALL_SOURCES)
                 print(f"  [{done}/{total_tracks}] progress: cached={cached_hits} {hits_str}")
 
         results.append({"id": release["id"], "artist": release["artist"], "title": release["title"], "tracks": track_results})
 
+    save_cache(cache)
     with BPM_OUT.open("w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    found = sum(1 for r in results for t in r["tracks"] if t.get("bpm"))
-    missing = total_tracks - found
-    hits_str = ", ".join(f"{s}={new_hits_by_source[s]}" for s in ALL_SOURCES)
-    print(f"Wrote {BPM_OUT}: {found}/{total_tracks} BPMs found, {missing} missing.")
+    found_bpm = sum(1 for r in results for t in r["tracks"] if t.get("bpm"))
+    found_key = sum(1 for r in results for t in r["tracks"] if t.get("key_camelot"))
+    high_conf = sum(1 for r in results for t in r["tracks"] if t.get("bpm_confidence") == "high")
+    disputed = sum(1 for r in results for t in r["tracks"] if t.get("bpm_confidence") == "disputed")
+    hits_str = ", ".join(f"{s}={hits_by_source[s]}" for s in ALL_SOURCES)
+    print(
+        f"Wrote {BPM_OUT}: {found_bpm}/{total_tracks} BPMs ({high_conf} multi-source consensus, "
+        f"{disputed} disputed), {found_key}/{total_tracks} keys."
+    )
     print(f"  new this run by source: {hits_str}   (cached hits: {cached_hits}, overrides: {override_hits})")
 
     unused_rp = [k for k in by_rp if ("rp", k[0], k[1]) not in used_overrides]

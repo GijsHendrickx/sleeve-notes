@@ -1,10 +1,10 @@
 # Vinyl BPM Stickers
 
-Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration and BPM**. Stickers are 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12" so you can read the BPM at a glance while DJing.
+Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Stickers are 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12" so you can read everything at a glance while DJing.
 
 Filter is conservative: **only 12"/LP vinyl** is kept (7"/10"/CD/cassette/digital are skipped). Genre is **not** filtered — every 12"/LP in the collection produces a sticker.
 
-BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats/Spotify → Beatport → AcousticBrainz). For tracks where no BPM is found, the sticker shows an **empty box** where the BPM digits would have gone, so you can pen the value in by hand after a needle-drop.
+BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciling them by consensus. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
 ---
 
@@ -194,14 +194,14 @@ Review `.tmp/skipped.json` if a record you expected is missing.
 python tools/fetch_bpm.py
 ```
 
-- Iterates over every track in `dj_releases.json`, asking 5 sources in order until one returns a validated hit. See [BPM cascade details](#bpm-cascade-details).
+- Iterates over every track in `dj_releases.json`, firing all 5 sources in parallel and reconciling them via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
 - Output: `.tmp/bpm_results.json` (the lookup results used by the PDF), plus a persistent `.tmp/bpm_cache.json` so the next run is fast.
 - Beatport is opt-in (see [Beatport: one-time auth](#beatport-one-time-auth)).
 
-Typical runtimes (rough, depending on cache state and how many sources are configured):
-- First run, **no** Spotify/Beatport creds: ~0.5–1 s per track
-- First run, **all** sources configured: ~1–2 s per track in the worst case (a few sources need to be queried per miss)
-- Cached re-run: a few seconds for the whole collection
+Typical runtimes (parallel cascade — bounded by the slowest source for each track):
+- First run, **no** Spotify/Beatport creds: ~1 s per track (AcousticBrainz/MusicBrainz is the long pole at 1 req/s)
+- First run, **all** sources configured: ~1–1.5 s per track
+- Cached re-run: seconds for the whole collection
 
 ### Step 4 — generate the PDF
 
@@ -217,7 +217,9 @@ python tools/generate_sticker_pdf.py --tile --tile-cols 3 --tile-rows 4   # 12-p
 - **Default mode** ships with crop marks and a 4 mm gutter between stickers, sized via `--sticker-w` / `--sticker-h` (mm). Columns and rows per page are auto-derived from the size so as many stickers as possible fit. Sizes that don't fit on A4 are rejected.
 - **Tile mode (`--tile`)** lays stickers edge-to-edge with zero gutters and zero page margin so the print can be sliced with just a few straight ruler cuts (`(cols − 1) + (rows − 1)` total). Sticker size is derived from `--tile-cols` × `--tile-rows` (default 2×5 = 10 per A4 → 105 × 59.4 mm). `--sticker-w` / `--sticker-h` are ignored when `--tile` is set. **Print borderless** or expect ~3 mm clipping on the outer stickers (most home printers have a small unprintable margin).
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
-- Tracks without a BPM hit get a small **empty rectangle** drawn in the BPM column on the sticker itself — pen the value in by hand after a needle-drop. No separate fill-in pages are added.
+- **Per-row columns** (left → right): position, artist + title, duration, Camelot key, BPM. The BPM column prepends a small **●** dot when two or more sources agreed (or the value came from `overrides.json`); single-source / disputed hits show just the digits. Tracks without any BPM hit show an **empty rectangle** for a hand-written value.
+- **Header**: the artist line shows the playback **RPM** (`33⅓` / `45`) in grey when Discogs lists it. Releases where the Discogs `formats[*].descriptions` array doesn't include an RPM string simply have no badge — about 30–40 % of community-submitted releases.
+- **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
 
 ---
@@ -232,8 +234,9 @@ After a complete run, `.tmp/` contains:
 | `release_cache/<id>.json` | One file per fetched release — persistent cache |
 | `dj_releases.json` | Releases that survived the 12"/LP filter |
 | `skipped.json` | Releases that were filtered out, with reason |
-| `bpm_results.json` | BPM lookup result per track (used by the PDF) |
-| `bpm_cache.json` | Persistent BPM cache, tracks which sources were tried |
+| `bpm_results.json` | Per-track canonical BPM + key + confidence + source list, consumed by the PDF |
+| `bpm_cache.json` | Persistent v2 cache: per-source raw results so consensus can be recomputed without re-fetching |
+| `bpm_cache.v1.json.bak` | (Only if migrated.) Backup of the pre-consensus cache from before the parallel/consensus rewrite — safe to delete |
 | `beatport_tokens.json` | Beatport access + refresh tokens (auto-refreshed) |
 | **`stickers.pdf`** | **The final printable PDF** |
 
@@ -262,8 +265,9 @@ Folder filtering in `--csv` mode matches `--folder "NAME"` case-insensitively ag
 Every cache is designed so you can interrupt and resume safely.
 
 - **`.tmp/release_cache/<id>.json`** — the raw `/releases/{id}` JSON. Existing files are served from disk and never re-fetched.
-- **`.tmp/bpm_cache.json`** — one entry per track key. Each entry tracks `sources_tried`, so re-runs only call sources that have not yet been queried for that track. When all five have been tried, the entry is marked `exhausted: true` and is no longer re-queried.
-- **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already exhausted some entries with the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. The same applies when you authenticate Beatport for the first time.
+- **`.tmp/bpm_cache.json`** — v2 schema. One entry per track key, with **per-source** raw results stored under `sources`. Each entry tracks `sources_tried`, so re-runs only call sources that have not yet been queried for that track. Because we store the per-source BPM/key, the consensus can be recomputed on every load without re-fetching.
+- **Schema migration:** if you ran an older version of this project, the legacy `bpm_cache.json` is detected on first run, archived to `bpm_cache.v1.json.bak`, and a fresh v2 cache is built. Per-source raw results don't exist in the v1 format, so migration without re-fetching isn't possible.
+- **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
 - **Re-running steps:** Step 2 always rebuilds `dj_releases.json` from `collection.json` (cheap). Steps 3 and 4 are cache-aware.
 
 To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` for a fresh BPM lookup) and re-run the step.
@@ -272,15 +276,32 @@ To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` fo
 
 ## BPM cascade details
 
-`tools/fetch_bpm.py` tries five sources in order, accepting the first validated hit per track:
+`tools/fetch_bpm.py` fires **all five sources in parallel per track** (via `ThreadPoolExecutor`) and reconciles them by consensus. Each source can contribute BPM, musical key, or both — independently:
 
-1. **songbpm.com** — HTML scrape of canonical detail pages. No auth, 1 req/s. Strong general coverage.
-2. **Deezer** — public `api.deezer.com/track` endpoint. No auth, ~4 req/s. Note: a track may exist on Deezer with `bpm: 0`, which means "known but not analysed" — counted as a miss and falls through to the next source.
-3. **ReccoBeats** — drop-in replacement for the deprecated Spotify audio-features endpoint. Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→Spotify-ID translation step (no user OAuth). Spotify Client Credentials tokens last 1 hour and are cached in-memory.
-4. **Beatport v4** — editorial BPM provided by the labels themselves; very accurate for house/techno/DnB/disco/electro. Uses the public Swagger client_id; tokens stored in `.tmp/beatport_tokens.json` (see next section).
-5. **AcousticBrainz** — open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases.
+| Source | BPM | Key | Notes |
+|---|:---:|:---:|---|
+| **songbpm.com** | ✓ | ✓ | HTML scrape of canonical detail pages. No auth, 1 req/s. Strong general coverage. |
+| **Deezer** | ✓ | — | Public `api.deezer.com/track` endpoint. No auth, ~4 req/s. `bpm: 0` = "known but not analysed" — counted as a miss. |
+| **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). |
+| **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `.tmp/beatport_tokens.json` (see next section). |
+| **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
+
+**Consensus** (per track):
+- **BPM** — cluster all returned values within ±1 BPM. The largest cluster with **≥2 members** wins, value = median, confidence = `high` (gets the ● dot on the sticker). Only one source returned → confidence = `single` (digits only). Multiple sources, none agreeing → priority-pick (`beatport > songbpm > reccobeats > deezer > acousticbrainz`), confidence = `disputed` (digits only).
+- **Key** — exact-Camelot-string majority across sources. All keys are normalised to Camelot before comparison (Beatport's `camelot_number`/`camelot_letter` fields are used directly; Spotify-style pitch class + mode is mapped; AcousticBrainz `tonal.key_key`/`tonal.key_scale` is parsed; songbpm.com is best-effort).
+- **Manual override** — `overrides.json` always wins over the consensus (see next section).
+
+**Cache schema (v2):** the cache stores per-source raw results so consensus can be recomputed offline without re-querying. Each entry:
+```json
+{
+  "sources": { "songbpm": {"bpm": 128, "key_camelot": "8A", "score": 95}, "deezer": {"bpm": 128, "score": 90}, ... },
+  "sources_tried":       ["songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz"],
+  "sources_unavailable": [],
+  "sources_errored":     []
+}
+```
 
 **Continuous mixes** — a track with a "side-only" position (e.g. `A`, with no `A1`/`A2` subnumbers) longer than 12 minutes is treated as a continuous mix: no BPM lookup is attempted and the sticker shows `(mix)`.
 
@@ -305,11 +326,11 @@ Copy `overrides.example.json` to `overrides.json` and edit. The file is a flat J
 
 ```json
 [
-  { "release_id": 123456, "position": "A1", "bpm": 128 },
+  { "release_id": 123456, "position": "A1", "bpm": 128, "key_camelot": "8A" },
   { "release_id": 123456, "position": "B2", "bpm": null,
     "note": "force empty box even though songbpm returned 174" },
   { "release_id": 789012, "position": "A", "continuous_mix": true },
-  { "artist": "Daft Punk", "title": "Around the World", "bpm": 121 }
+  { "artist": "Daft Punk", "title": "Around the World", "bpm": 121, "key_camelot": "Am" }
 ]
 ```
 
@@ -321,8 +342,9 @@ Per-entry fields:
 
 | Field | Meaning |
 |---|---|
-| `bpm: <int>` (50–250) | Override the BPM. Sticker shows the digits. |
+| `bpm: <int>` (50–250) | Override the BPM. Sticker shows the digits with a **●** dot (manual values are treated as fully trusted). |
 | `bpm: null` | Force "no BPM" — sticker shows the empty fill-in box. Use to suppress a wrong source hit. |
+| `key_camelot: <str>` | Override the Camelot key. Accepts Camelot (`8A`, `12B`), musical (`Am`, `C#m`, `F# major`), or slash notation (`F♯/G♭ Major`); all are normalised to Camelot. |
 | `continuous_mix: true` | Mark the track as a continuous DJ mix — sticker shows `(mix)` instead of a number. |
 | `note` | Free-text reminder for yourself. Ignored by the script. |
 
