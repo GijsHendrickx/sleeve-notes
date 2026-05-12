@@ -4,7 +4,7 @@ Generate a printable A4 PDF with one sticker per record from your Discogs collec
 
 Filter is conservative: **only 12"/LP vinyl** is kept (7"/10"/CD/cassette/digital are skipped). Genre is **not** filtered — every 12"/LP in the collection produces a sticker.
 
-BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats/Spotify → Beatport → AcousticBrainz). Tracks for which no BPM can be found get listed on a "BPM fill-in page" at the end of the PDF, so you can fill them in by hand or after a needle-drop.
+BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats/Spotify → Beatport → AcousticBrainz). For tracks where no BPM is found, the sticker shows an **empty box** where the BPM digits would have gone, so you can pen the value in by hand after a needle-drop.
 
 ---
 
@@ -213,7 +213,7 @@ python tools/generate_sticker_pdf.py --sticker-w 140 --sticker-h 80  # bigger st
 - Output: `.tmp/stickers.pdf` with crop marks and a faint border.
 - **Sticker size is configurable** via `--sticker-w` and `--sticker-h` (both in millimetres). A4 is the constraint; columns and rows per page are auto-derived from the chosen size so as many stickers as possible fit while keeping a 4 mm page edge. Sizes that don't fit on A4 are rejected with a clear error.
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
-- Tracks without a BPM hit end up on appended **"BPM fill-in page"** pages (write-in lines), so you can needle-drop them later.
+- Tracks without a BPM hit get a small **empty rectangle** drawn in the BPM column on the sticker itself — pen the value in by hand after a needle-drop. No separate fill-in pages are added.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid`).
 
 ---
@@ -319,7 +319,7 @@ Under the hood, the script uses the same fully-scripted authorization_code flow 
 3. After printing one test page, **measure a sticker with a ruler**. If it's not 96 × 50.8 mm to within a millimetre, the printer is scaling — fix the print settings and try again.
 4. Print onto **A4 self-adhesive paper** (any matte sticker paper works). Cut along the crop marks. Stick on the sleeve.
 
-The last page(s) of the PDF contain a "BPM fill-in page" — a table of `artist – title` rows with a blank box for the BPM. Print these onto plain paper to record BPMs you needle-drop later, then re-run the workflow if you want them rendered into stickers.
+Tracks for which no BPM could be found get an empty rectangle on the sticker itself in the right-hand column — write the BPM in by hand once you've needle-dropped it.
 
 ---
 

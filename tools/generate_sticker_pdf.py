@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from reportlab.lib.colors import HexColor, black, grey, red
+from reportlab.lib.colors import HexColor, black, grey
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -311,8 +311,16 @@ def draw_sticker(
                 c.setFillColor(GREY)
                 c.drawRightString(inner_x + inner_w, baseline, "mix")
             else:
-                c.setFillColor(red)
-                c.drawRightString(inner_x + inner_w, baseline, "?")
+                # Unknown BPM → empty rectangle, pen the value in after printing.
+                # Box top matches the BPM cap-height; box bottom drops slightly
+                # below baseline so even the smallest case (6pt track / 9pt BPM)
+                # stays inside line_h.
+                box_top = baseline + 0.72 * bpm_size
+                box_bottom = baseline - 0.10 * bpm_size
+                box_left = inner_x + inner_w - bpm_col_w
+                c.setStrokeColor(GREY)
+                c.setLineWidth(0.4)
+                c.rect(box_left, box_bottom, bpm_col_w, box_top - box_bottom, stroke=1, fill=0)
             c.setFillColor(black)
 
             cursor_y -= line_h
@@ -340,75 +348,6 @@ def draw_sticker_pages(c: canvas.Canvas, releases: list[dict], bpm_lookup: dict[
     if slot != 0:
         c.showPage()
     return total_stickers
-
-
-def collect_missing(releases: list[dict], bpm_lookup: dict[int, dict]) -> list[dict]:
-    missing: list[dict] = []
-    for release in releases:
-        per_pos = bpm_lookup.get(release["id"], {})
-        for t in release["tracks"]:
-            info = per_pos.get(t["position"], {})
-            if info.get("bpm") is None and info.get("reason") != "continuous_mix":
-                missing.append(
-                    {
-                        "release_artist": "V/A" if release.get("compilation") else release["artist"],
-                        "release_title": release["title"],
-                        "position": t["position"],
-                        "artist": t.get("artist") or release["artist"],
-                        "title": t["title"],
-                    }
-                )
-    return missing
-
-
-def draw_fill_in_pages(c: canvas.Canvas, missing: list[dict]) -> None:
-    if not missing:
-        return
-    col_pad = 12 * mm
-    row_h = 9 * mm
-    header_h = 14 * mm
-    rows_per_page = int((PAGE_H - 2 * col_pad - header_h) // row_h)
-
-    def page_header():
-        c.setFillColor(black)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(col_pad, PAGE_H - col_pad, "BPM fill-in page")
-        c.setFont("Helvetica", 9)
-        c.setFillColor(GREY)
-        c.drawString(col_pad, PAGE_H - col_pad - 14, "Tracks without an automatic BPM hit. Write the BPM in the right-hand column.")
-        c.setFillColor(black)
-
-    def draw_row(y: float, item: dict) -> None:
-        release = f"{item['release_artist']} – {item['release_title']}"
-        track = f"{item['position']}  {item['artist']} – {item['title']}"
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(col_pad, y + row_h - 12, ellipsize(release, PAGE_W - 2 * col_pad - 30 * mm, "Helvetica-Bold", 8))
-        c.setFont("Helvetica", 8)
-        c.drawString(col_pad, y + row_h - 22, ellipsize(track, PAGE_W - 2 * col_pad - 30 * mm, "Helvetica", 8))
-        box_x = PAGE_W - col_pad - 22 * mm
-        c.setStrokeColor(grey)
-        c.setLineWidth(0.4)
-        c.rect(box_x, y + 2, 18 * mm, row_h - 4, stroke=1, fill=0)
-        c.setFont("Helvetica", 6)
-        c.setFillColor(GREY)
-        c.drawString(box_x + 1, y + row_h - 5, "BPM")
-        c.setFillColor(black)
-        c.setStrokeColor(HexColor("#cccccc"))
-        c.line(col_pad, y, PAGE_W - col_pad, y)
-
-    page_header()
-    cursor_y = PAGE_H - col_pad - header_h - row_h
-    drawn = 0
-    for item in missing:
-        if drawn >= rows_per_page:
-            c.showPage()
-            page_header()
-            cursor_y = PAGE_H - col_pad - header_h - row_h
-            drawn = 0
-        draw_row(cursor_y, item)
-        cursor_y -= row_h
-        drawn += 1
-    c.showPage()
 
 
 def build_bpm_lookup(bpm_results: list[dict]) -> dict[int, dict[str, dict]]:
@@ -458,21 +397,25 @@ def main() -> int:
 
     sticker_count = draw_sticker_pages(c, releases, bpm_lookup)
 
-    missing = collect_missing(releases, bpm_lookup)
-    draw_fill_in_pages(c, missing)
-
     c.save()
     per_page = COLS * ROWS
     pages = (sticker_count + per_page - 1) // per_page
     extra = sticker_count - len(releases)
     extra_note = f" (incl. {extra} extra stickers from multi-disc / >8-track splits)" if extra else ""
+    missing_count = sum(
+        1
+        for r in releases
+        for t in r["tracks"]
+        if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
+        and bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("reason") != "continuous_mix"
+    )
     print(
         f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
         f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
         f"on a {COLS}x{ROWS} grid){extra_note}."
     )
-    if missing:
-        print(f"  {len(missing)} tracks need manual BPM entry (fill-in pages appended).")
+    if missing_count:
+        print(f"  {missing_count} tracks have an empty BPM box for handwriting.")
     return 0
 
 

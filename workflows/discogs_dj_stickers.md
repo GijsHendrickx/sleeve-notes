@@ -80,7 +80,7 @@ Generate a printable A4 PDF with stickers (one per release) for the DJ-usable 12
    python tools/generate_sticker_pdf.py
    ```
    - Output: `.tmp/stickers.pdf`.
-   - Stickers are 96×50.8 mm, two per row on A4, with crop marks and a faint border. Tracks without a found BPM are listed on appended "BPM fill-in page" pages at the end of the PDF.
+   - Stickers are 96×50.8 mm by default (configurable via `--sticker-w` / `--sticker-h` in mm), two per row on A4, with crop marks and a faint border. Tracks without a found BPM get a small empty rectangle in the BPM column on the sticker so the user can pen the value in by hand after printing.
 
 ## Outputs
 - `.tmp/stickers.pdf` — print on A4 at **100% scale** (no "fit to page"), preferably on self-adhesive paper. Sticker size is 96×50.8 mm; verify with a ruler after the first print.
