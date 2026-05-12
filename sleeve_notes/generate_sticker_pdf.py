@@ -291,6 +291,7 @@ def draw_sticker(
     bpm_tracks_by_pos: dict[str, dict],
     sticker_idx: int = 0,
     sticker_count: int = 1,
+    qr: bool = True,
 ) -> None:
     draw_sticker_border(c, x, y)
 
@@ -299,7 +300,7 @@ def draw_sticker(
     top = y + STICKER_H - PAD_Y
 
     release_id = release.get("id")
-    if release_id:
+    if qr and release_id:
         qr_x = x + STICKER_W - QR_CORNER_PAD - QR_SIZE
         qr_y = y + STICKER_H - QR_CORNER_PAD - QR_SIZE
         qr_payload = DISCOGS_RELEASE_URL.format(id=release_id)
@@ -319,25 +320,32 @@ def draw_sticker(
         title_text = f"{title_text}  [{'·'.join(side_labels)}]"
 
     rpm_list = release.get("rpm") or []
-    rpm_label = "/".join(display_rpm(r) for r in rpm_list) if rpm_list else ""
+    rpm_top = display_rpm(rpm_list[0]) if rpm_list else ""
+    rpm_bot = "/".join(display_rpm(r) for r in rpm_list[1:]) if len(rpm_list) > 1 else ""
     artist_baseline = top - HEADER_ARTIST_PT
+    title_baseline = artist_baseline - HEADER_TITLE_PT - 1
 
+    c.setFont("Helvetica", HEADER_TITLE_PT)
+    c.setFillColor(GREY)
     artist_text_w = header_inner_w
-    if rpm_label:
-        rpm_w = stringWidth(rpm_label, "Helvetica", HEADER_TITLE_PT)
-        c.setFont("Helvetica", HEADER_TITLE_PT)
-        c.setFillColor(GREY)
-        c.drawRightString(inner_x + header_inner_w, artist_baseline, rpm_label)
-        artist_text_w = header_inner_w - rpm_w - 4
+    title_text_w = header_inner_w
+    if rpm_top:
+        rpm_top_w = stringWidth(rpm_top, "Helvetica", HEADER_TITLE_PT)
+        c.drawRightString(inner_x + header_inner_w, artist_baseline, rpm_top)
+        artist_text_w = header_inner_w - rpm_top_w - 4
+    if rpm_bot:
+        rpm_bot_w = stringWidth(rpm_bot, "Helvetica", HEADER_TITLE_PT)
+        c.drawRightString(inner_x + header_inner_w, title_baseline, rpm_bot)
+        title_text_w = header_inner_w - rpm_bot_w - 4
 
     artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
-    title_line = ellipsize(title_text, header_inner_w, "Helvetica-Oblique", HEADER_TITLE_PT)
+    title_line = ellipsize(title_text, title_text_w, "Helvetica-Oblique", HEADER_TITLE_PT)
 
     c.setFillColor(black)
     c.setFont("Helvetica-Bold", HEADER_ARTIST_PT)
     c.drawString(inner_x, artist_baseline, artist_line)
     c.setFont("Helvetica-Oblique", HEADER_TITLE_PT)
-    c.drawString(inner_x, artist_baseline - HEADER_TITLE_PT - 1, title_line)
+    c.drawString(inner_x, title_baseline, title_line)
 
     if not side_labels:
         return
@@ -424,7 +432,12 @@ def draw_sticker(
             cursor_y -= SECTION_GAP
 
 
-def draw_sticker_pages(c: canvas.Canvas, releases: list[dict], bpm_lookup: dict[int, dict]) -> int:
+def draw_sticker_pages(
+    c: canvas.Canvas,
+    releases: list[dict],
+    bpm_lookup: dict[int, dict],
+    qr: bool = True,
+) -> int:
     origins = sticker_origins()
     slot = 0
     total_stickers = 0
@@ -435,7 +448,7 @@ def draw_sticker_pages(c: canvas.Canvas, releases: list[dict], bpm_lookup: dict[
             x, y = origins[slot]
             if not TILE_MODE:
                 draw_crop_marks(c, x, y)
-            draw_sticker(c, x, y, release, sides_map, bpm_tracks, sticker_idx, len(stickers))
+            draw_sticker(c, x, y, release, sides_map, bpm_tracks, sticker_idx, len(stickers), qr=qr)
             slot += 1
             total_stickers += 1
             if slot >= len(origins):
@@ -571,6 +584,12 @@ def main(argv: list[str] | None = None) -> int:
         "print history (print_runs / print_run_releases tables).",
     )
     parser.add_argument(
+        "--no-qr", dest="qr", action="store_false",
+        help="Don't render the Discogs-release QR code in the top-right of each "
+        "sticker. The header expands to use the full sticker width.",
+    )
+    parser.set_defaults(qr=True)
+    parser.add_argument(
         "-o", "--output", type=Path, default=DEFAULT_PDF_OUT,
         help=f"Output PDF path (default: {DEFAULT_PDF_OUT.relative_to(ROOT)}). "
         "Parent directory is created if needed. A bare filename writes to the "
@@ -622,7 +641,7 @@ def main(argv: list[str] | None = None) -> int:
 
         c = canvas.Canvas(str(pdf_out), pagesize=A4)
         c.setTitle("Discogs DJ Stickers")
-        sticker_count = draw_sticker_pages(c, releases, bpm_lookup)
+        sticker_count = draw_sticker_pages(c, releases, bpm_lookup, qr=args.qr)
         c.save()
 
         per_page = COLS * ROWS
