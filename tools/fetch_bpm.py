@@ -259,14 +259,25 @@ def parse_key_to_camelot(s: str | None) -> str | None:
 # HTTP helpers
 # ============================================================================
 
+_SESSION = requests.Session()
+_SESSION.mount(
+    "https://",
+    requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=40),
+)
+_SESSION.mount(
+    "http://",
+    requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=40),
+)
+
+
 @retry(
     retry=retry_if_exception_type(RetryableHTTPError),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=5),
+    stop=stop_after_attempt(2),
     reraise=True,
 )
 def http_get_html(url: str) -> tuple[int, str]:
-    resp = requests.get(
+    resp = _SESSION.get(
         url,
         headers={"User-Agent": SONGBPM_USER_AGENT, "Accept": "text/html"},
         timeout=20,
@@ -288,12 +299,12 @@ def http_get_html(url: str) -> tuple[int, str]:
 
 @retry(
     retry=retry_if_exception_type(RetryableHTTPError),
-    wait=wait_exponential(multiplier=2, min=2, max=20),
-    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=5),
+    stop=stop_after_attempt(2),
     reraise=True,
 )
 def http_get_json(url: str, params: dict | None = None) -> tuple[int, dict | None]:
-    resp = requests.get(
+    resp = _SESSION.get(
         url,
         params=params,
         headers={"User-Agent": API_USER_AGENT, "Accept": "application/json"},
@@ -348,17 +359,19 @@ class RateLimiter:
 # ============================================================================
 
 def songbpm_candidate_urls(artist: str, title: str) -> list[str]:
+    # Cap at 2 URLs: best-guess (primary artist + parenthesis-stripped title)
+    # and broadest fallback (full artist + raw title). The previous 4–6
+    # permutations rarely produced extra hits beyond these two and burned
+    # 0.6–0.9 s of rate-limit time per miss.
     title_clean = strip_parentheses(title)
-    title_alt = re.sub(r"\s+", " ", re.sub(r"[''`]", "", title or "")).strip()
     artist_full = artist or ""
     artist_first = primary_artist(artist or "")
 
     pairs: list[tuple[str, str]] = []
-    for a in (artist_first, artist_full):
-        for t in (title_clean, title_alt, title or ""):
-            if not a or not t:
-                continue
-            pairs.append((slugify(a), slugify(t)))
+    if artist_first and title_clean:
+        pairs.append((slugify(artist_first), slugify(title_clean)))
+    if artist_full and title:
+        pairs.append((slugify(artist_full), slugify(title)))
 
     seen: set[tuple[str, str]] = set()
     urls: list[str] = []
@@ -512,7 +525,7 @@ def _get_spotify_token() -> str:
         if not cid or not cs:
             raise SourceUnavailable("missing SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET in .env")
         auth = base64.b64encode(f"{cid}:{cs}".encode()).decode()
-        resp = requests.post(
+        resp = _SESSION.post(
             SPOTIFY_TOKEN_URL,
             headers={"Authorization": f"Basic {auth}"},
             data={"grant_type": "client_credentials"},
@@ -539,7 +552,7 @@ def _spotify_search_best(artist: str, title: str, rl: RateLimiter) -> tuple[floa
     for q in queries:
         rl.wait("spotify", SPOTIFY_RATE_S)
         try:
-            resp = requests.get(
+            resp = _SESSION.get(
                 SPOTIFY_SEARCH_URL,
                 params={"q": q, "type": "track", "limit": 5},
                 headers={"Authorization": f"Bearer {token}"},
@@ -647,7 +660,7 @@ def _save_beatport_tokens(tokens: dict) -> None:
 
 
 def _refresh_beatport_access(refresh_token: str) -> dict:
-    resp = requests.post(
+    resp = _SESSION.post(
         BEATPORT_TOKEN_URL,
         data={
             "grant_type": "refresh_token",
@@ -751,7 +764,7 @@ def beatport_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
     for q in queries:
         rl.wait("beatport", BEATPORT_RATE_S)
         try:
-            resp = requests.get(
+            resp = _SESSION.get(
                 f"{BEATPORT_BASE}/catalog/search/",
                 params={"q": q, "type": "tracks", "per_page": 10},
                 headers=headers,
@@ -1249,7 +1262,15 @@ def derive_track_result(
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--workers", type=int, default=8,
+        help="Concurrent tracks to cascade (default: 8). The per-host "
+             "RateLimiter caps real throughput at the slowest source "
+             "(MusicBrainz ~1 req/s), so values above ~8 give diminishing "
+             "returns.",
+    )
+    args = parser.parse_args(argv)
 
     with dbmod.session() as conn:
         rl = RateLimiter()
@@ -1272,23 +1293,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        # Track count for ETA
         total_tracks = conn.execute(
             "SELECT COUNT(*) AS n FROM tracks t "
             "JOIN releases r ON r.id = t.release_id "
             "WHERE r.is_dj_release = 1"
         ).fetchone()["n"]
 
-        print(
-            f"Looking up BPM/key for {total_tracks} tracks across "
-            f"{len(releases)} releases..."
-        )
-        done = 0
+        # Pass 1: classify every track without doing any network I/O.
+        # Anything that needs the cascade lands in `worklist`; everything
+        # else (override / continuous-mix / fully-cached) is accounted for
+        # straight away.
         cached_hits = 0
         override_hits = 0
-        cascade_runs = 0
-        hits_by_source: dict[str, int] = {s: 0 for s in ALL_SOURCES}
-
+        worklist: list[dict] = []
         for release in releases:
             rid = release["id"]
             release_artist = release["artist"] or "V/A"
@@ -1297,15 +1314,12 @@ def main(argv: list[str] | None = None) -> int:
                 "FROM tracks WHERE release_id = ? ORDER BY position",
                 (rid,),
             ).fetchall()
-
             for track in tracks:
-                done += 1
                 artist = track["artist"] or release_artist
                 title = track["title"] or ""
                 position = track["position"] or ""
                 duration_s = track["duration_s"]
 
-                # Manual overrides win over everything.
                 override = by_rp.get((rid, position))
                 override_id: tuple | None = None
                 if override is not None:
@@ -1325,34 +1339,77 @@ def main(argv: list[str] | None = None) -> int:
 
                 ck = cache_key(artist, title)
                 cached = load_cache_entry(conn, ck)
-
                 tried = set((cached or {}).get("sources_tried") or [])
                 if cached and set(ALL_SOURCES).issubset(tried):
                     cached_hits += 1
                     continue
 
-                entry = cascade_all(artist, title, cached, rl)
-                save_cache_entry(conn, ck, artist, title, entry)
-                cascade_runs += 1
-                if cascade_runs % 5 == 0 or done == total_tracks:
-                    conn.commit()
-                for src in entry.get("sources") or {}:
-                    if cached is None or src not in (cached.get("sources") or {}):
-                        hits_by_source[src] = hits_by_source.get(src, 0) + 1
-                result = build_track_result(position, artist, title, entry)
-                if result["bpm"]:
-                    marker = {"high": "●●", "single": "○", "disputed": "?"}.get(
-                        result["bpm_confidence"], "·"
-                    )
-                    key_str = f" key={result['key_camelot']}" if result["key_camelot"] else ""
-                    print(
-                        f"  [{done}/{total_tracks}] {marker} {artist} - {title} -> "
-                        f"{result['bpm']}{key_str}  sources={result['bpm_sources']}"
-                    )
+                worklist.append({
+                    "rid": rid, "position": position,
+                    "artist": artist, "title": title,
+                    "cache_key": ck, "cached": cached,
+                })
 
-                if done % 25 == 0 or done == total_tracks:
-                    hits_str = " ".join(f"{s}={hits_by_source[s]}" for s in ALL_SOURCES)
-                    print(f"  [{done}/{total_tracks}] progress: cached={cached_hits} {hits_str}")
+        print(
+            f"Looking up BPM/key for {total_tracks} tracks across "
+            f"{len(releases)} releases "
+            f"({cached_hits} fully cached, {override_hits} overridden, "
+            f"{len(worklist)} to cascade with {args.workers} workers)..."
+        )
+
+        # Pass 2: cascade in parallel. Workers do pure network work and
+        # return entries; the main thread is the sole DB writer.
+        hits_by_source: dict[str, int] = {s: 0 for s in ALL_SOURCES}
+        done_cascade = 0
+
+        if worklist:
+            with ThreadPoolExecutor(max_workers=args.workers) as ex:
+                futures = {
+                    ex.submit(cascade_all, w["artist"], w["title"], w["cached"], rl): w
+                    for w in worklist
+                }
+                for fut in as_completed(futures):
+                    w = futures[fut]
+                    try:
+                        entry = fut.result()
+                    except Exception as e:
+                        print(
+                            f"  ERROR cascading {w['artist']} - {w['title']}: {e}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    save_cache_entry(conn, w["cache_key"], w["artist"], w["title"], entry)
+                    done_cascade += 1
+                    cached_src = (w["cached"] or {}).get("sources") or {}
+                    for src in entry.get("sources") or {}:
+                        if src not in cached_src:
+                            hits_by_source[src] = hits_by_source.get(src, 0) + 1
+                    if done_cascade % 5 == 0 or done_cascade == len(worklist):
+                        conn.commit()
+                    result = build_track_result(
+                        w["position"], w["artist"], w["title"], entry
+                    )
+                    if result["bpm"]:
+                        marker = {"high": "●●", "single": "○", "disputed": "?"}.get(
+                            result["bpm_confidence"], "·"
+                        )
+                        key_str = (
+                            f" key={result['key_camelot']}"
+                            if result["key_camelot"] else ""
+                        )
+                        print(
+                            f"  [{done_cascade}/{len(worklist)}] {marker} "
+                            f"{w['artist']} - {w['title']} -> "
+                            f"{result['bpm']}{key_str}  "
+                            f"sources={result['bpm_sources']}"
+                        )
+                    if done_cascade % 25 == 0 or done_cascade == len(worklist):
+                        hits_str = " ".join(
+                            f"{s}={hits_by_source[s]}" for s in ALL_SOURCES
+                        )
+                        print(
+                            f"  [{done_cascade}/{len(worklist)}] progress: {hits_str}"
+                        )
 
         conn.commit()
 

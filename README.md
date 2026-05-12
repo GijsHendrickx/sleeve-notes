@@ -221,17 +221,18 @@ Review the skipped set with `bpm-stickers query releases --where "is_dj_release 
 ### Step 3 — look up BPMs
 
 ```bash
-bpm-stickers bpm
+bpm-stickers bpm                  # default: 8 cross-track worker threads
+bpm-stickers bpm --workers 12     # bump if you're bandwidth-rich
 ```
 
-- Iterates over every track in the `tracks` table (DJ releases only), firing all 5 sources in parallel and reconciling them via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
+- Iterates over every track in the `tracks` table (DJ releases only). A pool of worker threads (`--workers 8` by default) processes tracks in parallel; inside each worker, all 5 sources fire in parallel and are reconciled via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
 - Output: rows in `bpm_cache` (one per track, with `sources_tried` array) plus rows in `bpm_source_hits` (one per source-that-returned-something). Per-track consensus is derived on the fly by the renderer — no `bpm_results.json` needed.
 - Beatport is opt-in (see [Beatport: one-time auth](#beatport-one-time-auth)).
 
-Typical runtimes (parallel cascade — bounded by the slowest source for each track):
-- First run, **no** Spotify/Beatport creds: ~1 s per track (AcousticBrainz/MusicBrainz is the long pole at 1 req/s)
-- First run, **all** sources configured: ~1–1.5 s per track
-- Cached re-run: seconds for the whole collection
+Typical runtimes — bounded by the slowest per-host rate limit shared across workers (MusicBrainz and SongBPM, ~1 req/s each):
+- **First run, all sources configured:** ~12 tracks/min sustained (≈ 35 min for a 445-track collection).
+- **Cached re-run:** seconds for the whole collection — `sources_tried` makes the cascade no-op for fully-cached tracks.
+- Bumping `--workers` past ~8 gives diminishing returns; the bottleneck is the global SongBPM / MB rate, not local concurrency.
 
 ### Step 4 — generate the PDF
 
@@ -393,7 +394,7 @@ Your overrides go too — back up with `bpm-stickers query overrides --limit 0 -
 
 ## BPM cascade details
 
-`tools/fetch_bpm.py` fires **all five sources in parallel per track** (via `ThreadPoolExecutor`) and reconciles them by consensus. Each source can contribute BPM, musical key, or both — independently:
+`tools/fetch_bpm.py` runs the cascade with **two levels of `ThreadPoolExecutor`**: an outer pool (`--workers 8` by default) processes tracks in parallel, and inside each worker an inner pool fires **all five sources in parallel per track**, then reconciles them by consensus. Each source can contribute BPM, musical key, or both — independently:
 
 | Source | BPM | Key | Notes |
 |---|:---:|:---:|---|

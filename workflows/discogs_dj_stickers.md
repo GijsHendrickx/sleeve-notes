@@ -58,9 +58,11 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
 
 3. **Look up BPMs (5-source cascade)**
    ```
-   bpm-stickers bpm
+   bpm-stickers bpm                    # default: 8 worker threads
+   bpm-stickers bpm --workers 12       # bump if you're bandwidth-rich
    ```
-   - Per track, fires all 5 sources in parallel and reconciles by consensus:
+   - **Concurrency**: tracks are processed in parallel by a pool of worker threads (default `--workers 8`). For each track all 5 sources fire in parallel inside the worker, then `consense()` picks the canonical value. Throughput ceiling is set by the slowest per-host rate limit (MusicBrainz / SongBPM, ~1 req/s each) shared across workers, so values above ~8 give diminishing returns.
+   - **Sources**:
      1. **songbpm.com** — direct HTML scrape of canonical detail pages.
      2. **Deezer** — public JSON API (no auth).
      3. **ReccoBeats** — drop-in replacement for Spotify's deprecated audio-features.
@@ -73,7 +75,8 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
    - Every `bpm_cache` row tracks `sources_tried`: re-runs only call sources that have not yet been queried for that track. When you extend the cascade with a new source later, existing entries are automatically re-cascaded — only for that new source.
    - Sources without configured credentials raise `SourceUnavailable` and are skipped without being marked as `tried`, so you can add credentials later and only that source will be tried on the next run.
    - Validation: rapidfuzz on artist+title (>= 70 score) against every source's result — prevents a random hit on a same-titled track from being accepted.
-   - Rate limits: songbpm 1 req/s, Deezer ~4 req/s, Spotify ~5 req/s, ReccoBeats ~7 req/s, Beatport 2 req/s, MusicBrainz strict 1 req/s.
+   - Rate limits (per-host, globally enforced across worker threads): songbpm 1 req/s, Deezer ~4 req/s, Spotify ~5 req/s, ReccoBeats ~7 req/s, Beatport 2 req/s, MusicBrainz strict 1 req/s.
+   - **Runtime**: ~12 tracks/min sustained on a 445-track collection (≈ 35 min for a fresh DB; near-zero on re-runs thanks to `sources_tried`). HTTP retries use a tight `wait_exponential(1, 5)` × 2 attempts — a flaky source costs at most ~5 s and the cascade falls through to the other four.
    - The Beatport client_id (`0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd`) is scraped from the public Swagger UI JS bundle at `api.beatport.com/v4/docs/`. Stable since 2023; if it ever rotates, re-scrape from `/static/btprt/*.js` (grep for `API_CLIENT_ID`).
 
 4. **Generate PDF**
