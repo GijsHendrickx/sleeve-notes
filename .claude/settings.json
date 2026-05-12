@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 tools/fetch_discogs_collection.py)",
+      "Bash(python3 tools/fetch_discogs_collection.py *)",
+      "Bash(python3 tools/filter_dj_releases.py)",
+      "Bash(python3 tools/filter_dj_releases.py *)",
+      "Bash(python3 tools/fetch_bpm.py)",
+      "Bash(python3 tools/fetch_bpm.py *)",
+      "Bash(python3 tools/generate_sticker_pdf.py)",
+      "Bash(python3 tools/generate_sticker_pdf.py *)",
+      "Bash(python3 tools/beatport_auth.py)",
+      "Bash(python3 tools/beatport_auth.py *)"
+    ]
+  }
+}

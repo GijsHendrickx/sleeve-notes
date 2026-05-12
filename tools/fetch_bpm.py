@@ -1,21 +1,29 @@
-"""Look up BPM per track via a 3-source cascade.
+"""Look up BPM per track via a 5-source cascade.
 
 Sources, in order:
   1. songbpm.com  — direct HTML scrape of canonical detail pages (no auth).
   2. Deezer       — public JSON API at api.deezer.com (no auth).
-  3. AcousticBrainz — open dataset, looked up via MusicBrainz recording IDs.
-                     Frozen since 2022, but excellent coverage for older
-                     electronic releases.
+  3. ReccoBeats   — drop-in replacement for the deprecated Spotify audio-features
+                    endpoint. Requires a Spotify Client Credentials app for
+                    name→ID translation (free, no user OAuth).
+  4. Beatport v4  — editorial BPM from labels themselves. OAuth via the public
+                    Swagger client_id; refresh tokens stored in
+                    .tmp/beatport_tokens.json (set up via tools/beatport_auth.py).
+  5. AcousticBrainz — open dataset, looked up via MusicBrainz recording IDs.
+                    Frozen since 2022, but excellent coverage for older
+                    electronic releases.
 
-All three are validated against the queried artist+title via fuzzy match,
-and results are cached in .tmp/bpm_cache.json. Each cache entry tracks which
-sources have already been tried, so re-runs only hit the sources that haven't
-exhausted yet. Once all three sources have been tried without a hit, the
-entry is marked `exhausted: True` and never retried.
+All five are validated against the queried artist+title via fuzzy match, and
+results are cached in .tmp/bpm_cache.json. Each cache entry tracks which sources
+have already been tried, so re-runs only hit the sources that haven't exhausted
+yet. Sources without configured credentials raise SourceUnavailable and are
+skipped without being marked as tried — configuring them later automatically
+extends previously-skipped entries on the next run.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -27,6 +35,7 @@ import unicodedata
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from rapidfuzz import fuzz
 from tenacity import (
     retry,
@@ -35,14 +44,17 @@ from tenacity import (
     wait_exponential,
 )
 
+load_dotenv()
+
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / ".tmp"
 DJ_IN = TMP / "dj_releases.json"
 BPM_OUT = TMP / "bpm_results.json"
 BPM_CACHE = TMP / "bpm_cache.json"
+BEATPORT_TOKENS_FILE = TMP / "beatport_tokens.json"
 
 # Sources, in the order they are tried.
-ALL_SOURCES = ("songbpm", "deezer", "acousticbrainz")
+ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
 
 # --- songbpm.com scrape -------------------------------------------------------
 SONGBPM_BASE = "https://songbpm.com"
@@ -56,6 +68,25 @@ DEEZER_RATE_S = 0.25
 MB_RATE_S = 1.05  # MusicBrainz is strict: 1 req/sec. Leave headroom.
 AB_RATE_S = 0.5
 
+# --- ReccoBeats (via Spotify Client Credentials) ------------------------------
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_SEARCH_URL = "https://api.spotify.com/v1/search"
+RECCOBEATS_BASE = "https://api.reccobeats.com/v1"
+SPOTIFY_RATE_S = 0.2
+RECCOBEATS_RATE_S = 0.15
+
+# --- Beatport v4 --------------------------------------------------------------
+# Public client_id scraped from the Beatport Swagger UI JS bundle. Stable since
+# 2023; if Beatport ever rotates it, re-extract from
+# api.beatport.com/v4/docs/ → /static/btprt/*.js (grep for API_CLIENT_ID).
+# Auth uses the same authorization_code dance as beets-beatport4: POST creds
+# to /auth/login/ for a session cookie, GET /auth/o/authorize/ to grab the
+# code from the 302 Location header, POST /auth/o/token/ to exchange.
+BEATPORT_CLIENT_ID = "0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd"
+BEATPORT_BASE = "https://api.beatport.com/v4"
+BEATPORT_TOKEN_URL = f"{BEATPORT_BASE}/auth/o/token/"
+BEATPORT_RATE_S = 0.5
+
 # --- Validation thresholds ----------------------------------------------------
 ARTIST_TITLE_MIN_FUZZ = 70.0
 BPM_MIN, BPM_MAX = 50, 250
@@ -68,6 +99,11 @@ TITLE_PARSE_RE = re.compile(r"BPM and key for (.+?) by (.+?) \|", re.IGNORECASE)
 
 class RetryableHTTPError(Exception):
     pass
+
+
+class SourceUnavailable(Exception):
+    """Source can't be tried (e.g. credentials missing). Skip without
+    marking as tried — configuring it later will retry on next run."""
 
 
 # ============================================================================
@@ -338,7 +374,319 @@ def deezer_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
 
 
 # ============================================================================
-# Source 3: MusicBrainz + AcousticBrainz
+# Source 3: ReccoBeats (via Spotify Client Credentials for name → ID lookup)
+# ============================================================================
+
+_spotify_token: dict | None = None  # {access_token, expires_at}
+
+
+def _get_spotify_token() -> str:
+    """Return a valid Spotify access token, refreshing if needed.
+
+    Raises SourceUnavailable if SPOTIFY_CLIENT_ID/SECRET are not configured.
+    """
+    global _spotify_token
+    now = time.time()
+    if _spotify_token and _spotify_token["expires_at"] > now + 30:
+        return _spotify_token["access_token"]
+    cid = os.environ.get("SPOTIFY_CLIENT_ID")
+    cs = os.environ.get("SPOTIFY_CLIENT_SECRET")
+    if not cid or not cs:
+        raise SourceUnavailable("missing SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET in .env")
+    auth = base64.b64encode(f"{cid}:{cs}".encode()).decode()
+    resp = requests.post(
+        SPOTIFY_TOKEN_URL,
+        headers={"Authorization": f"Basic {auth}"},
+        data={"grant_type": "client_credentials"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Spotify token request failed: {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    _spotify_token = {
+        "access_token": data["access_token"],
+        "expires_at": now + int(data.get("expires_in", 3600)),
+    }
+    return _spotify_token["access_token"]
+
+
+def _spotify_search_best(artist: str, title: str, rl: RateLimiter) -> tuple[float, str, str, str] | None:
+    """Return (score, spotify_id, returned_title, returned_artist) for the best match."""
+    token = _get_spotify_token()
+    queries = [
+        f'track:"{strip_parentheses(title)}" artist:"{primary_artist(artist)}"',
+        f'"{title}" "{artist}"',
+        f"{artist} {title}",
+    ]
+    best: tuple[float, str, str, str] | None = None
+    for q in queries:
+        rl.wait("spotify", SPOTIFY_RATE_S)
+        try:
+            resp = requests.get(
+                SPOTIFY_SEARCH_URL,
+                params={"q": q, "type": "track", "limit": 5},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+        except Exception:
+            continue
+        if resp.status_code == 401:
+            # Token expired mid-run; force refresh next call.
+            global _spotify_token
+            _spotify_token = None
+            return None
+        if resp.status_code != 200:
+            continue
+        items = resp.json().get("tracks", {}).get("items", []) or []
+        for it in items:
+            sid = it.get("id")
+            if not sid:
+                continue
+            cand_title = it.get("name", "")
+            cand_artist = " ".join(a.get("name", "") for a in it.get("artists", []) if isinstance(a, dict))
+            score = fuzz_score(artist, title, cand_artist, cand_title)
+            if score < ARTIST_TITLE_MIN_FUZZ:
+                continue
+            if best is None or score > best[0]:
+                best = (score, sid, cand_title, cand_artist)
+        if best:
+            break  # first query that yields a good match wins
+    return best
+
+
+def reccobeats_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
+    spotify_hit = _spotify_search_best(artist, title, rl)
+    if not spotify_hit:
+        return None
+    spot_score, spot_id, spot_title, spot_artist = spotify_hit
+
+    # Translate Spotify ID → ReccoBeats UUID via multi-fetch endpoint.
+    rl.wait("reccobeats", RECCOBEATS_RATE_S)
+    try:
+        _, data = http_get_json(f"{RECCOBEATS_BASE}/track", params={"ids": spot_id})
+    except Exception:
+        return None
+    if not data:
+        return None
+    content = data.get("content") or []
+    if not content:
+        return None  # Spotify has it, ReccoBeats doesn't — coverage gap, fall through.
+    track = content[0]
+    rb_id = track.get("id")
+    if not rb_id:
+        return None
+    rb_artist = " ".join(a.get("name", "") for a in track.get("artists", []) if isinstance(a, dict))
+    rb_title = track.get("trackTitle", "")
+    score = fuzz_score(artist, title, rb_artist or spot_artist, rb_title or spot_title)
+    if score < ARTIST_TITLE_MIN_FUZZ:
+        return None
+
+    # Fetch audio features for the ReccoBeats UUID.
+    rl.wait("reccobeats", RECCOBEATS_RATE_S)
+    try:
+        _, features = http_get_json(f"{RECCOBEATS_BASE}/track/{rb_id}/audio-features")
+    except Exception:
+        return None
+    if not features:
+        return None
+    tempo = features.get("tempo")
+    if not tempo or tempo <= 0:
+        return None
+    bpm = int(round(float(tempo)))
+    if not (BPM_MIN <= bpm <= BPM_MAX):
+        return None
+    return {
+        "bpm": bpm,
+        "source": "reccobeats",
+        "source_url": track.get("href") or f"https://open.spotify.com/track/{spot_id}",
+        "confidence": "ok" if score >= 82 else "low",
+        "score": round(score, 1),
+        "reason": "match",
+    }
+
+
+# ============================================================================
+# Source 4: Beatport v4 (OAuth refresh; one-time setup via beatport_auth.py)
+# ============================================================================
+
+def _load_beatport_tokens() -> dict | None:
+    if not BEATPORT_TOKENS_FILE.exists():
+        return None
+    try:
+        with BEATPORT_TOKENS_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_beatport_tokens(tokens: dict) -> None:
+    BEATPORT_TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = BEATPORT_TOKENS_FILE.with_suffix(BEATPORT_TOKENS_FILE.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(tokens, f, indent=2)
+    os.replace(tmp, BEATPORT_TOKENS_FILE)
+
+
+def _refresh_beatport_access(refresh_token: str) -> dict:
+    resp = requests.post(
+        BEATPORT_TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": BEATPORT_CLIENT_ID,
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Beatport refresh failed: {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    return {
+        "access_token": data["access_token"],
+        "refresh_token": data.get("refresh_token", refresh_token),
+        "expires_at": time.time() + int(data.get("expires_in", 3600)),
+    }
+
+
+def _full_reauth_beatport() -> dict | None:
+    """Re-authenticate from scratch via the username/password authorization
+    flow (delegating to tools/beatport_auth.py's `authenticate`). Returns None
+    if BEATPORT_USERNAME/PASSWORD aren't in the env."""
+    username = os.environ.get("BEATPORT_USERNAME")
+    password = os.environ.get("BEATPORT_PASSWORD")
+    if not username or not password:
+        return None
+    # Lazy import so fetch_bpm.py doesn't depend on the auth module unless
+    # we actually need to bootstrap tokens.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from beatport_auth import authenticate  # type: ignore[import-not-found]
+
+    return authenticate(username, password)
+
+
+def _get_beatport_token() -> str:
+    """Return a valid Beatport access token.
+
+    Strategy, in order:
+      1. Live access_token from .tmp/beatport_tokens.json (if not yet expired).
+      2. Refresh via refresh_token from disk.
+      3. Full re-auth via BEATPORT_USERNAME/PASSWORD (also bootstraps the
+         tokens file if it doesn't exist yet).
+
+    Raises SourceUnavailable only if no tokens file exists AND no credentials
+    are configured.
+    """
+    tokens = _load_beatport_tokens()
+    now = time.time()
+    if tokens and tokens.get("expires_at", 0) > now + 60:
+        return tokens["access_token"]
+    if tokens and tokens.get("refresh_token"):
+        try:
+            fresh = _refresh_beatport_access(tokens["refresh_token"])
+            _save_beatport_tokens(fresh)
+            return fresh["access_token"]
+        except Exception:
+            # Refresh token expired/revoked — fall through to full re-auth.
+            pass
+    fresh = _full_reauth_beatport()
+    if fresh:
+        _save_beatport_tokens(fresh)
+        return fresh["access_token"]
+    raise SourceUnavailable(
+        "Beatport tokens missing/expired and no BEATPORT_USERNAME/PASSWORD in .env — "
+        "run `python tools/beatport_auth.py` to authorize"
+    )
+
+
+def _beatport_track_artist_title(t: dict) -> tuple[str, str]:
+    """Extract artist + full title (with mix suffix) from a Beatport track dict."""
+    name = t.get("name") or t.get("title") or ""
+    mix = t.get("mix_name") or t.get("mix") or ""
+    full_title = f"{name} ({mix})" if mix and mix.lower() not in name.lower() else name
+    artists = t.get("artists") or []
+    artist = " ".join(a.get("name", "") for a in artists if isinstance(a, dict))
+    return artist, full_title
+
+
+def beatport_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
+    token = _get_beatport_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": API_USER_AGENT,
+    }
+    queries = [
+        f"{primary_artist(artist)} {strip_parentheses(title)}",
+        f"{artist} {title}",
+    ]
+    seen: set[int] = set()
+    candidates: list[dict] = []
+    for q in queries:
+        rl.wait("beatport", BEATPORT_RATE_S)
+        try:
+            resp = requests.get(
+                f"{BEATPORT_BASE}/catalog/search/",
+                params={"q": q, "type": "tracks", "per_page": 10},
+                headers=headers,
+                timeout=20,
+            )
+        except Exception:
+            continue
+        if resp.status_code == 401:
+            return None  # token rejected mid-run; let next run re-refresh.
+        if resp.status_code != 200:
+            continue
+        try:
+            data = resp.json()
+        except ValueError:
+            continue
+        # Search response may nest tracks under "tracks" or "results" depending
+        # on whether type= filter narrowed it. Handle both shapes defensively.
+        tracks = data.get("tracks")
+        if tracks is None:
+            tracks = data.get("results") or []
+        for t in tracks[:10]:
+            tid = t.get("id")
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+            candidates.append(t)
+        if candidates:
+            break
+
+    best: tuple[float, dict] | None = None
+    for c in candidates:
+        c_artist, c_title = _beatport_track_artist_title(c)
+        score = fuzz_score(artist, title, c_artist, c_title)
+        if score < ARTIST_TITLE_MIN_FUZZ:
+            continue
+        if best is None or score > best[0]:
+            best = (score, c)
+    if best is None:
+        return None
+    score, hit = best
+    bpm_raw = hit.get("bpm")
+    if not bpm_raw:
+        return None  # Beatport knows the track but doesn't have a BPM (rare).
+    try:
+        bpm = int(round(float(bpm_raw)))
+    except (TypeError, ValueError):
+        return None
+    if not (BPM_MIN <= bpm <= BPM_MAX):
+        return None
+    tid = hit.get("id")
+    slug = hit.get("slug") or "_"
+    return {
+        "bpm": bpm,
+        "source": "beatport",
+        "source_url": f"https://www.beatport.com/track/{slug}/{tid}" if tid else None,
+        "confidence": "ok" if score >= 82 else "low",
+        "score": round(score, 1),
+        "reason": "match",
+    }
+
+
+# ============================================================================
+# Source 5: MusicBrainz + AcousticBrainz
 # ============================================================================
 
 def _mb_escape(s: str) -> str:
@@ -408,6 +756,8 @@ def ab_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
 _LOOKUP_FNS = {
     "songbpm": songbpm_lookup,
     "deezer": deezer_lookup,
+    "reccobeats": reccobeats_lookup,
+    "beatport": beatport_lookup,
     "acousticbrainz": ab_lookup,
 }
 
@@ -431,11 +781,17 @@ def previously_tried(cached: dict | None) -> set[str]:
 def cascade_lookup(artist: str, title: str, cached: dict | None, rl: RateLimiter) -> dict:
     tried = previously_tried(cached)
     to_try = [s for s in ALL_SOURCES if s not in tried]
+    skipped: list[str] = []
 
     for source in to_try:
         fn = _LOOKUP_FNS[source]
         try:
             result = fn(artist, title, rl)
+        except SourceUnavailable:
+            # Credentials missing: skip without marking as tried. Configuring
+            # the source later will retry on the next run.
+            skipped.append(source)
+            continue
         except Exception as e:
             # Network/parse failure: don't mark as tried, so we retry next run.
             return {
@@ -450,6 +806,16 @@ def cascade_lookup(artist: str, title: str, cached: dict | None, rl: RateLimiter
         if result:
             return {**result, "sources_tried": sorted(tried)}
 
+    # Only mark exhausted if every source was actually tried (none skipped).
+    if skipped:
+        return {
+            "bpm": None,
+            "source": None,
+            "source_url": None,
+            "confidence": None,
+            "reason": "skipped_unavailable:" + ",".join(skipped),
+            "sources_tried": sorted(tried),
+        }
     return {
         "bpm": None,
         "source": None,
@@ -528,10 +894,15 @@ def main() -> int:
             key = cache_key(artist, title)
             cached = cache.get(key)
 
-            # Hit or fully-exhausted miss: serve from cache.
-            if cached and (cached.get("bpm") or cached.get("exhausted")):
-                if cached.get("bpm"):
-                    cached_hits += 1
+            # Serve from cache on a hit, or on an exhausted miss IF every current
+            # source has actually been tried. When new sources are added (e.g.
+            # we extended the cascade from 3→5), old `exhausted: True` entries
+            # fall through and cascade tries only the new ones.
+            if cached and cached.get("bpm"):
+                cached_hits += 1
+                track_results.append({"position": position, "artist": artist, "title": title, **cached})
+                continue
+            if cached and cached.get("exhausted") and set(ALL_SOURCES).issubset(previously_tried(cached)):
                 track_results.append({"position": position, "artist": artist, "title": title, **cached})
                 continue
 
