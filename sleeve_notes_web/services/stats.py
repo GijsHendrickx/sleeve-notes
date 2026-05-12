@@ -24,12 +24,11 @@ class CoverageStats:
 
 
 def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
-    """Per-track BPM coverage across every kept track. Drives the dashboard."""
+    """Per-track BPM coverage across every track in the collection."""
     by_rp, by_tk, _ = load_overrides(conn)
     rows = conn.execute(
         "SELECT t.release_id, t.position, t.artist, t.title, t.duration_s, r.artist AS r_artist "
-        "FROM tracks t JOIN releases r ON r.id = t.release_id "
-        "WHERE r.is_dj_release = 1"
+        "FROM tracks t JOIN releases r ON r.id = t.release_id"
     ).fetchall()
     total = len(rows)
     with_bpm = high = single = disputed = mix = 0
@@ -63,32 +62,26 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
 
 
 def new_since_last_print(conn: sqlite3.Connection) -> tuple[int, str | None]:
-    """Count of kept releases that aren't in any past print_run + last-print timestamp."""
+    """Count of releases (with tracks) that aren't in any past print_run + last-print timestamp."""
     last_ts_row = conn.execute(
         "SELECT timestamp FROM print_runs ORDER BY id DESC LIMIT 1"
     ).fetchone()
     last_ts = last_ts_row["timestamp"] if last_ts_row else None
     n = conn.execute(
         "SELECT COUNT(*) AS n FROM releases r "
-        "WHERE r.is_dj_release = 1 "
+        "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
         "AND NOT EXISTS (SELECT 1 FROM print_run_releases prr WHERE prr.release_id = r.id)"
     ).fetchone()["n"]
     return n, last_ts
 
 
 def collection_totals(conn: sqlite3.Connection) -> dict:
-    """Cheap counts: total releases, kept, skipped, never-filtered."""
-    row = conn.execute(
-        "SELECT "
-        "  COUNT(*) AS total, "
-        "  SUM(CASE WHEN is_dj_release = 1 THEN 1 ELSE 0 END) AS kept, "
-        "  SUM(CASE WHEN is_dj_release = 0 THEN 1 ELSE 0 END) AS skipped, "
-        "  SUM(CASE WHEN is_dj_release IS NULL THEN 1 ELSE 0 END) AS unfiltered "
-        "FROM releases"
-    ).fetchone()
-    return {
-        "total": row["total"] or 0,
-        "kept": row["kept"] or 0,
-        "skipped": row["skipped"] or 0,
-        "unfiltered": row["unfiltered"] or 0,
-    }
+    """Total release count + breakdown by type (sorted by count desc)."""
+    total = conn.execute("SELECT COUNT(*) AS n FROM releases").fetchone()["n"]
+    by_type = [
+        (r["type"] or "(unset)", r["n"])
+        for r in conn.execute(
+            "SELECT type, COUNT(*) AS n FROM releases GROUP BY type ORDER BY n DESC"
+        ).fetchall()
+    ]
+    return {"total": total or 0, "by_type": by_type}

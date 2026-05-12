@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-JobKind = Literal["fetch", "filter", "bpm", "render", "run"]
+JobKind = Literal["fetch", "bpm", "render", "run"]
 JobStatus = Literal["running", "done", "failed", "cancelled"]
 
 

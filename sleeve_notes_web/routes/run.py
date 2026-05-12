@@ -49,7 +49,7 @@ def status_pill(request: Request):
 
 @router.post("/run/start")
 def start(request: Request, kind: str = Form(...), extra: str = Form("")):
-    valid = {"fetch", "filter", "bpm", "render", "run"}
+    valid = {"fetch", "bpm", "render", "run"}
     if kind not in valid:
         kind = "run"
     extra_argv: list[str] = []

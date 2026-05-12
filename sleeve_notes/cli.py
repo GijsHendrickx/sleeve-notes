@@ -3,7 +3,7 @@
 Dispatches to the per-step modules in this package. Each subcommand's flags
 are owned by its underlying module — `sleeve-notes fetch --csv x.csv` is the
 same as `python sleeve_notes/fetch_discogs_collection.py --csv x.csv`. The `run`
-subcommand chains the four steps in order with a small allow-list of the
+subcommand chains the three steps in order with a small allow-list of the
 flags most commonly customised end-to-end.
 
 Inspection: every JSON file from the old layout has moved into a single
@@ -22,11 +22,11 @@ _USAGE = """\
 usage: sleeve-notes <subcommand> [options]
 
 Pipeline:
-  fetch          Step 1 — fetch your Discogs collection (API or --csv export)
-  filter         Step 2 — keep only 12"/LP vinyl, populate tracks table
-  bpm            Step 3 — look up BPM + key for every track (parallel cascade)
-  render         Step 4 — generate the printable A4 sticker PDF
-  run            Chain steps 1→4 with common defaults
+  fetch          Step 1 — fetch your Discogs collection (API or --csv export);
+                 normalizes release fields and ingests tracks in one pass
+  bpm            Step 2 — look up BPM + key for every track (parallel cascade)
+  render         Step 3 — generate the printable A4 sticker PDF
+  run            Chain steps 1→3 with common defaults
 
 Inspection / data:
   query          Browse the SQLite DB: tables, schema, arbitrary SELECT
@@ -45,9 +45,6 @@ def _resolve(name: str) -> Callable[[list[str] | None], int]:
     if name == "fetch":
         from sleeve_notes import fetch_discogs_collection
         return fetch_discogs_collection.main
-    if name == "filter":
-        from sleeve_notes import filter_dj_releases
-        return filter_dj_releases.main
     if name == "bpm":
         from sleeve_notes import fetch_bpm
         return fetch_bpm.main
@@ -92,15 +89,15 @@ def _web_main(argv: list[str] | None) -> int:
 
 
 def _run(argv: list[str]) -> int:
-    """Chain fetch → filter → bpm → render.
+    """Chain fetch → bpm → render.
 
     Allow-list: --csv, --folder, --limit go to fetch; --tile, --tile-cols,
     --tile-rows, --sticker-w, --sticker-h, --new-only, --mark-printed go to
-    render. For anything else, run the four subcommands individually.
+    render. For anything else, run the three subcommands individually.
     """
     parser = argparse.ArgumentParser(
         prog="sleeve-notes run",
-        description="Fetch → filter → BPM lookup → render. "
+        description="Fetch → BPM lookup → render. "
                     "For more granular control, run the subcommands individually.",
     )
     parser.add_argument("--csv", help="Forwarded to fetch: use a Discogs CSV export.")
@@ -146,19 +143,15 @@ def _run(argv: list[str]) -> int:
     if args.output:
         render_argv += ["--output", args.output]
 
-    print(">>> Step 1/4: fetch", flush=True)
+    print(">>> Step 1/3: fetch", flush=True)
     rc = _resolve("fetch")(fetch_argv)
     if rc:
         return rc
-    print(">>> Step 2/4: filter", flush=True)
-    rc = _resolve("filter")([])
-    if rc:
-        return rc
-    print(">>> Step 3/4: bpm", flush=True)
+    print(">>> Step 2/3: bpm", flush=True)
     rc = _resolve("bpm")([])
     if rc:
         return rc
-    print(">>> Step 4/4: render", flush=True)
+    print(">>> Step 3/3: render", flush=True)
     return _resolve("render")(render_argv)
 
 

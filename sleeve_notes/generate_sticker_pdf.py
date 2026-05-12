@@ -110,10 +110,16 @@ def last_print_timestamp(conn) -> str | None:
 # DB → in-memory release dicts (shape the layout module expects)
 # ---------------------------------------------------------------------------
 
-def load_dj_releases(conn) -> list[dict]:
+def load_releases_for_render(conn) -> list[dict]:
+    """Releases that should appear on the sticker sheet.
+
+    Excludes rows without any track rows — those wouldn't render usefully.
+    """
     releases = conn.execute(
-        "SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
-        "FROM releases WHERE is_dj_release = 1 ORDER BY id"
+        "SELECT r.id, r.artist, r.title, r.year, r.compilation, r.labels, "
+        "r.genres, r.styles, r.rpm FROM releases r "
+        "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
+        "ORDER BY r.id"
     ).fetchall()
     out: list[dict] = []
     for r in releases:
@@ -230,11 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(str(e))
 
     with dbmod.session() as conn:
-        releases = load_dj_releases(conn)
+        releases = load_releases_for_render(conn)
         if not releases:
             print(
-                "ERROR: no DJ-filtered releases found. Run "
-                "`sleeve-notes fetch && sleeve-notes filter` first.",
+                "ERROR: no releases with tracks found. Run "
+                "`sleeve-notes fetch` first.",
                 file=sys.stderr,
             )
             return 2

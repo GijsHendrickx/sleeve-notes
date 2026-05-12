@@ -48,20 +48,11 @@ All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db`
    ```
    - `--folder` accepts a folder name (case-insensitive) or a folder id. On an unknown name the tool prints the available folders.
    - `--csv PATH`: use a Discogs CSV export (Collection → Export) as the source instead of the collection-listing API. The folder filter then matches against the `CollectionFolder` column (names only, not ids). Per-release tracklists are still fetched via `/releases/{id}` (cache-aware: rows in `releases` with `raw_tracklist IS NOT NULL` are skipped). In CSV mode **no Discogs account is required**: without `DISCOGS_TOKEN` the public endpoint still works, just at 25 req/min (vs. 60 with a token).
-   - Output: rows in `releases` (with `basic_information`, `raw_tracklist`, `notes` JSON columns). Inspect via `sleeve-notes query releases`.
+   - Output: rows in `releases` (with `basic_information`, `raw_tracklist`, `notes` JSON columns plus the normalized `artist`/`title`/`year`/`rpm`/`type`/`format` columns) and rows in `tracks`. Normalization happens inline via `sleeve_notes.ingest.normalize_release`. Inspect via `sleeve-notes query releases`.
    - Runtime: ~1.1s per release (Discogs authenticated limit = 60 req/min). 500 releases ≈ 10 min.
    - Resumable: cached rows are skipped.
 
-2. **Filter DJ records**
-   ```
-   sleeve-notes filter
-   ```
-   - Pure transformation, no network.
-   - Output: updates `releases` rows in place — sets `is_dj_release` to 1 (kept) or 0 (skipped, with `skip_reasons` JSON populated). For keepers, inserts normalized rows into `tracks`.
-   - Inspect skipped: `sleeve-notes query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`.
-   - Filter: a format description contains `'12"'` or `'LP'`. All 12" and LP vinyl pass (Single, Maxi, EP, Album). 7"/10"/CD/cassette/digital are dropped. No genre filter.
-
-3. **Look up BPMs (5-source cascade)**
+2. **Look up BPMs (5-source cascade)**
    ```
    sleeve-notes bpm                    # default: 8 worker threads
    sleeve-notes bpm --workers 12       # bump if you're bandwidth-rich
@@ -84,7 +75,7 @@ All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db`
    - **Runtime**: ~12 tracks/min sustained on a 445-track collection (≈ 35 min for a fresh DB; near-zero on re-runs thanks to `sources_tried`). HTTP retries use a tight `wait_exponential(1, 5)` × 2 attempts — a flaky source costs at most ~5 s and the cascade falls through to the other four.
    - The Beatport client_id (`0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd`) is scraped from the public Swagger UI JS bundle at `api.beatport.com/v4/docs/`. Stable since 2023; if it ever rotates, re-scrape from `/static/btprt/*.js` (grep for `API_CLIENT_ID`).
 
-4. **Generate PDF**
+3. **Generate PDF**
    ```
    sleeve-notes render
    ```
@@ -95,7 +86,7 @@ All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db`
 
 ## Outputs
 - `.tmp/stickers.pdf` — print on A4 at **100% scale** (no "fit to page"), preferably on self-adhesive paper. Sticker size is 96×50.8 mm; verify with a ruler after the first print.
-- Skipped releases — `sleeve-notes query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`. Review to confirm no release was accidentally filtered out.
+- Releases with no `tracks` rows — `sleeve-notes query releases --cols "id,artist,title,type,format" --where "NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)"`. These slipped through because Discogs returned no tracklist; they show up in the web collection but the renderer skips them.
 
 ## Operational notes
 - **Discogs**: authenticated limit 60 req/min, unauthenticated 25 req/min. Tools sleep 1.1s (auth) or 2.5s (unauth) between calls + tenacity backoff on 429.
@@ -110,7 +101,7 @@ All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db`
 - **V/A / compilations** → release header shows "V/A — {title}"; per-track artist comes from the tracklist.
 - **Positions `A` / `B` without a subnumber** → treated as one track per side, position kept literally.
 - **Continuous mixes** (single-letter position with duration > 12:00) → BPM lookup skipped, sticker shows `(mix)`.
-- **No tracklist or no genre** → release row gets `is_dj_release=0` with `skip_reasons` populated.
+- **No tracklist on Discogs** → release row is stored without any `tracks` entries. Still listed in the collection; the renderer skips releases that have no tracks.
 - **Non-ASCII (Björk, é, ø)** → NFKD normalisation for matching, originals on the PDF.
 - **Remixes** → with multiple SongBPM hits, the variant whose mix suffix matches wins; otherwise the shortest title (the original).
 

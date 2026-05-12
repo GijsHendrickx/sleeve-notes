@@ -10,11 +10,12 @@ Tables:
 
   releases             one row per Discogs release. Holds the raw API
                        payload (``basic_information``, ``raw_tracklist``,
-                       ``notes``) and the filter-derived columns
-                       (``artist``, ``title``, ``rpm``, ...). ``is_dj_release``
-                       is NULL until the filter has run, then 0/1.
-  tracks               normalized track rows for releases that passed
-                       the filter (is_dj_release=1).
+                       ``notes``) and the normalized columns derived from
+                       it (``artist``, ``title``, ``rpm``, ``type``,
+                       ``format``, ...). All normalization happens at fetch
+                       time via ``sleeve_notes.ingest.normalize_release``.
+  tracks               normalized track rows. Populated by fetch alongside
+                       the parent release row.
   bpm_cache            one row per (artist, title) hash. Tracks which
                        sources have been queried.
   bpm_source_hits      one row per (cache_key, source) — the per-source
@@ -70,13 +71,11 @@ CREATE TABLE IF NOT EXISTS releases (
   notes TEXT,
   basic_information TEXT,
   raw_tracklist TEXT,
-  is_dj_release INTEGER,
-  skip_reasons TEXT,
-  fetched_at TEXT,
-  filtered_at TEXT
+  type TEXT,
+  format TEXT,
+  fetched_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_releases_dj ON releases(is_dj_release);
 CREATE INDEX IF NOT EXISTS idx_releases_artist ON releases(artist);
 
 CREATE TABLE IF NOT EXISTS tracks (
@@ -219,6 +218,57 @@ def _rename_legacy_db_filename(p: Path) -> None:
     )
 
 
+def _ensure_release_columns(conn: sqlite3.Connection) -> None:
+    """Bring an existing releases table up to the current schema.
+
+    CREATE TABLE IF NOT EXISTS doesn't reshape an existing table, so older DBs
+    need explicit ALTERs to add ``type`` / ``format`` and to drop the retired
+    ``is_dj_release`` / ``skip_reasons`` / ``filtered_at`` columns. SQLite 3.35+
+    (shipped with Python 3.11+) supports ALTER TABLE DROP COLUMN.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(releases)").fetchall()}
+    if "type" not in existing:
+        conn.execute("ALTER TABLE releases ADD COLUMN type TEXT")
+    if "format" not in existing:
+        conn.execute("ALTER TABLE releases ADD COLUMN format TEXT")
+    conn.execute("DROP INDEX IF EXISTS idx_releases_dj")
+    for legacy in ("is_dj_release", "skip_reasons", "filtered_at"):
+        if legacy in existing:
+            conn.execute(f"ALTER TABLE releases DROP COLUMN {legacy}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_type ON releases(type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_format ON releases(format)")
+
+
+def _backfill_normalized_releases(conn: sqlite3.Connection) -> None:
+    """Re-normalize legacy releases that pre-date fetch's normalize-in-place.
+
+    Runs ``normalize_release`` for any row that has a stored ``raw_tracklist``
+    but is missing ``type``/``format`` or has no ``tracks`` entries yet — the
+    two signals that a release was ingested before fetch took ownership of
+    normalization. Subsequent connects no-op because the WHERE clause is empty.
+    """
+    from sleeve_notes.ingest import normalize_release  # local: avoid import cycle on first init
+
+    rows = conn.execute(
+        "SELECT id, basic_information, raw_tracklist FROM releases r "
+        "WHERE raw_tracklist IS NOT NULL "
+        "AND (type IS NULL OR format IS NULL "
+        "     OR NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id))"
+    ).fetchall()
+    if not rows:
+        return
+    for r in rows:
+        try:
+            basic = json.loads(r["basic_information"] or "{}")
+        except json.JSONDecodeError:
+            basic = {}
+        try:
+            tracklist = json.loads(r["raw_tracklist"] or "[]")
+        except json.JSONDecodeError:
+            tracklist = []
+        normalize_release(conn, r["id"], basic, tracklist)
+
+
 def connect() -> sqlite3.Connection:
     """Open (or create) the DB. On first creation, runs the JSON migration."""
     p = db_path()
@@ -231,6 +281,8 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    _ensure_release_columns(conn)
+    _backfill_normalized_releases(conn)
     if fresh:
         try:
             files_to_move = _migrate_from_json(conn)
@@ -448,9 +500,8 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
             conn.execute(
                 """
                 INSERT INTO releases (
-                    id, artist, title, year, compilation, labels, genres, styles,
-                    rpm, is_dj_release, filtered_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    id, artist, title, year, compilation, labels, genres, styles, rpm
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     artist = excluded.artist,
                     title  = excluded.title,
@@ -459,10 +510,7 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                     labels = excluded.labels,
                     genres = excluded.genres,
                     styles = excluded.styles,
-                    rpm    = excluded.rpm,
-                    is_dj_release = 1,
-                    skip_reasons  = NULL,
-                    filtered_at   = excluded.filtered_at
+                    rpm    = excluded.rpm
                 """,
                 (
                     rid,
@@ -474,7 +522,6 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                     json.dumps(r.get("genres") or [], ensure_ascii=False),
                     json.dumps(r.get("styles") or [], ensure_ascii=False),
                     json.dumps(r.get("rpm") or [], ensure_ascii=False),
-                    now,
                 ),
             )
             conn.execute("DELETE FROM tracks WHERE release_id = ?", (rid,))
@@ -496,7 +543,9 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                 )
         to_move.append(dj)
 
-    # skipped.json → mark releases is_dj_release=0
+    # skipped.json → carry artist/title forward; the old is_dj_release=0
+    # status is no longer modelled. These releases land in the collection
+    # like any other; they just won't have tracks until a fresh fetch.
     skipped = tmp / "skipped.json"
     if skipped.exists():
         try:
@@ -510,22 +559,13 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                 continue
             conn.execute(
                 """
-                INSERT INTO releases (id, artist, title, is_dj_release, skip_reasons, filtered_at)
-                VALUES (?, ?, ?, 0, ?, ?)
+                INSERT INTO releases (id, artist, title)
+                VALUES (?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
-                    is_dj_release = 0,
-                    skip_reasons  = excluded.skip_reasons,
-                    filtered_at   = excluded.filtered_at,
-                    artist        = COALESCE(releases.artist, excluded.artist),
-                    title         = COALESCE(releases.title,  excluded.title)
+                    artist = COALESCE(releases.artist, excluded.artist),
+                    title  = COALESCE(releases.title,  excluded.title)
                 """,
-                (
-                    rid,
-                    entry.get("artist"),
-                    entry.get("title"),
-                    json.dumps(entry.get("reasons") or [], ensure_ascii=False),
-                    now,
-                ),
+                (rid, entry.get("artist"), entry.get("title")),
             )
         to_move.append(skipped)
 

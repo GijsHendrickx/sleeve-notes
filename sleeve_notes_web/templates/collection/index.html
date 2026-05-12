@@ -8,11 +8,17 @@
     <form method="get" action="/collection" class="flex flex-wrap gap-3 items-center mb-3 text-sm">
       <input name="q" value="{{ q or '' }}" placeholder="search artist / title…"
              class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 w-64 focus:outline-none focus:border-neutral-600" />
-      <select name="kept" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
-        <option value="">all</option>
-        <option value="1" {% if kept == '1' %}selected{% endif %}>kept</option>
-        <option value="0" {% if kept == '0' %}selected{% endif %}>skipped</option>
-        <option value="null" {% if kept == 'null' %}selected{% endif %}>unfiltered</option>
+      <select name="type" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
+        <option value="">type: any</option>
+        {% for t in type_options %}
+        <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <select name="format" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
+        <option value="">format: any</option>
+        {% for f in format_options %}
+        <option value="{{ f }}" {% if format_filter == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
       </select>
       <select name="bpm" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
         <option value="">BPM: any</option>
@@ -31,9 +37,9 @@
             <th class="text-left">Artist</th>
             <th class="text-left">Title</th>
             <th class="text-right w-16">Year</th>
-            <th class="text-left w-20">Fmt</th>
+            <th class="text-left w-20">Type</th>
+            <th class="text-left w-16">Fmt</th>
             <th class="text-right w-24">BPM</th>
-            <th class="text-left w-20">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -51,7 +57,8 @@
             <td class="text-neutral-200">{{ r.artist or '—' }}</td>
             <td class="text-neutral-300 italic">{{ r.title or '—' }}</td>
             <td class="text-right text-neutral-500 font-mono">{{ r.year or '' }}</td>
-            <td class="text-neutral-500 font-mono">{{ r.format_short or '' }}</td>
+            <td class="text-neutral-400">{{ r.type or '' }}</td>
+            <td class="text-neutral-500 font-mono" title="{{ r.format_short or '' }}">{{ r.format or '' }}</td>
             <td class="text-right font-mono">
               {% if r.tracks_total > 0 %}
                 <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-neutral-600{% else %}text-amber-400{% endif %}">
@@ -59,15 +66,6 @@
                 </span>
               {% else %}
                 <span class="text-neutral-700">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if r.is_dj_release == 1 %}
-                <span class="text-xs text-emerald-400">kept</span>
-              {% elif r.is_dj_release == 0 %}
-                <span class="text-xs text-neutral-500" title="{{ r.skip_reasons_summary }}">skipped</span>
-              {% else %}
-                <span class="text-xs text-amber-400">unfiltered</span>
               {% endif %}
             </td>
           </tr>

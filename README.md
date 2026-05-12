@@ -2,7 +2,7 @@
 
 Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Stickers are 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12" so you can read everything at a glance while DJing.
 
-Filter is conservative: **only 12"/LP vinyl** is kept (7"/10"/CD/cassette/digital are skipped). Genre is **not** filtered — every 12"/LP in the collection produces a sticker.
+Every release in your Discogs collection gets a sticker. The web UI lets you filter the collection by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other) — both are auto-classified from Discogs metadata at fetch time.
 
 BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciling them by consensus. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
@@ -45,7 +45,7 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
         │   overrides              │
         │   print_runs / kv        │
         └────────────┬─────────────┘
-             │  sleeve-notes filter  →  is_dj_release flag + tracks rows
+             │  sleeve-notes fetch   →  ingests releases + tracks in one pass
              │  sleeve-notes bpm     →  cascade fills bpm_cache + bpm_source_hits
              │  sleeve-notes render  →  derives per-track BPM/key on the fly
              ▼
@@ -167,14 +167,14 @@ Just the email + password you normally use to log in at beatport.com. No develop
 
 ## Running the workflow
 
-The four steps are exposed as `sleeve-notes` subcommands (the legacy `python sleeve_notes/*.py` invocations still work — they call the same `main()` functions):
+The three steps are exposed as `sleeve-notes` subcommands (the legacy `python sleeve_notes/*.py` invocations still work — they call the same `main()` functions):
 
 ```bash
-sleeve-notes fetch     # Step 1 — Discogs collection (API or --csv)
-sleeve-notes filter    # Step 2 — keep 12"/LP, drop the rest
-sleeve-notes bpm       # Step 3 — parallel cascade for BPM + key
-sleeve-notes render    # Step 4 — generate the PDF
-sleeve-notes run       # all four, with --csv/--folder forwarded to fetch,
+sleeve-notes fetch     # Step 1 — Discogs collection (API or --csv); ingests
+                       # releases + tracks in one pass
+sleeve-notes bpm       # Step 2 — parallel cascade for BPM + key
+sleeve-notes render    # Step 3 — generate the PDF
+sleeve-notes run       # all three, with --csv/--folder forwarded to fetch,
                        # render flags forwarded to render (see below)
 ```
 
@@ -200,32 +200,19 @@ python sleeve_notes/fetch_discogs_collection.py --limit 10
 ```
 
 - **Runtime:** roughly **1.1 s per release** (Discogs allows 60 authenticated req/min). 500 releases ≈ 10 minutes. Unauthenticated CSV mode runs at 2.5 s per release (25 req/min).
-- **Output:** rows in `releases` (`basic_information`, `raw_tracklist`, `notes` JSON columns) — that table doubles as the per-release cache. Inspect via `sleeve-notes query releases`.
+- **Output:** rows in `releases` (`basic_information`, `raw_tracklist`, `notes` JSON columns plus the normalized `artist`/`title`/`year`/`rpm`/`type`/`format` columns) and rows in `tracks`. The fetch step now owns both — normalization happens inline. Inspect via `sleeve-notes query releases`.
 - **Resumable:** rows with `raw_tracklist IS NOT NULL` are served from the DB, so re-runs after an interruption finish quickly.
 
 See [The CSV-export shortcut](#the-csv-export-shortcut) for why `--csv` is often the easier path.
 
-### Step 2 — filter to DJ-usable vinyl
-
-```bash
-sleeve-notes filter
-```
-
-- Pure local transformation, no network.
-- Output: updates the `releases` table — sets `is_dj_release` to 1 (kept) or 0 (skipped, with `skip_reasons` populated), and inserts the normalized track rows into `tracks` for keepers.
-- Filter rule: a release is kept iff at least one of its format **descriptions** contains `12"` or `LP`. Discogs assigns these per release, so 12" Maxi/Single/EP and LP albums all come through; 7"/10"/CD/cassette/digital drop out.
-- No genre filter — every 12"/LP in the collection survives this step.
-
-Review the skipped set with `sleeve-notes query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"` if a record you expected is missing.
-
-### Step 3 — look up BPMs
+### Step 2 — look up BPMs
 
 ```bash
 sleeve-notes bpm                  # default: 8 cross-track worker threads
 sleeve-notes bpm --workers 12     # bump if you're bandwidth-rich
 ```
 
-- Iterates over every track in the `tracks` table (DJ releases only). A pool of worker threads (`--workers 8` by default) processes tracks in parallel; inside each worker, all 5 sources fire in parallel and are reconciled via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
+- Iterates over every track in the `tracks` table. A pool of worker threads (`--workers 8` by default) processes tracks in parallel; inside each worker, all 5 sources fire in parallel and are reconciled via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
 - Output: rows in `bpm_cache` (one per track, with `sources_tried` array) plus rows in `bpm_source_hits` (one per source-that-returned-something). Per-track consensus is derived on the fly by the renderer — no `bpm_results.json` needed.
 - Beatport is opt-in (see [Beatport: one-time auth](#beatport-one-time-auth)).
 
@@ -234,7 +221,7 @@ Typical runtimes — bounded by the slowest per-host rate limit shared across wo
 - **Cached re-run:** seconds for the whole collection — `sources_tried` makes the cascade no-op for fully-cached tracks.
 - Bumping `--workers` past ~8 gives diminishing returns; the bottleneck is the global SongBPM / MB rate, not local concurrency.
 
-### Step 4 — generate the PDF
+### Step 3 — generate the PDF
 
 ```bash
 sleeve-notes render                              # default 96 x 50.8 mm with gutters + crop marks
@@ -343,8 +330,8 @@ The DB tables in summary:
 
 | Table | What's in it |
 |-------|--------------|
-| `releases` | One row per Discogs release. `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm` etc. are the filter-derived columns; `is_dj_release` is 0/1/NULL. |
-| `tracks` | Normalized track rows for releases that passed the filter. |
+| `releases` | One row per Discogs release. `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm`, `type`, `format` are the normalized columns populated by `fetch` via `sleeve_notes.ingest.normalize_release`. |
+| `tracks` | Normalized track rows. Populated by `fetch` alongside the parent release. |
 | `bpm_cache` | One row per (artist, title) hash. Tracks which sources have been queried. |
 | `bpm_source_hits` | One row per (cache_key, source) — the raw BPM/key/url returned by each source. |
 | `overrides` | Manual BPM/key overrides. Managed via `sleeve-notes overrides`. |
@@ -377,7 +364,7 @@ Every cache lives in `data/sleeve_notes.db` so you can interrupt and resume safe
 - **`bpm_cache` + `bpm_source_hits`** — one `bpm_cache` row per (artist, title) hash, with `sources_tried` listing which sources have been queried. Each source that returned something gets one `bpm_source_hits` row with the raw `bpm`/`key_camelot`/`url`. Re-runs only call sources that have not yet been queried for that track; consensus is recomputed on the fly so you never re-fetch.
 - **Legacy JSON migration:** on first DB creation, any old `.tmp/*.json` files (incl. `release_cache/`) and the root `overrides.json` are imported into the DB in a single transaction; originals are renamed to `*.bak`. The pre-v2 `bpm_cache.json` shape (flat `cache_key → single_source_hit`) is mapped onto v2 by inferring the source from the `source_url`; entries with an unrecognised URL or no BPM/key are dropped (they'll be re-queried on the next `bpm` run).
 - **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
-- **Re-running steps:** `filter` always rebuilds `tracks` from `releases.raw_tracklist` (cheap). `bpm` and `render` are cache-aware.
+- **Re-running steps:** `fetch` is cache-aware (rows with a stored `raw_tracklist` skip the network call but still re-normalize). `bpm` and `render` are cache-aware too.
 
 To start a step clean, drop the relevant table — e.g. for a fresh BPM
 lookup:
@@ -521,8 +508,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 | Continuous mix (single-letter position + duration > 12:00) | BPM lookup skipped; sticker shows `(mix)`. |
 | Non-ASCII characters (Björk, é, ø, …) | Matching uses NFKD normalisation; the PDF preserves the originals. |
 | Multiple SongBPM remix hits | The variant whose title matches the mix suffix wins; otherwise the shortest title (the original mix). |
-| Missing tracklist on Discogs | Release row gets `is_dj_release=0` with `skip_reasons` containing `"no_tracklist"`. |
-| Missing genre | No effect — there is no genre filter. |
+| Missing tracklist on Discogs | Release row gets stored without any `tracks` entries — it's still in your collection but won't appear on the sticker sheet (renderer skips releases with no tracks). |
 
 ---
 
@@ -559,9 +545,10 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   ├── cli.py                             ← `sleeve-notes` subcommand dispatcher
 │   ├── db.py                              ← SQLite schema + connection + JSON migration
 │   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV)
-│   ├── filter_dj_releases.py              ← Step 2: keep only 12"/LP vinyl
-│   ├── fetch_bpm.py                       ← Step 3: 5-source BPM cascade
-│   ├── generate_sticker_pdf.py            ← Step 4: render the PDF
+│   ├── ingest.py                          ← per-release normalize: extract fields + tracks
+│   ├── classify.py                        ← derive `type` and `format` from Discogs metadata
+│   ├── fetch_bpm.py                       ← Step 2: 5-source BPM cascade
+│   ├── generate_sticker_pdf.py            ← Step 3: render the PDF
 │   ├── query.py                           ← `sleeve-notes query` (browse the DB)
 │   ├── overrides.py                       ← `sleeve-notes overrides` (manage overrides)
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap

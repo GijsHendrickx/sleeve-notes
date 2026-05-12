@@ -9,23 +9,12 @@
       <div class="text-neutral-100 font-medium truncate">{{ release.artist or 'V/A' }}</div>
       <div class="text-neutral-400 italic truncate">{{ release.title or '—' }}</div>
       <div class="text-xs text-neutral-500 mt-1 font-mono">
-        {{ release.year or '????' }} · {{ release.format_short or '—' }} · id {{ release.id }}
+        {{ release.year or '????' }} · {{ release.type or '—' }} · {{ release.format or '—' }} · id {{ release.id }}
       </div>
       <a href="https://www.discogs.com/release/{{ release.id }}" target="_blank" rel="noopener"
          class="text-xs text-sky-400 hover:underline">discogs ↗</a>
     </div>
   </div>
-
-  {% if release.is_dj_release == 0 %}
-    <div class="bg-neutral-950 border border-neutral-800 rounded p-3 text-xs text-neutral-400">
-      <div class="text-neutral-500 uppercase tracking-wide mb-1">Skipped because</div>
-      {% for reason in release.skip_reasons %}
-        <div class="font-mono">· {{ reason }}</div>
-      {% else %}
-        <div class="text-neutral-600">(no reason recorded)</div>
-      {% endfor %}
-    </div>
-  {% endif %}
 
   {% if release.tracks %}
   <div>
@@ -70,7 +59,7 @@
   </div>
   {% endif %}
 
-  {% if release.is_dj_release == 1 %}
+  {% if release.tracks %}
     <div class="flex gap-2">
       <a href="/preview?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-700 hover:bg-neutral-800 text-neutral-200">Preview sticker →</a>
       <a href="/overrides?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-800 hover:bg-neutral-800 text-neutral-400">Edit overrides →</a>

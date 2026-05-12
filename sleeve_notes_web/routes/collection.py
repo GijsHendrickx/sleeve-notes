@@ -44,8 +44,9 @@ def _format_short(basic: dict) -> str:
 def index(
     request: Request,
     q: Optional[str] = None,
-    kept: Optional[str] = None,
     bpm: Optional[str] = None,
+    type: Optional[str] = None,
+    format: Optional[str] = None,
 ):
     where = []
     params: list = []
@@ -53,19 +54,31 @@ def index(
         where.append("(LOWER(r.artist) LIKE ? OR LOWER(r.title) LIKE ?)")
         like = f"%{q.lower()}%"
         params += [like, like]
-    if kept == "1":
-        where.append("r.is_dj_release = 1")
-    elif kept == "0":
-        where.append("r.is_dj_release = 0")
-    elif kept == "null":
-        where.append("r.is_dj_release IS NULL")
+    if type:
+        where.append("r.type = ?")
+        params.append(type)
+    if format:
+        where.append("r.format = ?")
+        params.append(format)
     sql_where = (" WHERE " + " AND ".join(where)) if where else ""
 
     with dbmod.session() as conn:
         total = conn.execute("SELECT COUNT(*) AS n FROM releases").fetchone()["n"]
+        type_options = [
+            r["type"] for r in conn.execute(
+                "SELECT type, COUNT(*) AS n FROM releases WHERE type IS NOT NULL "
+                "GROUP BY type ORDER BY n DESC"
+            ).fetchall()
+        ]
+        format_options = [
+            r["format"] for r in conn.execute(
+                "SELECT format, COUNT(*) AS n FROM releases WHERE format IS NOT NULL "
+                "GROUP BY format ORDER BY n DESC"
+            ).fetchall()
+        ]
         rows_raw = conn.execute(
-            "SELECT r.id, r.artist, r.title, r.year, r.is_dj_release, r.skip_reasons, "
-            "r.basic_information FROM releases r" + sql_where +
+            "SELECT r.id, r.artist, r.title, r.year, "
+            "r.type, r.format, r.basic_information FROM releases r" + sql_where +
             " ORDER BY r.artist NULLS LAST, r.title NULLS LAST LIMIT 500",
             params,
         ).fetchall()
@@ -74,30 +87,21 @@ def index(
         rows = []
         for r in rows_raw:
             basic = _basic_info(r["basic_information"])
-            tracks_total = tracks_with_bpm = 0
-            if r["is_dj_release"] == 1:
-                track_rows = conn.execute(
-                    "SELECT position, artist, title, duration_s FROM tracks WHERE release_id = ?",
-                    (r["id"],),
-                ).fetchall()
-                tracks_total = len(track_rows)
-                rel_artist = r["artist"] or "V/A"
-                for t in track_rows:
-                    tr = derive_track_result(
-                        conn, r["id"], t["position"] or "",
-                        t["artist"] or rel_artist, t["title"] or "",
-                        t["duration_s"], by_rp, by_tk,
-                    )
-                    if tr.get("bpm") or tr.get("reason") == "continuous_mix":
-                        tracks_with_bpm += 1
-            skip_reasons_summary = ""
-            if r["skip_reasons"]:
-                try:
-                    sr = json.loads(r["skip_reasons"])
-                    if isinstance(sr, list):
-                        skip_reasons_summary = "; ".join(sr)
-                except json.JSONDecodeError:
-                    pass
+            track_rows = conn.execute(
+                "SELECT position, artist, title, duration_s FROM tracks WHERE release_id = ?",
+                (r["id"],),
+            ).fetchall()
+            tracks_total = len(track_rows)
+            tracks_with_bpm = 0
+            rel_artist = r["artist"] or "V/A"
+            for t in track_rows:
+                tr = derive_track_result(
+                    conn, r["id"], t["position"] or "",
+                    t["artist"] or rel_artist, t["title"] or "",
+                    t["duration_s"], by_rp, by_tk,
+                )
+                if tr.get("bpm") or tr.get("reason") == "continuous_mix":
+                    tracks_with_bpm += 1
             if bpm == "missing" and (tracks_total == 0 or tracks_with_bpm == tracks_total):
                 continue
             if bpm == "complete" and (tracks_total == 0 or tracks_with_bpm != tracks_total):
@@ -107,12 +111,12 @@ def index(
                 "artist": r["artist"],
                 "title": r["title"],
                 "year": r["year"],
-                "is_dj_release": r["is_dj_release"],
+                "type": r["type"],
+                "format": r["format"],
                 "cover": _cover_url(basic),
                 "format_short": _format_short(basic),
                 "tracks_total": tracks_total,
                 "tracks_with_bpm": tracks_with_bpm,
-                "skip_reasons_summary": skip_reasons_summary,
             })
 
     return templates.TemplateResponse(
@@ -123,8 +127,11 @@ def index(
             "rows": rows,
             "total": total,
             "q": q,
-            "kept": kept,
             "bpm_filter": bpm,
+            "type_filter": type,
+            "format_filter": format,
+            "type_options": type_options,
+            "format_options": format_options,
         },
     )
 
@@ -133,49 +140,40 @@ def index(
 def detail(request: Request, release_id: int):
     with dbmod.session() as conn:
         r = conn.execute(
-            "SELECT id, artist, title, year, compilation, is_dj_release, "
-            "skip_reasons, basic_information FROM releases WHERE id = ?",
+            "SELECT id, artist, title, year, compilation, type, format, "
+            "basic_information FROM releases WHERE id = ?",
             (release_id,),
         ).fetchone()
         if r is None:
             raise HTTPException(status_code=404, detail="release not found")
 
         basic = _basic_info(r["basic_information"])
-        skip_reasons = []
-        if r["skip_reasons"]:
-            try:
-                parsed = json.loads(r["skip_reasons"])
-                if isinstance(parsed, list):
-                    skip_reasons = parsed
-            except json.JSONDecodeError:
-                pass
 
         tracks_out: list[dict] = []
-        if r["is_dj_release"] == 1:
-            by_rp, by_tk, _ = load_overrides(conn)
-            track_rows = conn.execute(
-                "SELECT position, artist, title, duration, duration_s "
-                "FROM tracks WHERE release_id = ? ORDER BY position",
-                (release_id,),
-            ).fetchall()
-            rel_artist = r["artist"] or "V/A"
-            for t in track_rows:
-                tr = derive_track_result(
-                    conn, release_id, t["position"] or "",
-                    t["artist"] or rel_artist, t["title"] or "",
-                    t["duration_s"], by_rp, by_tk,
-                )
-                tracks_out.append({
-                    "position": t["position"],
-                    "artist": t["artist"] or rel_artist,
-                    "title": t["title"] or "",
-                    "duration": t["duration"],
-                    "bpm": tr.get("bpm"),
-                    "bpm_confidence": tr.get("bpm_confidence"),
-                    "bpm_sources": tr.get("bpm_sources"),
-                    "key_camelot": tr.get("key_camelot"),
-                    "reason": tr.get("reason"),
-                })
+        by_rp, by_tk, _ = load_overrides(conn)
+        track_rows = conn.execute(
+            "SELECT position, artist, title, duration, duration_s "
+            "FROM tracks WHERE release_id = ? ORDER BY position",
+            (release_id,),
+        ).fetchall()
+        rel_artist = r["artist"] or "V/A"
+        for t in track_rows:
+            tr = derive_track_result(
+                conn, release_id, t["position"] or "",
+                t["artist"] or rel_artist, t["title"] or "",
+                t["duration_s"], by_rp, by_tk,
+            )
+            tracks_out.append({
+                "position": t["position"],
+                "artist": t["artist"] or rel_artist,
+                "title": t["title"] or "",
+                "duration": t["duration"],
+                "bpm": tr.get("bpm"),
+                "bpm_confidence": tr.get("bpm_confidence"),
+                "bpm_sources": tr.get("bpm_sources"),
+                "key_camelot": tr.get("key_camelot"),
+                "reason": tr.get("reason"),
+            })
 
         release = {
             "id": r["id"],
@@ -183,8 +181,8 @@ def detail(request: Request, release_id: int):
             "title": r["title"],
             "year": r["year"],
             "compilation": bool(r["compilation"]),
-            "is_dj_release": r["is_dj_release"],
-            "skip_reasons": skip_reasons,
+            "type": r["type"],
+            "format": r["format"],
             "cover": basic.get("cover_image") or basic.get("thumb"),
             "format_short": _format_short(basic),
             "tracks": tracks_out,

@@ -38,6 +38,7 @@ except ImportError:
     from sleeve_notes import project_root
 
 from sleeve_notes import db as dbmod
+from sleeve_notes.ingest import normalize_release
 
 ROOT = project_root()
 
@@ -131,7 +132,7 @@ def upsert_release_detail(
     tracklist: list,
     notes: str | None,
 ) -> None:
-    """Persist a release's raw API payload. Idempotent."""
+    """Persist a release's raw API payload + normalized fields + tracks. Idempotent."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute(
         """
@@ -151,6 +152,7 @@ def upsert_release_detail(
             now,
         ),
     )
+    normalize_release(conn, release_id, basic or {}, tracklist or [])
 
 
 def fetch_release_detail(

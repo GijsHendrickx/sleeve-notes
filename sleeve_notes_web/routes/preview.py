@@ -24,7 +24,7 @@ from sleeve_notes import sticker_layout as L
 from sleeve_notes.generate_sticker_pdf import (
     already_printed_ids,
     build_bpm_lookup,
-    load_dj_releases,
+    load_releases_for_render,
 )
 from sleeve_notes_web._deps import templates
 from sleeve_notes_web.services.preview import render_release_stickers_svg
@@ -34,7 +34,7 @@ router = APIRouter()
 
 
 def _load_releases(conn, new_only: bool):
-    releases = load_dj_releases(conn)
+    releases = load_releases_for_render(conn)
     if new_only:
         printed = already_printed_ids(conn)
         releases = [r for r in releases if int(r["id"]) not in printed]

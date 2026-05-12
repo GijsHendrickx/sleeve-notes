@@ -5,9 +5,8 @@
     <label class="block">
       <div class="text-xs uppercase tracking-wide text-neutral-500 mb-1">Step</div>
       <select name="kind" class="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1" {% if running %}disabled{% endif %}>
-        <option value="run">run · fetch → filter → bpm → render</option>
+        <option value="run">run · fetch → bpm → render</option>
         <option value="fetch">fetch · Discogs collection</option>
-        <option value="filter">filter · 12"/LP only</option>
         <option value="bpm">bpm · 5-source cascade</option>
         <option value="render">render · PDF</option>
       </select>

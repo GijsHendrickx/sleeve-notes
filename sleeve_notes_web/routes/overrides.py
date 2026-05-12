@@ -63,12 +63,11 @@ def index(
         sql = (
             "SELECT t.release_id, t.position, t.artist, t.title, t.duration_s, "
             "r.artist AS r_artist, r.title AS r_title "
-            "FROM tracks t JOIN releases r ON r.id = t.release_id "
-            "WHERE r.is_dj_release = 1"
+            "FROM tracks t JOIN releases r ON r.id = t.release_id"
         )
         params: list = []
         if release_id is not None:
-            sql += " AND t.release_id = ?"
+            sql += " WHERE t.release_id = ?"
             params.append(release_id)
         sql += " ORDER BY r.artist NULLS LAST, r.title NULLS LAST, t.position"
         track_rows = conn.execute(sql, params).fetchall()

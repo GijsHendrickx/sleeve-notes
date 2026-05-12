@@ -1283,21 +1283,18 @@ def main(argv: list[str] | None = None) -> int:
         used_overrides: set[tuple] = set()
 
         releases = conn.execute(
-            "SELECT id, artist, title FROM releases WHERE is_dj_release = 1 ORDER BY id"
+            "SELECT r.id, r.artist, r.title FROM releases r "
+            "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
+            "ORDER BY r.id"
         ).fetchall()
         if not releases:
             print(
-                "ERROR: no DJ-filtered releases found. Run "
-                "`sleeve-notes filter` first.",
+                "ERROR: no releases with tracks found. Run `sleeve-notes fetch` first.",
                 file=sys.stderr,
             )
             return 2
 
-        total_tracks = conn.execute(
-            "SELECT COUNT(*) AS n FROM tracks t "
-            "JOIN releases r ON r.id = t.release_id "
-            "WHERE r.is_dj_release = 1"
-        ).fetchone()["n"]
+        total_tracks = conn.execute("SELECT COUNT(*) AS n FROM tracks").fetchone()["n"]
 
         # Pass 1: classify every track without doing any network I/O.
         # Anything that needs the cascade lands in `worklist`; everything
