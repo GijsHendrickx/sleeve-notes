@@ -18,10 +18,15 @@ dependencies = [
     "beautifulsoup4>=4.12,<5",
     "rapidfuzz>=3.6,<4",
     "reportlab>=4.1,<5",
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.27,<1",
+    "jinja2>=3.1,<4",
+    "qrcode>=7.4,<9",
+    "python-multipart>=0.0.9,<1",
 ]
 
 [project.scripts]
 sleeve-notes = "sleeve_notes.cli:main"
 
 [tool.setuptools]
-packages = ["sleeve_notes"]
+packages = ["sleeve_notes", "sleeve_notes_web"]

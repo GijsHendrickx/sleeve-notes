@@ -1,0 +1,50 @@
+{# Fragment loaded into #run-panel-body. Reloads on `runStatus` events. #}
+<div class="flex flex-col h-full">
+  <form method="post" action="/run/start" class="p-5 border-b border-neutral-800 space-y-3 text-sm shrink-0"
+        hx-post="/run/start" hx-target="#run-panel-body" hx-swap="innerHTML">
+    <label class="block">
+      <div class="text-xs uppercase tracking-wide text-neutral-500 mb-1">Step</div>
+      <select name="kind" class="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1" {% if running %}disabled{% endif %}>
+        <option value="run">run · fetch → filter → bpm → render</option>
+        <option value="fetch">fetch · Discogs collection</option>
+        <option value="filter">filter · 12"/LP only</option>
+        <option value="bpm">bpm · 5-source cascade</option>
+        <option value="render">render · PDF</option>
+      </select>
+    </label>
+    <label class="block">
+      <div class="text-xs uppercase tracking-wide text-neutral-500 mb-1">Extra args (forwarded)</div>
+      <input type="text" name="extra" placeholder="--limit 10  --folder DJ"
+             class="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1 font-mono text-xs"
+             {% if running %}disabled{% endif %} />
+    </label>
+    <div class="flex gap-2">
+      <button type="submit"
+              class="flex-1 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-neutral-50 disabled:bg-neutral-700 disabled:text-neutral-400"
+              {% if running %}disabled{% endif %}>
+        {% if running %}Already running…{% else %}▶ Start{% endif %}
+      </button>
+      {% if running %}
+      <button type="button"
+              hx-post="/run/cancel" hx-target="#run-panel-body" hx-swap="innerHTML"
+              class="px-3 py-1.5 rounded border border-amber-700 text-amber-300 hover:bg-amber-900/30">Cancel</button>
+      {% endif %}
+    </div>
+  </form>
+
+  <div class="flex-1 overflow-y-auto bg-neutral-950 p-4 font-mono text-xs leading-snug whitespace-pre-wrap"
+       id="run-log">
+    {% if job %}
+      <div class="text-neutral-500 mb-2">
+        job {{ job.id }} · {{ job.kind }} · status: <span id="run-status-text" data-status="{{ job.status }}">{{ job.status }}</span>
+      </div>
+      <div id="run-lines">{% for line in job.lines %}<div>{{ line }}</div>{% endfor %}</div>
+    {% else %}
+      <div class="text-neutral-600">No job yet. Pick a step and Start.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if job and job.status == 'running' %}
+<script>window.__sleeveAttachRunStream && window.__sleeveAttachRunStream();</script>
+{% endif %}

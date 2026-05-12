@@ -3,6 +3,11 @@
 ## Objective
 Generate a printable A4 PDF with stickers (one per release) for the DJ-usable 12"/LP records in a Discogs collection. Each sticker shows, per side (A/B), per track: position, artist, title, duration and BPM. Output: `.tmp/stickers.pdf`.
 
+## Two entry points
+
+- **Web UI (primary)**: `sleeve-notes web` opens a localhost FastAPI app on `http://127.0.0.1:8765/`. Dashboard with BPM coverage + "new since last print" + quick actions, a Collection browser (table with cover art, per-release detail drawer), a bulk spreadsheet-style **Overrides** editor, and a **Preview** screen with a live SVG sticker preview alongside on-demand full-PDF rendering. The Run panel (header button) triggers any pipeline step as a background job with live SSE log streaming and a header status pill that survives navigation.
+- **CLI (engine)**: the subcommands described below are the engine — the web app shells out to them for long-running jobs and reuses the same SQLite DB and sticker layout (`sleeve_notes/sticker_layout.py`). Use the CLI directly for scripting, headless servers, or for the steps the web UI doesn't currently expose (`auth-beatport`, `query`, batch `overrides clear`).
+
 ## State store
 All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db` in the project root. Tables: `releases`, `tracks`, `bpm_cache`, `bpm_source_hits`, `overrides`, `print_runs` / `print_run_releases`, `kv`. The old `.tmp/*.json` files are gone — on first DB init they're auto-imported and renamed to `*.bak`. Inspect anything with `sleeve-notes query [<table>|--sql "…"|--schema]`.
 

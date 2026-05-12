@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}sleeve-notes{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="/static/app.js" defer></script>
+  <style>
+    /* Dense table baseline */
+    table.dense th, table.dense td { padding: 0.35rem 0.65rem; }
+    /* Sticker preview canvas — borrow paper colour */
+    .sticker-preview { background: #fafaf7; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  </style>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen font-sans antialiased">
+  <div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <nav class="w-56 border-r border-neutral-800 flex flex-col shrink-0">
+      <div class="px-4 py-4 border-b border-neutral-800">
+        <a href="/" class="font-semibold tracking-tight text-neutral-100">sleeve-notes</a>
+        <div class="text-xs text-neutral-500 mt-0.5">localhost · v0.3</div>
+      </div>
+      <ul class="flex-1 py-2 text-sm">
+        {% set nav = [
+          ('/', 'Dashboard', 'dashboard'),
+          ('/collection', 'Collection', 'collection'),
+          ('/overrides', 'Overrides', 'overrides'),
+          ('/preview', 'Preview', 'preview'),
+        ] %}
+        {% for href, label, key in nav %}
+          <li>
+            <a href="{{ href }}"
+               class="block px-4 py-1.5 hover:bg-neutral-900 {% if active == key %}bg-neutral-900 text-neutral-100 border-l-2 border-neutral-300 -ml-px{% else %}text-neutral-400{% endif %}">
+              {{ label }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+      <div class="px-4 py-3 border-t border-neutral-800 text-xs text-neutral-500">
+        engine: <span class="text-neutral-400">sleeve_notes CLI</span>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <div class="flex-1 flex flex-col min-w-0">
+      <header class="border-b border-neutral-800 flex items-center justify-between px-6 h-12 shrink-0">
+        <div class="text-sm text-neutral-400">{% block breadcrumb %}{% endblock %}</div>
+        <div class="flex items-center gap-3">
+          <div id="run-pill" hx-get="/run/status" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
+          <button type="button" onclick="document.getElementById('run-panel').classList.toggle('hidden')"
+                  class="text-sm px-3 py-1 rounded border border-neutral-700 hover:bg-neutral-900 text-neutral-200">
+            Run
+          </button>
+        </div>
+      </header>
+      <main class="flex-1 px-6 py-5 overflow-x-hidden">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <!-- Slide-out Run panel -->
+  <aside id="run-panel" class="hidden fixed top-0 right-0 bottom-0 w-[440px] bg-neutral-950 border-l border-neutral-800 flex flex-col z-30 shadow-2xl">
+    <div class="flex items-center justify-between px-5 h-12 border-b border-neutral-800">
+      <div class="text-sm font-medium text-neutral-200">Run pipeline</div>
+      <button type="button" onclick="document.getElementById('run-panel').classList.add('hidden')"
+              class="text-neutral-500 hover:text-neutral-200">✕</button>
+    </div>
+    <div id="run-panel-body" class="flex-1 overflow-y-auto" hx-get="/run/panel" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
+  </aside>
+
+</body>
+</html>

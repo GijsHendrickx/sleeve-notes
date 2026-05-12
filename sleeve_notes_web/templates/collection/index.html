@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Collection · sleeve-notes{% endblock %}
+{% block breadcrumb %}Collection{% endblock %}
+{% block content %}
+<div class="flex h-[calc(100vh-7rem)] gap-4">
+  <!-- Left: filters + table -->
+  <div class="flex-1 min-w-0 flex flex-col">
+    <form method="get" action="/collection" class="flex flex-wrap gap-3 items-center mb-3 text-sm">
+      <input name="q" value="{{ q or '' }}" placeholder="search artist / title…"
+             class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 w-64 focus:outline-none focus:border-neutral-600" />
+      <select name="kept" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
+        <option value="">all</option>
+        <option value="1" {% if kept == '1' %}selected{% endif %}>kept</option>
+        <option value="0" {% if kept == '0' %}selected{% endif %}>skipped</option>
+        <option value="null" {% if kept == 'null' %}selected{% endif %}>unfiltered</option>
+      </select>
+      <select name="bpm" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
+        <option value="">BPM: any</option>
+        <option value="missing" {% if bpm_filter == 'missing' %}selected{% endif %}>has missing</option>
+        <option value="complete" {% if bpm_filter == 'complete' %}selected{% endif %}>fully covered</option>
+      </select>
+      <button type="submit" class="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100">Filter</button>
+      <span class="text-neutral-500 ml-auto">{{ rows|length }} of {{ total }} releases</span>
+    </form>
+
+    <div class="flex-1 overflow-auto border border-neutral-800 rounded">
+      <table class="dense w-full text-sm">
+        <thead class="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500 sticky top-0">
+          <tr>
+            <th class="text-left w-12"></th>
+            <th class="text-left">Artist</th>
+            <th class="text-left">Title</th>
+            <th class="text-right w-16">Year</th>
+            <th class="text-left w-20">Fmt</th>
+            <th class="text-right w-24">BPM</th>
+            <th class="text-left w-20">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="border-t border-neutral-900 hover:bg-neutral-900 cursor-pointer"
+              hx-get="/collection/{{ r.id }}" hx-target="#release-detail" hx-swap="innerHTML">
+            <td>
+              {% if r.cover %}
+                <img src="{{ r.cover }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+                     class="w-9 h-9 object-cover rounded-sm border border-neutral-800" />
+              {% else %}
+                <div class="w-9 h-9 rounded-sm border border-neutral-800 bg-neutral-900"></div>
+              {% endif %}
+            </td>
+            <td class="text-neutral-200">{{ r.artist or '—' }}</td>
+            <td class="text-neutral-300 italic">{{ r.title or '—' }}</td>
+            <td class="text-right text-neutral-500 font-mono">{{ r.year or '' }}</td>
+            <td class="text-neutral-500 font-mono">{{ r.format_short or '' }}</td>
+            <td class="text-right font-mono">
+              {% if r.tracks_total > 0 %}
+                <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-neutral-600{% else %}text-amber-400{% endif %}">
+                  {{ r.tracks_with_bpm }}/{{ r.tracks_total }}
+                </span>
+              {% else %}
+                <span class="text-neutral-700">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.is_dj_release == 1 %}
+                <span class="text-xs text-emerald-400">kept</span>
+              {% elif r.is_dj_release == 0 %}
+                <span class="text-xs text-neutral-500" title="{{ r.skip_reasons_summary }}">skipped</span>
+              {% else %}
+                <span class="text-xs text-amber-400">unfiltered</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center py-10 text-neutral-500">No releases match.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right: detail drawer -->
+  <aside id="release-detail" class="w-[420px] shrink-0 bg-neutral-900 border border-neutral-800 rounded overflow-y-auto p-5 text-sm">
+    <div class="text-neutral-500">Click a release to inspect.</div>
+  </aside>
+</div>
+{% endblock %}

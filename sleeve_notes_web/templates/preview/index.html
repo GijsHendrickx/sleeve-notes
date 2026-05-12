@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Preview · sleeve-notes{% endblock %}
+{% block breadcrumb %}Preview{% endblock %}
+{% block content %}
+<div class="grid grid-cols-[280px_1fr] gap-5 h-[calc(100vh-7rem)]">
+  <!-- Left: controls -->
+  <form id="preview-controls" class="bg-neutral-900 border border-neutral-800 rounded p-4 space-y-4 overflow-y-auto"
+        hx-get="/preview/svg" hx-target="#svg-pane" hx-swap="innerHTML"
+        hx-trigger="change, input delay:300ms from:input[type=number]"
+        hx-include="this">
+    <input type="hidden" name="release_id" value="{{ release_id }}" id="release-id-input" />
+
+    <fieldset class="space-y-2">
+      <legend class="text-xs uppercase tracking-wide text-neutral-500">Sticker size (mm)</legend>
+      <label class="flex items-center justify-between text-sm">
+        <span class="text-neutral-400">width</span>
+        <input type="number" name="sticker_w" value="{{ sticker_w }}" step="0.1" min="20" max="200"
+               class="w-24 bg-neutral-950 border border-neutral-800 rounded px-2 py-1 font-mono text-right" />
+      </label>
+      <label class="flex items-center justify-between text-sm">
+        <span class="text-neutral-400">height</span>
+        <input type="number" name="sticker_h" value="{{ sticker_h }}" step="0.1" min="20" max="280"
+               class="w-24 bg-neutral-950 border border-neutral-800 rounded px-2 py-1 font-mono text-right" />
+      </label>
+    </fieldset>
+
+    <fieldset class="space-y-2">
+      <legend class="text-xs uppercase tracking-wide text-neutral-500">Tile mode (PDF only)</legend>
+      <label class="flex items-center gap-2 text-sm text-neutral-300">
+        <input type="checkbox" name="tile" value="1" {% if tile %}checked{% endif %} class="accent-emerald-500" />
+        edge-to-edge tiling
+      </label>
+      <label class="flex items-center justify-between text-sm">
+        <span class="text-neutral-400">cols × rows</span>
+        <span class="flex gap-1">
+          <input type="number" name="tile_cols" value="{{ tile_cols }}" min="1" max="10"
+                 class="w-12 bg-neutral-950 border border-neutral-800 rounded px-1 py-1 font-mono text-right" />
+          <input type="number" name="tile_rows" value="{{ tile_rows }}" min="1" max="14"
+                 class="w-12 bg-neutral-950 border border-neutral-800 rounded px-1 py-1 font-mono text-right" />
+        </span>
+      </label>
+      <p class="text-xs text-neutral-600">Live preview ignores tile mode — it shows the requested sticker size at actual mm.</p>
+    </fieldset>
+
+    <fieldset class="space-y-2">
+      <legend class="text-xs uppercase tracking-wide text-neutral-500">PDF options</legend>
+      <label class="flex items-center gap-2 text-sm text-neutral-300">
+        <input type="checkbox" name="new_only" value="1" {% if new_only %}checked{% endif %} class="accent-emerald-500" />
+        only new since last print
+      </label>
+      <label class="flex items-center gap-2 text-sm text-neutral-300">
+        <input type="checkbox" name="mark_printed" value="1" {% if mark_printed %}checked{% endif %} class="accent-emerald-500" />
+        mark printed after download
+      </label>
+    </fieldset>
+
+    <div class="pt-2">
+      <a id="generate-pdf" href="/preview/pdf?{{ pdf_query }}" target="_blank"
+         class="block text-center px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-neutral-50 text-sm">
+        Generate PDF →
+      </a>
+      <p class="text-xs text-neutral-600 mt-2">Renders all kept releases; takes a few seconds.</p>
+    </div>
+  </form>
+
+  <!-- Right: release picker + SVG preview -->
+  <div class="flex flex-col min-h-0">
+    <div class="flex items-center gap-3 mb-3 text-sm">
+      <button type="button" onclick="step(-1)"
+              class="px-2 py-1 rounded border border-neutral-800 hover:bg-neutral-900">←</button>
+      <select id="release-picker" onchange="pickRelease(this.value)"
+              class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 max-w-[28rem] truncate">
+        {% for rel in releases %}
+          <option value="{{ rel.id }}" {% if rel.id == release_id %}selected{% endif %}>
+            {{ rel.artist or 'V/A' }} – {{ rel.title }}{% if rel.year %} ({{ rel.year }}){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="button" onclick="step(1)"
+              class="px-2 py-1 rounded border border-neutral-800 hover:bg-neutral-900">→</button>
+      <span class="ml-auto text-xs text-neutral-500">{{ releases|length }} releases</span>
+    </div>
+    <div id="svg-pane" class="flex-1 overflow-auto p-6 flex flex-wrap content-start gap-4 bg-neutral-950 border border-neutral-800 rounded">
+      {% include "preview/_svg.html" %}
+    </div>
+  </div>
+</div>
+
+<script>
+  // Keep release-id hidden input + dropdown + PDF link query in sync, then trigger an HTMX preview reload.
+  function pickRelease(id) {
+    document.getElementById('release-id-input').value = id;
+    htmx.trigger('#preview-controls', 'change');
+  }
+  function step(delta) {
+    const sel = document.getElementById('release-picker');
+    const idx = sel.selectedIndex + delta;
+    if (idx < 0 || idx >= sel.options.length) return;
+    sel.selectedIndex = idx;
+    pickRelease(sel.value);
+  }
+  // Update PDF link's query string when the controls change.
+  document.getElementById('preview-controls').addEventListener('input', () => {
+    const form = document.getElementById('preview-controls');
+    const params = new URLSearchParams(new FormData(form));
+    document.getElementById('generate-pdf').href = '/preview/pdf?' + params.toString();
+  });
+</script>
+{% endblock %}

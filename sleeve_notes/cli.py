@@ -33,6 +33,9 @@ Inspection / data:
   overrides      Add/list/remove manual BPM/key overrides
   auth-beatport  One-time Beatport OAuth bootstrap
 
+Interactive:
+  web            Launch the localhost web UI (dashboard, overrides, preview)
+
 Pass -h/--help to any subcommand for its own options.
 """
 
@@ -60,7 +63,32 @@ def _resolve(name: str) -> Callable[[list[str] | None], int]:
     if name == "overrides":
         from sleeve_notes import overrides
         return overrides.main
+    if name == "web":
+        return _web_main
     raise KeyError(name)
+
+
+def _web_main(argv: list[str] | None) -> int:
+    """Launch the localhost web UI."""
+    parser = argparse.ArgumentParser(
+        prog="sleeve-notes web",
+        description="Run the localhost web UI (FastAPI + HTMX). The CLI subcommands "
+                    "remain the engine; the web app shells out to them for long jobs.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
+    parser.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765).")
+    parser.add_argument("--no-browser", action="store_true", help="Don't auto-open the browser.")
+    args = parser.parse_args(argv or [])
+    try:
+        from sleeve_notes_web.app import serve
+    except ImportError as e:
+        sys.stderr.write(
+            f"sleeve-notes web: web extras not installed ({e}). "
+            "Reinstall with `pip install -e .` after pulling the latest pyproject.toml.\n"
+        )
+        return 2
+    serve(host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
 
 
 def _run(argv: list[str]) -> int:

@@ -1,0 +1,79 @@
+{# Fragment loaded into #release-detail #}
+<div class="space-y-4">
+  <div class="flex gap-3">
+    {% if release.cover %}
+      <img src="{{ release.cover }}" alt="" referrerpolicy="no-referrer"
+           class="w-20 h-20 object-cover rounded border border-neutral-800" />
+    {% endif %}
+    <div class="min-w-0">
+      <div class="text-neutral-100 font-medium truncate">{{ release.artist or 'V/A' }}</div>
+      <div class="text-neutral-400 italic truncate">{{ release.title or '—' }}</div>
+      <div class="text-xs text-neutral-500 mt-1 font-mono">
+        {{ release.year or '????' }} · {{ release.format_short or '—' }} · id {{ release.id }}
+      </div>
+      <a href="https://www.discogs.com/release/{{ release.id }}" target="_blank" rel="noopener"
+         class="text-xs text-sky-400 hover:underline">discogs ↗</a>
+    </div>
+  </div>
+
+  {% if release.is_dj_release == 0 %}
+    <div class="bg-neutral-950 border border-neutral-800 rounded p-3 text-xs text-neutral-400">
+      <div class="text-neutral-500 uppercase tracking-wide mb-1">Skipped because</div>
+      {% for reason in release.skip_reasons %}
+        <div class="font-mono">· {{ reason }}</div>
+      {% else %}
+        <div class="text-neutral-600">(no reason recorded)</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if release.tracks %}
+  <div>
+    <div class="text-xs uppercase tracking-wide text-neutral-500 mb-1">Tracks</div>
+    <table class="dense w-full text-xs">
+      <thead class="text-neutral-500">
+        <tr>
+          <th class="text-left">Pos</th>
+          <th class="text-left">Title</th>
+          <th class="text-right">Dur</th>
+          <th class="text-right">BPM</th>
+          <th class="text-left">Key</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in release.tracks %}
+        <tr class="border-t border-neutral-900 align-top">
+          <td class="font-mono text-neutral-400">{{ t.position }}</td>
+          <td>
+            {% if release.compilation and t.artist and t.artist != release.artist %}
+              <span class="text-neutral-400">{{ t.artist }} – </span>
+            {% endif %}
+            <span class="text-neutral-200">{{ t.title }}</span>
+            {% if t.bpm_sources %}
+              <div class="text-neutral-600 font-mono">{{ t.bpm_sources|join(' · ') }}</div>
+            {% endif %}
+          </td>
+          <td class="text-right text-neutral-500 font-mono">{{ t.duration or '' }}</td>
+          <td class="text-right font-mono
+            {% if t.bpm_confidence in ('high','manual') %}text-emerald-400
+            {% elif t.bpm_confidence == 'disputed' %}text-amber-400
+            {% elif t.bpm %}text-neutral-200
+            {% elif t.reason == 'continuous_mix' %}text-neutral-500
+            {% else %}text-neutral-600{% endif %}">
+            {{ t.bpm or (t.reason == 'continuous_mix' and 'mix' or '·') }}
+          </td>
+          <td class="font-mono {% if t.key_camelot %}text-neutral-200{% else %}text-neutral-600{% endif %}">{{ t.key_camelot or '·' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if release.is_dj_release == 1 %}
+    <div class="flex gap-2">
+      <a href="/preview?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-700 hover:bg-neutral-800 text-neutral-200">Preview sticker →</a>
+      <a href="/overrides?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-800 hover:bg-neutral-800 text-neutral-400">Edit overrides →</a>
+    </div>
+  {% endif %}
+</div>

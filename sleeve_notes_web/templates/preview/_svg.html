@@ -1,0 +1,14 @@
+{% if error %}
+  <div class="text-amber-400 text-sm">{{ error }}</div>
+{% elif svgs %}
+  {% for svg in svgs %}
+    <div class="sticker-preview">{{ svg|safe }}</div>
+  {% endfor %}
+  {% if svgs|length > 1 %}
+    <div class="basis-full text-xs text-neutral-500 mt-1">
+      Release splits into {{ svgs|length }} stickers ({{ release.tracks|length if release else '' }} tracks).
+    </div>
+  {% endif %}
+{% else %}
+  <div class="text-neutral-500 text-sm">No release selected.</div>
+{% endif %}
