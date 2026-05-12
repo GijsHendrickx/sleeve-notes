@@ -10,7 +10,7 @@ Setup:
        BEATPORT_USERNAME=your.beatport.email@example.com
        BEATPORT_PASSWORD=your-password
   2. Run once:
-       bpm-stickers auth-beatport
+       sleeve-notes auth-beatport
      Stores the tokens in the DB (kv['beatport_tokens']); fetch_bpm.py
      auto-refreshes from there.
 
@@ -34,12 +34,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 CLIENT_ID = "0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd"
 API_BASE = "https://api.beatport.com/v4"

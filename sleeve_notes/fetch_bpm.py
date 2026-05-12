@@ -8,7 +8,7 @@ Sources, in order:
                     name→ID translation (free, no user OAuth).
   4. Beatport v4  — editorial BPM from labels themselves. OAuth via the public
                     Swagger client_id; refresh tokens stored in the DB
-                    (set up via tools/beatport_auth.py).
+                    (set up via sleeve_notes/beatport_auth.py).
   5. AcousticBrainz — open dataset, looked up via MusicBrainz recording IDs.
                     Frozen since 2022, but excellent coverage for older
                     electronic releases.
@@ -52,12 +52,12 @@ from tenacity import (
 load_dotenv()
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 ROOT = project_root()
 
@@ -78,7 +78,7 @@ SONGBPM_RATE_S = 0.6
 SONGBPM_JITTER_S = 0.3
 
 # --- Deezer + MusicBrainz API -------------------------------------------------
-API_USER_AGENT = "discogs-dj-stickers/1.0 (+https://github.com/local; contact via repo)"
+API_USER_AGENT = "sleeve-notes/0.3 (+https://github.com/GijsHendrickx/sleeve-notes)"
 DEEZER_RATE_S = 0.25
 MB_RATE_S = 1.05  # MusicBrainz is strict: 1 req/sec. Leave headroom.
 AB_RATE_S = 0.5
@@ -686,7 +686,7 @@ def _full_reauth_beatport() -> dict | None:
     password = os.environ.get("BEATPORT_PASSWORD")
     if not username or not password:
         return None
-    from tools.beatport_auth import authenticate
+    from sleeve_notes.beatport_auth import authenticate
     return authenticate(username, password)
 
 
@@ -715,7 +715,7 @@ def _get_beatport_token() -> str:
             return fresh["access_token"]
         raise SourceUnavailable(
             "Beatport tokens missing/expired and no BEATPORT_USERNAME/PASSWORD in .env — "
-            "run `bpm-stickers auth-beatport` to authorize"
+            "run `sleeve-notes auth-beatport` to authorize"
         )
 
 
@@ -1288,7 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
         if not releases:
             print(
                 "ERROR: no DJ-filtered releases found. Run "
-                "`bpm-stickers filter` first.",
+                "`sleeve-notes filter` first.",
                 file=sys.stderr,
             )
             return 2
@@ -1457,7 +1457,7 @@ def main(argv: list[str] | None = None) -> int:
         if unused_rp or unused_tk:
             print(
                 f"  WARNING: {len(unused_rp) + len(unused_tk)} override entry/entries "
-                "matched nothing — check via `bpm-stickers overrides list`:",
+                "matched nothing — check via `sleeve-notes overrides list`:",
                 file=sys.stderr,
             )
             for rid, pos in unused_rp:

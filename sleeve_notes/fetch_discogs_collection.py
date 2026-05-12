@@ -32,17 +32,17 @@ from tenacity import (
 )
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 ROOT = project_root()
 
 API_BASE = "https://api.discogs.com"
-USER_AGENT = "discogs-dj-stickers/0.1"
+USER_AGENT = "sleeve-notes/0.3 (+https://github.com/GijsHendrickx/sleeve-notes)"
 REQUEST_GAP_S = 1.1            # authenticated: 60 req/min
 REQUEST_GAP_PUBLIC_S = 2.5     # unauthenticated: 25 req/min
 

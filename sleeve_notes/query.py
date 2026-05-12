@@ -1,10 +1,10 @@
-"""Browse the bpm-stickers SQLite DB from the CLI.
+"""Browse the sleeve-notes SQLite DB from the CLI.
 
 Three modes:
 
-  bpm-stickers query                        list every table with row counts
-  bpm-stickers query <table> [--where ...]  dump rows from a table (read-only)
-  bpm-stickers query --sql "SELECT ..."     run arbitrary read-only SQL
+  sleeve-notes query                        list every table with row counts
+  sleeve-notes query <table> [--where ...]  dump rows from a table (read-only)
+  sleeve-notes query --sql "SELECT ..."     run arbitrary read-only SQL
 
 The `--sql` mode rejects statements that aren't a plain SELECT/WITH/PRAGMA/
 EXPLAIN. Use the dedicated `overrides` subcommand for the only table the
@@ -21,12 +21,12 @@ import sys
 from pathlib import Path
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 
 _READONLY_PREFIX = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.IGNORECASE)
@@ -134,8 +134,8 @@ def _cmd_list_tables(conn: sqlite3.Connection, as_json: bool) -> int:
         print(f"{t.ljust(width)}  {n}")
     print()
     print(f"DB: {dbmod.db_path()}")
-    print("Use `bpm-stickers query <table>` to dump a table, "
-          "or `bpm-stickers query --sql \"SELECT …\"` for arbitrary SQL.")
+    print("Use `sleeve-notes query <table>` to dump a table, "
+          "or `sleeve-notes query --sql \"SELECT …\"` for arbitrary SQL.")
     return 0
 
 
@@ -222,7 +222,7 @@ def _cmd_run_sql(conn: sqlite3.Connection, sql: str, as_json: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bpm-stickers query",
+        prog="sleeve-notes query",
         description="Browse the SQLite DB. Pass no args to list tables.",
     )
     parser.add_argument(

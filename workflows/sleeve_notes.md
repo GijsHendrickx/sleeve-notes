@@ -4,7 +4,7 @@
 Generate a printable A4 PDF with stickers (one per release) for the DJ-usable 12"/LP records in a Discogs collection. Each sticker shows, per side (A/B), per track: position, artist, title, duration and BPM. Output: `.tmp/stickers.pdf`.
 
 ## State store
-All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db` in the project root. Tables: `releases`, `tracks`, `bpm_cache`, `bpm_source_hits`, `overrides`, `print_runs` / `print_run_releases`, `kv`. The old `.tmp/*.json` files are gone — on first DB init they're auto-imported and renamed to `*.bak`. Inspect anything with `bpm-stickers query [<table>|--sql "…"|--schema]`.
+All persistent state lives in **a single SQLite file** at `data/sleeve_notes.db` in the project root. Tables: `releases`, `tracks`, `bpm_cache`, `bpm_source_hits`, `overrides`, `print_runs` / `print_run_releases`, `kv`. The old `.tmp/*.json` files are gone — on first DB init they're auto-imported and renamed to `*.bak`. Inspect anything with `sleeve-notes query [<table>|--sql "…"|--schema]`.
 
 ## Prerequisites
 - Python 3.10+
@@ -20,7 +20,7 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
 - **Optional (Beatport fallback):**
   - Add to `.env`: `BEATPORT_USERNAME` + `BEATPORT_PASSWORD` (the email +
     password you log in to beatport.com with).
-  - Run once: `python tools/beatport_auth.py`. No browser, no popup —
+  - Run once: `python sleeve_notes/beatport_auth.py`. No browser, no popup —
     the script does a scripted authorization_code flow against the public
     Swagger client and writes `.tmp/beatport_tokens.json`.
   - `fetch_bpm.py` auto-refreshes access tokens via the refresh_token;
@@ -36,30 +36,30 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
 
 1. **Fetch the collection**
    ```
-   bpm-stickers fetch                          # whole collection via API
-   bpm-stickers fetch --folder "DJ"            # only folder "DJ"
-   bpm-stickers fetch --csv path/to/export.csv
-   bpm-stickers fetch --csv path/to/export.csv --folder "DJ"
+   sleeve-notes fetch                          # whole collection via API
+   sleeve-notes fetch --folder "DJ"            # only folder "DJ"
+   sleeve-notes fetch --csv path/to/export.csv
+   sleeve-notes fetch --csv path/to/export.csv --folder "DJ"
    ```
    - `--folder` accepts a folder name (case-insensitive) or a folder id. On an unknown name the tool prints the available folders.
    - `--csv PATH`: use a Discogs CSV export (Collection → Export) as the source instead of the collection-listing API. The folder filter then matches against the `CollectionFolder` column (names only, not ids). Per-release tracklists are still fetched via `/releases/{id}` (cache-aware: rows in `releases` with `raw_tracklist IS NOT NULL` are skipped). In CSV mode **no Discogs account is required**: without `DISCOGS_TOKEN` the public endpoint still works, just at 25 req/min (vs. 60 with a token).
-   - Output: rows in `releases` (with `basic_information`, `raw_tracklist`, `notes` JSON columns). Inspect via `bpm-stickers query releases`.
+   - Output: rows in `releases` (with `basic_information`, `raw_tracklist`, `notes` JSON columns). Inspect via `sleeve-notes query releases`.
    - Runtime: ~1.1s per release (Discogs authenticated limit = 60 req/min). 500 releases ≈ 10 min.
    - Resumable: cached rows are skipped.
 
 2. **Filter DJ records**
    ```
-   bpm-stickers filter
+   sleeve-notes filter
    ```
    - Pure transformation, no network.
    - Output: updates `releases` rows in place — sets `is_dj_release` to 1 (kept) or 0 (skipped, with `skip_reasons` JSON populated). For keepers, inserts normalized rows into `tracks`.
-   - Inspect skipped: `bpm-stickers query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`.
+   - Inspect skipped: `sleeve-notes query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`.
    - Filter: a format description contains `'12"'` or `'LP'`. All 12" and LP vinyl pass (Single, Maxi, EP, Album). 7"/10"/CD/cassette/digital are dropped. No genre filter.
 
 3. **Look up BPMs (5-source cascade)**
    ```
-   bpm-stickers bpm                    # default: 8 worker threads
-   bpm-stickers bpm --workers 12       # bump if you're bandwidth-rich
+   sleeve-notes bpm                    # default: 8 worker threads
+   sleeve-notes bpm --workers 12       # bump if you're bandwidth-rich
    ```
    - **Concurrency**: tracks are processed in parallel by a pool of worker threads (default `--workers 8`). For each track all 5 sources fire in parallel inside the worker, then `consense()` picks the canonical value. Throughput ceiling is set by the slowest per-host rate limit (MusicBrainz / SongBPM, ~1 req/s each) shared across workers, so values above ~8 give diminishing returns.
    - **Sources**:
@@ -81,16 +81,16 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
 
 4. **Generate PDF**
    ```
-   bpm-stickers render
+   sleeve-notes render
    ```
    - Output: `.tmp/stickers.pdf` by default. Override with `-o/--output <path>` (full PDF path or a directory; missing parents are created, missing `.pdf` suffix is appended).
    - Stickers are 96×50.8 mm by default (configurable via `--sticker-w` / `--sticker-h` in mm), two per row on A4, with crop marks and a faint border. Tracks without a found BPM get a small empty rectangle in the BPM column on the sticker so the user can pen the value in by hand after printing.
    - **Tile mode**: pass `--tile` to lay stickers edge-to-edge (no gutters, no page margin) so the print can be sliced with `(cols−1)+(rows−1)` straight ruler cuts. Default `--tile-cols 2 --tile-rows 5` gives exactly 10 stickers per A4 at 105×59.4 mm; the print needs 5 cuts (1 vertical + 4 horizontal). Use borderless printing or expect ~3 mm clipping on outer stickers.
-   - **Incremental** (`--new-only`/`--mark-printed`): print history lives in `print_runs` + `print_run_releases`. Inspect via `bpm-stickers query print_runs` and `bpm-stickers query print_run_releases`.
+   - **Incremental** (`--new-only`/`--mark-printed`): print history lives in `print_runs` + `print_run_releases`. Inspect via `sleeve-notes query print_runs` and `sleeve-notes query print_run_releases`.
 
 ## Outputs
 - `.tmp/stickers.pdf` — print on A4 at **100% scale** (no "fit to page"), preferably on self-adhesive paper. Sticker size is 96×50.8 mm; verify with a ruler after the first print.
-- Skipped releases — `bpm-stickers query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`. Review to confirm no release was accidentally filtered out.
+- Skipped releases — `sleeve-notes query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"`. Review to confirm no release was accidentally filtered out.
 
 ## Operational notes
 - **Discogs**: authenticated limit 60 req/min, unauthenticated 25 req/min. Tools sleep 1.1s (auth) or 2.5s (unauth) between calls + tenacity backoff on 429.
@@ -110,9 +110,9 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
 - **Remixes** → with multiple SongBPM hits, the variant whose mix suffix matches wins; otherwise the shortest title (the original).
 
 ## Failure modes & recovery
-- **401 Unauthorized**: Discogs/Spotify token expired or wrong → check `.env`. For Beatport: re-run `bpm-stickers auth-beatport`.
+- **401 Unauthorized**: Discogs/Spotify token expired or wrong → check `.env`. For Beatport: re-run `sleeve-notes auth-beatport`.
 - **HTTP 429 / 503**: tenacity retries with backoff. On persistent 429s: lower concurrency or wait.
-- **SongBPM HTML changes** (parser returns nothing): inspect `.tmp/debug/{slug}.html`, adjust the selectors in `fetch_bpm.py`, drop the affected rows with `sqlite3 data/bpm_stickers.db "DELETE FROM bpm_source_hits WHERE source='songbpm'"`, and re-run step 3.
+- **SongBPM HTML changes** (parser returns nothing): inspect `.tmp/debug/{slug}.html`, adjust the selectors in `fetch_bpm.py`, drop the affected rows with `sqlite3 data/sleeve_notes.db "DELETE FROM bpm_source_hits WHERE source='songbpm'"`, and re-run step 3.
 - **Discogs API down**: step 1 is resumable, restart and the DB-backed cache keeps filling up.
 
 ## Self-improvement

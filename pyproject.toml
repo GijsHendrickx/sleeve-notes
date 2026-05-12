@@ -3,8 +3,8 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bpm-stickers"
-version = "0.2.0"
+name = "sleeve-notes"
+version = "0.3.0"
 description = "Generate printable A4 BPM/key/QR stickers for your Discogs vinyl collection."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-bpm-stickers = "tools.cli:main"
+sleeve-notes = "sleeve_notes.cli:main"
 
 [tool.setuptools]
-packages = ["tools"]
+packages = ["sleeve_notes"]

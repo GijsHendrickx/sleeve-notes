@@ -1,14 +1,14 @@
-"""The `bpm-stickers` command-line entry point.
+"""The `sleeve-notes` command-line entry point.
 
 Dispatches to the per-step modules in this package. Each subcommand's flags
-are owned by its underlying module — `bpm-stickers fetch --csv x.csv` is the
-same as `python tools/fetch_discogs_collection.py --csv x.csv`. The `run`
+are owned by its underlying module — `sleeve-notes fetch --csv x.csv` is the
+same as `python sleeve_notes/fetch_discogs_collection.py --csv x.csv`. The `run`
 subcommand chains the four steps in order with a small allow-list of the
 flags most commonly customised end-to-end.
 
 Inspection: every JSON file from the old layout has moved into a single
-SQLite DB at `bpm_stickers.db` in the project root. Use `bpm-stickers query`
-to browse any of its tables (and `bpm-stickers overrides` for the only
+SQLite DB at `sleeve_notes.db` in the project root. Use `sleeve-notes query`
+to browse any of its tables (and `sleeve-notes overrides` for the only
 table you typically need to edit by hand).
 """
 
@@ -19,7 +19,7 @@ import sys
 from typing import Callable
 
 _USAGE = """\
-usage: bpm-stickers <subcommand> [options]
+usage: sleeve-notes <subcommand> [options]
 
 Pipeline:
   fetch          Step 1 — fetch your Discogs collection (API or --csv export)
@@ -40,25 +40,25 @@ Pass -h/--help to any subcommand for its own options.
 def _resolve(name: str) -> Callable[[list[str] | None], int]:
     """Lazy-import a subcommand's main() function."""
     if name == "fetch":
-        from tools import fetch_discogs_collection
+        from sleeve_notes import fetch_discogs_collection
         return fetch_discogs_collection.main
     if name == "filter":
-        from tools import filter_dj_releases
+        from sleeve_notes import filter_dj_releases
         return filter_dj_releases.main
     if name == "bpm":
-        from tools import fetch_bpm
+        from sleeve_notes import fetch_bpm
         return fetch_bpm.main
     if name == "render":
-        from tools import generate_sticker_pdf
+        from sleeve_notes import generate_sticker_pdf
         return generate_sticker_pdf.main
     if name == "auth-beatport":
-        from tools import beatport_auth
+        from sleeve_notes import beatport_auth
         return beatport_auth.main
     if name == "query":
-        from tools import query
+        from sleeve_notes import query
         return query.main
     if name == "overrides":
-        from tools import overrides
+        from sleeve_notes import overrides
         return overrides.main
     raise KeyError(name)
 
@@ -71,7 +71,7 @@ def _run(argv: list[str]) -> int:
     render. For anything else, run the four subcommands individually.
     """
     parser = argparse.ArgumentParser(
-        prog="bpm-stickers run",
+        prog="sleeve-notes run",
         description="Fetch → filter → BPM lookup → render. "
                     "For more granular control, run the subcommands individually.",
     )
@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         fn = _resolve(cmd)
     except KeyError:
-        sys.stderr.write(f"bpm-stickers: unknown subcommand {cmd!r}\n\n")
+        sys.stderr.write(f"sleeve-notes: unknown subcommand {cmd!r}\n\n")
         sys.stderr.write(_USAGE)
         return 2
     return fn(rest) or 0

@@ -15,11 +15,11 @@ Values:
   --note STR          free-form note (just for your own reference)
 
 Examples:
-  bpm-stickers overrides add --release-id 123 --position A1 --bpm 128 --key 8A
-  bpm-stickers overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
-  bpm-stickers overrides add --release-id 789 --position A --continuous-mix --note "DJ mix"
-  bpm-stickers overrides list
-  bpm-stickers overrides remove 3
+  sleeve-notes overrides add --release-id 123 --position A1 --bpm 128 --key 8A
+  sleeve-notes overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
+  sleeve-notes overrides add --release-id 789 --position A --continuous-mix --note "DJ mix"
+  sleeve-notes overrides list
+  sleeve-notes overrides remove 3
 """
 
 from __future__ import annotations
@@ -30,12 +30,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 
 def _now_iso() -> str:
@@ -139,7 +139,7 @@ def _cmd_clear(args) -> int:
     if not args.yes:
         print(
             "Refusing to clear all overrides without --yes. "
-            "Run `bpm-stickers overrides clear --yes` to confirm.",
+            "Run `sleeve-notes overrides clear --yes` to confirm.",
             file=sys.stderr,
         )
         return 2
@@ -152,7 +152,7 @@ def _cmd_clear(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bpm-stickers overrides",
+        prog="sleeve-notes overrides",
         description="Manage manual BPM/key overrides stored in the DB.",
     )
     sub = parser.add_subparsers(dest="action", required=True)

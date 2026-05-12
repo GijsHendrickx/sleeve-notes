@@ -20,12 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
+from sleeve_notes import db as dbmod
 
 ROOT = project_root()
 
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if not rows:
             print(
-                "ERROR: no fetched releases found. Run `bpm-stickers fetch` first.",
+                "ERROR: no fetched releases found. Run `sleeve-notes fetch` first.",
                 file=sys.stderr,
             )
             return 2

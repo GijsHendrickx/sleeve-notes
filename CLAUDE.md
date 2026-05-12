@@ -13,10 +13,10 @@ You're working inside the **WAT framework** (Workflows, Agents, Tools). This arc
 - This is your role. You're responsible for intelligent coordination.
 - Read the relevant workflow, run tools in the correct sequence, handle failures gracefully, and ask clarifying questions when needed
 - You connect intent to execution without trying to do everything yourself
-- Example: If you need to pull data from a website, don't attempt it directly. Read `workflows/scrape_website.md`, figure out the required inputs, then execute `tools/scrape_single_site.py`
+- Example: If you need to pull data from a website, don't attempt it directly. Read `workflows/scrape_website.md`, figure out the required inputs, then execute `sleeve_notes/scrape_single_site.py`
 
 **Layer 3: Tools (The Execution)**
-- Python scripts in `tools/` that do the actual work
+- Python scripts in `sleeve_notes/` (the project's Python package) that do the actual work
 - API calls, data transformations, file operations, database queries
 - Credentials and API keys are stored in `.env`
 - These scripts are consistent, testable, and fast
@@ -26,7 +26,7 @@ You're working inside the **WAT framework** (Workflows, Agents, Tools). This arc
 ## How to Operate
 
 **1. Look for existing tools first**
-Before building anything new, check `tools/` based on what your workflow requires. Only create new scripts when nothing exists for that task.
+Before building anything new, check `sleeve_notes/` based on what your workflow requires. Only create new scripts when nothing exists for that task.
 
 **2. Learn and adapt when things fail**
 When you hit an error:
@@ -58,7 +58,7 @@ This loop is how the framework improves over time.
 **Directory layout:**
 ```
 .tmp/           # Temporary files (scraped data, intermediate exports). Regenerated as needed.
-tools/          # Python scripts for deterministic execution
+sleeve_notes/   # Python scripts for deterministic execution (Layer 3: Tools)
 workflows/      # Markdown SOPs defining what to do and how
 .env            # API keys and environment variables (NEVER store secrets anywhere else)
 credentials.json, token.json  # Google OAuth (gitignored)

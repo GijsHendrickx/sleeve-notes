@@ -24,13 +24,13 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
-from tools import db as dbmod
-from tools.fetch_bpm import derive_track_result, load_overrides
+from sleeve_notes import db as dbmod
+from sleeve_notes.fetch_bpm import derive_track_result, load_overrides
 
 ROOT = project_root()
 TMP = ROOT / ".tmp"
@@ -593,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         if not releases:
             print(
                 "ERROR: no DJ-filtered releases found. Run "
-                "`bpm-stickers fetch && bpm-stickers filter` first.",
+                "`sleeve-notes fetch && sleeve-notes filter` first.",
                 file=sys.stderr,
             )
             return 2

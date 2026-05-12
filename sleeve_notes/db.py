@@ -1,6 +1,6 @@
-"""SQLite store for bpm-stickers.
+"""SQLite store for sleeve-notes.
 
-A single DB file at ``<project_root>/bpm_stickers.db`` replaces every JSON
+A single DB file at ``<project_root>/data/sleeve_notes.db`` replaces every JSON
 file that used to live in ``.tmp/`` (plus ``overrides.json`` at root). The
 schema is intentionally close to the old JSONs so the cascade/consensus
 logic in ``fetch_bpm.py`` stays unchanged in shape; we just persist via
@@ -45,14 +45,16 @@ from pathlib import Path
 from typing import Iterator
 
 try:
-    from tools import project_root
+    from sleeve_notes import project_root
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from tools import project_root
+    from sleeve_notes import project_root
 
 
 SCHEMA_VERSION = 1
-DB_FILENAME = "bpm_stickers.db"
+DB_FILENAME = "sleeve_notes.db"
+# Pre-rename filename, migrated in place on first connect.
+LEGACY_DB_FILENAME = "bpm_stickers.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS releases (
@@ -163,22 +165,56 @@ def _now_iso() -> str:
 def _move_legacy_db_to_data_dir(p: Path) -> None:
     """One-shot relocation of a pre-data/ DB.
 
-    Prior versions kept ``bpm_stickers.db`` directly at the project root.
-    If the new ``data/`` path is empty but the legacy one exists, move it
-    (plus its WAL/SHM sidecars) so existing users don't lose their data
-    when they upgrade.
+    Prior versions kept the DB directly at the project root rather than
+    inside ``data/``. If the new ``data/`` path is empty but a root-level
+    file exists (either the current or pre-rename filename), move it (plus
+    its WAL/SHM sidecars) so existing users don't lose their data when
+    they upgrade.
     """
-    legacy = project_root() / DB_FILENAME
-    if not legacy.exists() or p.exists():
+    if p.exists():
         return
-    p.parent.mkdir(parents=True, exist_ok=True)
+    for name in (DB_FILENAME, LEGACY_DB_FILENAME):
+        legacy = project_root() / name
+        if not legacy.exists():
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        legacy.rename(p)
+        for suffix in ("-wal", "-shm"):
+            side = legacy.with_name(legacy.name + suffix)
+            if side.exists():
+                side.rename(p.with_name(p.name + suffix))
+        print(
+            f"  sleeve-notes: moved legacy {legacy.name} → "
+            f"{p.relative_to(project_root())}.",
+            file=sys.stderr,
+        )
+        return
+
+
+def _rename_legacy_db_filename(p: Path) -> None:
+    """One-shot rename of the pre-`sleeve-notes` DB file.
+
+    Earlier versions of this project shipped as ``bpm-stickers`` with a
+    ``data/bpm_stickers.db`` file. On the first run after the rename,
+    move it to the new ``data/sleeve_notes.db`` location (plus its
+    WAL/SHM sidecars) so the cache, overrides and Beatport tokens carry
+    over without a re-cascade. If both files happen to exist (a user
+    re-ran the old build after the rename), leave them alone and warn —
+    we won't silently merge or overwrite either one.
+    """
+    if p.exists():
+        return
+    legacy = p.with_name(LEGACY_DB_FILENAME)
+    if not legacy.exists():
+        return
     legacy.rename(p)
     for suffix in ("-wal", "-shm"):
         side = legacy.with_name(legacy.name + suffix)
         if side.exists():
             side.rename(p.with_name(p.name + suffix))
     print(
-        f"  bpm-stickers: moved legacy {legacy.name} → {p.relative_to(project_root())}.",
+        f"  sleeve-notes: renamed {legacy.name} → {p.name} "
+        f"(project was previously named bpm-stickers).",
         file=sys.stderr,
     )
 
@@ -187,6 +223,7 @@ def connect() -> sqlite3.Connection:
     """Open (or create) the DB. On first creation, runs the JSON migration."""
     p = db_path()
     _move_legacy_db_to_data_dir(p)
+    _rename_legacy_db_filename(p)
     p.parent.mkdir(parents=True, exist_ok=True)
     fresh = not p.exists()
     conn = sqlite3.connect(p)
@@ -212,7 +249,7 @@ def connect() -> sqlite3.Connection:
             _rename_to_bak(src)
         if files_to_move:
             print(
-                f"  bpm-stickers: migrated {len(files_to_move)} legacy file(s) "
+                f"  sleeve-notes: migrated {len(files_to_move)} legacy file(s) "
                 f"into {p.name}; originals renamed to .bak.",
                 file=sys.stderr,
             )
@@ -271,7 +308,7 @@ def _rename_to_bak(p: Path) -> None:
     try:
         p.rename(base)
     except OSError as e:
-        print(f"  bpm-stickers: could not rename {p.name} → {base.name}: {e}", file=sys.stderr)
+        print(f"  sleeve-notes: could not rename {p.name} → {base.name}: {e}", file=sys.stderr)
 
 
 _V1_URL_TO_SOURCE = (
@@ -359,7 +396,7 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
     # release_cache/*.json → fill releases rows that collection.json didn't
     rc_dir = tmp / "release_cache"
     if rc_dir.exists() and rc_dir.is_dir():
-        from tools.fetch_discogs_collection import basic_from_detail
+        from sleeve_notes.fetch_discogs_collection import basic_from_detail
         for p in rc_dir.glob("*.json"):
             try:
                 rid = int(p.stem)
@@ -554,7 +591,7 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                 migrated += 1
             if dropped:
                 print(
-                    f"  bpm-stickers: bpm_cache.json was pre-consensus schema; "
+                    f"  sleeve-notes: bpm_cache.json was pre-consensus schema; "
                     f"kept {migrated} entries with a known source URL, "
                     f"dropped {dropped} unmappable entries (will be re-queried).",
                     file=sys.stderr,
