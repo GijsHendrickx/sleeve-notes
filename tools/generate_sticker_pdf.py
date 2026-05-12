@@ -23,7 +23,12 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from tools import project_root
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import project_root
+ROOT = project_root()
 TMP = ROOT / ".tmp"
 DJ_IN = TMP / "dj_releases.json"
 BPM_IN = TMP / "bpm_results.json"
@@ -549,7 +554,7 @@ def last_print_timestamp(history: dict) -> str | None:
     return prints[-1].get("timestamp")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--sticker-w",
@@ -599,7 +604,7 @@ def main() -> int:
         "history. Combine with --new-only for the typical 'print what's new and remember' "
         "flow; use alone after a full reprint to mark the whole collection as printed.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     configure_layout(
         args.sticker_w, args.sticker_h,

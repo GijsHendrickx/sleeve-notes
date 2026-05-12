@@ -32,7 +32,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from tools import project_root
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import project_root
+ROOT = project_root()
 TMP = ROOT / ".tmp"
 TOKENS_FILE = TMP / "beatport_tokens.json"
 
@@ -123,7 +128,9 @@ def save_tokens(tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
     username = os.environ.get("BEATPORT_USERNAME")
     password = os.environ.get("BEATPORT_PASSWORD")
     if not username or not password:

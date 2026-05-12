@@ -7,7 +7,12 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from tools import project_root
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import project_root
+ROOT = project_root()
 TMP = ROOT / ".tmp"
 COLLECTION_IN = TMP / "collection.json"
 DJ_OUT = TMP / "dj_releases.json"
@@ -117,7 +122,9 @@ def transform_tracks(tracklist: list[dict], release_artist: str) -> list[dict]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
     if not COLLECTION_IN.exists():
         print(f"ERROR: {COLLECTION_IN} not found. Run fetch_discogs_collection.py first.", file=sys.stderr)
         return 2

@@ -49,7 +49,15 @@ from tenacity import (
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from tools import project_root
+except ImportError:
+    # Script-mode invocation (`python tools/fetch_bpm.py`) — Python adds
+    # tools/ to sys.path but not its parent. Add the parent so the package
+    # import works, then retry.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import project_root
+ROOT = project_root()
 TMP = ROOT / ".tmp"
 DJ_IN = TMP / "dj_releases.json"
 BPM_OUT = TMP / "bpm_results.json"
@@ -696,8 +704,7 @@ def _full_reauth_beatport() -> dict | None:
         return None
     # Lazy import so fetch_bpm.py doesn't depend on the auth module unless
     # we actually need to bootstrap tokens.
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from beatport_auth import authenticate  # type: ignore[import-not-found]
+    from tools.beatport_auth import authenticate
 
     return authenticate(username, password)
 
@@ -1269,7 +1276,9 @@ def build_track_result(position: str, artist: str, title: str, entry: dict) -> d
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
     if not DJ_IN.exists():
         print(f"ERROR: {DJ_IN} not found. Run filter_dj_releases.py first.", file=sys.stderr)
         return 2

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bpm-stickers"
+version = "0.2.0"
+description = "Generate printable A4 BPM/key/QR stickers for your Discogs vinyl collection."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Gijs Hendrickx" }]
+dependencies = [
+    "requests>=2.31,<3",
+    "urllib3<2",
+    "python-dotenv>=1.0,<2",
+    "tenacity>=8.2,<9",
+    "beautifulsoup4>=4.12,<5",
+    "rapidfuzz>=3.6,<4",
+    "reportlab>=4.1,<5",
+]
+
+[project.scripts]
+bpm-stickers = "tools.cli:main"
+
+[tool.setuptools]
+packages = ["tools"]

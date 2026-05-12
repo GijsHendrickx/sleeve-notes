@@ -70,21 +70,25 @@ Optional, only if you want maximum BPM coverage:
 
 ## Setup
 
+Two paths — the `bpm-stickers` CLI installed via pipx (recommended for end users) or a local virtualenv (for hacking on the code):
+
 ```bash
 # 1. Clone & enter
 git clone <this-repo> vinyl-bpm-stickers
 cd vinyl-bpm-stickers
 
-# 2. Create a virtualenv (strongly recommended)
+# 2a. Recommended: install the CLI in an isolated env via pipx
+pipx install .                 # exposes `bpm-stickers` on $PATH
+# 2b. Or, for development:
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -e .               # editable install; bpm-stickers + tools/ both work
 
-# 3. Install Python dependencies
-pip install -r requirements.txt
-
-# 4. Create your .env (see next section)
+# 3. Create your .env (see next section)
 cp .env.example .env   # or create it from scratch — see below
 ```
+
+After install, the CLI is available as `bpm-stickers`. All commands resolve state files (`.tmp/`, `.env`, `overrides.json`, `printed.json`) against the current working directory by default — so always run `bpm-stickers` from the directory you want those files to live in. Override with `BPM_STICKERS_ROOT=/path/to/project bpm-stickers …` if needed.
 
 If a `.env.example` is not present, just create `.env` from scratch using the template in the next section.
 
@@ -148,7 +152,18 @@ Just the email + password you normally use to log in at beatport.com. No develop
 
 ## Running the workflow
 
-Activate your virtualenv first (`source .venv/bin/activate`), then run the four steps in order. Every step is idempotent — re-running picks up where the last left off.
+The four steps are exposed as `bpm-stickers` subcommands (the legacy `python tools/*.py` invocations still work — they call the same `main()` functions):
+
+```bash
+bpm-stickers fetch     # Step 1 — Discogs collection (API or --csv)
+bpm-stickers filter    # Step 2 — keep 12"/LP, drop the rest
+bpm-stickers bpm       # Step 3 — parallel cascade for BPM + key
+bpm-stickers render    # Step 4 — generate the PDF
+bpm-stickers run       # all four, with --csv/--folder forwarded to fetch,
+                       # render flags forwarded to render (see below)
+```
+
+Every step is idempotent — re-running picks up where the last left off. Pass `-h` to any subcommand for its own flags. The sections below show both forms (`bpm-stickers <cmd>` and `python tools/<script>.py`) so you can mix and match.
 
 ### Step 1 — fetch your collection
 
@@ -443,11 +458,14 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 .
 ├── README.md                              ← you are here
 ├── CLAUDE.md                              ← agent instructions (WAT framework)
-├── requirements.txt                       ← Python deps
+├── pyproject.toml                         ← packaging + `bpm-stickers` entry point
+├── requirements.txt                       ← Python deps (for `pip install -r` mode)
 ├── .env                                   ← your secrets (gitignored)
 ├── overrides.example.json                 ← template for manual BPM overrides
 ├── overrides.json                         ← (optional) your manual BPM overrides
 ├── tools/
+│   ├── __init__.py                        ← package marker + project_root() helper
+│   ├── cli.py                             ← `bpm-stickers` subcommand dispatcher
 │   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV)
 │   ├── filter_dj_releases.py              ← Step 2: keep only 12"/LP vinyl
 │   ├── fetch_bpm.py                       ← Step 3: 5-source BPM cascade
@@ -460,9 +478,11 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
     ├── release_cache/
     ├── dj_releases.json
     ├── skipped.json
-    ├── bpm_cache.json
+    ├── bpm_cache.json                     ← v2 cache (per-source results for consensus)
+    ├── bpm_cache.v1.json.bak              ← (only if migrated) legacy cache backup
     ├── bpm_results.json
     ├── beatport_tokens.json
+    ├── printed.json                       ← per-print history for --new-only / --mark-printed
     └── stickers.pdf
 ```
 

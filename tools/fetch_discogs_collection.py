@@ -26,7 +26,12 @@ from tenacity import (
     wait_exponential,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from tools import project_root
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import project_root
+ROOT = project_root()
 TMP = ROOT / ".tmp"
 RELEASE_CACHE = TMP / "release_cache"
 COLLECTION_OUT = TMP / "collection.json"
@@ -184,7 +189,7 @@ def basic_from_detail(detail: dict) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--folder",
@@ -202,7 +207,7 @@ def main() -> int:
         "CollectionFolder column.",
     )
     parser.add_argument("--limit", type=int, default=None, help="Stop after N releases")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     load_dotenv(ROOT / ".env")
     token = os.environ.get("DISCOGS_TOKEN")
