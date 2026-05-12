@@ -1,10 +1,22 @@
-"""Filter Discogs collection down to DJ-ready 12" electronic releases."""
+"""Filter Discogs releases down to DJ-ready 12" electronic vinyl.
+
+Reads from the ``releases`` table (rows with ``raw_tracklist`` populated by
+``fetch_discogs_collection``), applies the format/tracklist filter, and
+writes back:
+  - The extracted columns (``artist``, ``title``, ``rpm``, ...).
+  - ``is_dj_release`` (1 or 0) plus ``skip_reasons`` for rejected releases.
+  - Normalized rows in the ``tracks`` table (kept releases only).
+
+Pure transformation, no network. Idempotent.
+"""
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -12,11 +24,10 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import project_root
+
+from tools import db as dbmod
+
 ROOT = project_root()
-TMP = ROOT / ".tmp"
-COLLECTION_IN = TMP / "collection.json"
-DJ_OUT = TMP / "dj_releases.json"
-SKIPPED_OUT = TMP / "skipped.json"
 
 VINYL_DESCRIPTIONS = {'12"', "LP"}
 
@@ -123,79 +134,154 @@ def transform_tracks(tracklist: list[dict], release_artist: str) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
-    if not COLLECTION_IN.exists():
-        print(f"ERROR: {COLLECTION_IN} not found. Run fetch_discogs_collection.py first.", file=sys.stderr)
-        return 2
 
-    with COLLECTION_IN.open("r", encoding="utf-8") as f:
-        collection = json.load(f)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    kept: list[dict] = []
-    skipped: list[dict] = []
+    with dbmod.session() as conn:
+        rows = conn.execute(
+            "SELECT id, basic_information, raw_tracklist FROM releases "
+            "WHERE raw_tracklist IS NOT NULL"
+        ).fetchall()
 
-    for entry in collection:
-        basic = entry.get("basic_information", {})
-        rid = entry.get("id")
-        formats = basic.get("formats") or []
-        genres = basic.get("genres") or []
-        tracklist = entry.get("tracklist") or []
-
-        title = (basic.get("title") or "").strip()
-        release_artists = basic.get("artists") or []
-        release_artist = join_artists(release_artists)
-        compilation = any((a.get("name") or "").strip().lower() == "various" for a in release_artists)
-
-        is_target_vinyl = check_format(formats)
-
-        reasons: list[str] = []
-        if not is_target_vinyl:
-            reasons.append("not_12inch_or_lp")
-        if not tracklist:
-            reasons.append("no_tracklist")
-
-        if reasons:
-            skipped.append(
-                {
-                    "id": rid,
-                    "artist": release_artist or "V/A",
-                    "title": title,
-                    "reasons": reasons,
-                }
+        if not rows:
+            print(
+                "ERROR: no fetched releases found. Run `bpm-stickers fetch` first.",
+                file=sys.stderr,
             )
-            continue
+            return 2
 
-        tracks = transform_tracks(tracklist, release_artist or "V/A")
-        if not tracks:
-            skipped.append(
-                {"id": rid, "artist": release_artist or "V/A", "title": title, "reasons": ["no_real_tracks"]}
+        kept = 0
+        skipped = 0
+
+        for row in rows:
+            rid = row["id"]
+            try:
+                basic = json.loads(row["basic_information"] or "{}")
+            except json.JSONDecodeError:
+                basic = {}
+            try:
+                tracklist = json.loads(row["raw_tracklist"] or "[]")
+            except json.JSONDecodeError:
+                tracklist = []
+
+            formats = basic.get("formats") or []
+            genres = basic.get("genres") or []
+            title = (basic.get("title") or "").strip()
+            release_artists = basic.get("artists") or []
+            release_artist = join_artists(release_artists)
+            compilation = any(
+                (a.get("name") or "").strip().lower() == "various"
+                for a in release_artists
             )
-            continue
 
-        kept.append(
-            {
-                "id": rid,
-                "artist": release_artist or "V/A",
-                "title": title,
-                "year": basic.get("year"),
-                "labels": [(l.get("name") or "").strip() for l in basic.get("labels") or []],
-                "genres": genres,
-                "styles": basic.get("styles") or [],
-                "compilation": compilation,
-                "rpm": extract_rpms(formats),
-                "tracks": tracks,
-            }
-        )
+            reasons: list[str] = []
+            if not check_format(formats):
+                reasons.append("not_12inch_or_lp")
+            if not tracklist:
+                reasons.append("no_tracklist")
 
-    TMP.mkdir(parents=True, exist_ok=True)
-    with DJ_OUT.open("w", encoding="utf-8") as f:
-        json.dump(kept, f, ensure_ascii=False, indent=2)
-    with SKIPPED_OUT.open("w", encoding="utf-8") as f:
-        json.dump(skipped, f, ensure_ascii=False, indent=2)
+            if reasons:
+                conn.execute(
+                    """
+                    UPDATE releases SET
+                        artist = ?,
+                        title = ?,
+                        is_dj_release = 0,
+                        skip_reasons = ?,
+                        filtered_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        release_artist or "V/A",
+                        title,
+                        json.dumps(reasons, ensure_ascii=False),
+                        now,
+                        rid,
+                    ),
+                )
+                conn.execute("DELETE FROM tracks WHERE release_id = ?", (rid,))
+                skipped += 1
+                continue
 
-    print(f"Kept {len(kept)} releases → {DJ_OUT}")
-    print(f"Skipped {len(skipped)} releases → {SKIPPED_OUT}")
+            tracks = transform_tracks(tracklist, release_artist or "V/A")
+            if not tracks:
+                conn.execute(
+                    """
+                    UPDATE releases SET
+                        artist = ?, title = ?,
+                        is_dj_release = 0,
+                        skip_reasons = ?,
+                        filtered_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        release_artist or "V/A",
+                        title,
+                        json.dumps(["no_real_tracks"], ensure_ascii=False),
+                        now,
+                        rid,
+                    ),
+                )
+                conn.execute("DELETE FROM tracks WHERE release_id = ?", (rid,))
+                skipped += 1
+                continue
+
+            conn.execute(
+                """
+                UPDATE releases SET
+                    artist = ?,
+                    title = ?,
+                    year = ?,
+                    compilation = ?,
+                    labels = ?,
+                    genres = ?,
+                    styles = ?,
+                    rpm = ?,
+                    is_dj_release = 1,
+                    skip_reasons = NULL,
+                    filtered_at = ?
+                WHERE id = ?
+                """,
+                (
+                    release_artist or "V/A",
+                    title,
+                    basic.get("year"),
+                    1 if compilation else 0,
+                    json.dumps(
+                        [(l.get("name") or "").strip() for l in basic.get("labels") or []],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(genres, ensure_ascii=False),
+                    json.dumps(basic.get("styles") or [], ensure_ascii=False),
+                    json.dumps(extract_rpms(formats), ensure_ascii=False),
+                    now,
+                    rid,
+                ),
+            )
+            conn.execute("DELETE FROM tracks WHERE release_id = ?", (rid,))
+            for t in tracks:
+                conn.execute(
+                    """
+                    INSERT INTO tracks (release_id, position, side, artist, title, duration, duration_s)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rid,
+                        t["position"],
+                        t["side"],
+                        t["artist"],
+                        t["title"],
+                        t["duration"],
+                        t["duration_s"],
+                    ),
+                )
+            kept += 1
+
+    print(
+        f"Kept {kept} release(s) (is_dj_release=1), "
+        f"skipped {skipped} (is_dj_release=0) → {dbmod.db_path().name}"
+    )
     return 0
 
 

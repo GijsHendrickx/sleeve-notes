@@ -10,8 +10,9 @@ Setup:
        BEATPORT_USERNAME=your.beatport.email@example.com
        BEATPORT_PASSWORD=your-password
   2. Run once:
-       python tools/beatport_auth.py
-     Writes .tmp/beatport_tokens.json. fetch_bpm.py auto-refreshes from there.
+       bpm-stickers auth-beatport
+     Stores the tokens in the DB (kv['beatport_tokens']); fetch_bpm.py
+     auto-refreshes from there.
 
 If the refresh_token later expires or is revoked, fetch_bpm.py re-runs this
 flow automatically (using the same .env credentials), so token lifecycle is
@@ -37,9 +38,8 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import project_root
-ROOT = project_root()
-TMP = ROOT / ".tmp"
-TOKENS_FILE = TMP / "beatport_tokens.json"
+
+from tools import db as dbmod
 
 CLIENT_ID = "0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd"
 API_BASE = "https://api.beatport.com/v4"
@@ -50,16 +50,8 @@ REDIRECT_URI = f"{API_BASE}/auth/o/post-message/"
 
 
 def authenticate(username: str, password: str) -> dict:
-    """Run the full Beatport OAuth dance and return a token bundle.
-
-    Three steps in one HTTP session (cookies preserved across calls):
-      1. POST /auth/login/ — exchanges username+password for a session cookie.
-      2. GET /auth/o/authorize/ — with the session cookie, Beatport returns a
-         302 whose Location header contains ?code=...
-      3. POST /auth/o/token/ — exchange the auth code for access+refresh tokens.
-    """
+    """Run the full Beatport OAuth dance and return a token bundle."""
     with requests.Session() as s:
-        # 1. Login
         resp = s.post(
             LOGIN_URL,
             json={"username": username, "password": password},
@@ -74,7 +66,6 @@ def authenticate(username: str, password: str) -> dict:
                 f"Beatport login failed (status {resp.status_code}): {resp.text[:300]}"
             )
 
-        # 2. Authorize — get the redirect with ?code=... in the Location header.
         resp = s.get(
             AUTHORIZE_URL,
             params={
@@ -97,7 +88,6 @@ def authenticate(username: str, password: str) -> dict:
             raise RuntimeError(f"No 'code' in authorize redirect: {location}")
         code = codes[0]
 
-        # 3. Exchange code for tokens.
         resp = s.post(
             TOKEN_URL,
             data={
@@ -123,9 +113,8 @@ def authenticate(username: str, password: str) -> dict:
 
 
 def save_tokens(tokens: dict) -> None:
-    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with TOKENS_FILE.open("w", encoding="utf-8") as f:
-        json.dump(tokens, f, indent=2)
+    with dbmod.session() as conn:
+        dbmod.set_kv(conn, "beatport_tokens", json.dumps(tokens))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,8 +139,11 @@ def main(argv: list[str] | None = None) -> int:
 
     save_tokens(tokens)
     expires_in = int(tokens["expires_at"] - time.time())
-    print(f"Saved tokens to {TOKENS_FILE}.")
-    print(f"  access_token expires in ~{expires_in}s; fetch_bpm.py auto-refreshes (with full-reauth fallback).")
+    print(f"Saved tokens to {dbmod.db_path().name} (kv['beatport_tokens']).")
+    print(
+        f"  access_token expires in ~{expires_in}s; fetch_bpm.py auto-refreshes "
+        "(with full-reauth fallback)."
+    )
     return 0
 
 

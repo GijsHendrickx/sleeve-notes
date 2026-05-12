@@ -14,6 +14,7 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
 - [Setup](#setup)
 - [Credentials & `.env`](#credentials--env)
 - [Running the workflow](#running-the-workflow)
+- [Inspecting the data: `query` + `overrides`](#inspecting-the-data-query--overrides)
 - [Outputs](#outputs)
 - [The CSV-export shortcut](#the-csv-export-shortcut)
 - [Resumability, caches and re-runs](#resumability-caches-and-re-runs)
@@ -34,24 +35,31 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
 │ Discogs collection         │
 │  (API  OR  CSV export)     │
 └────────────┬───────────────┘
-             │   tools/fetch_discogs_collection.py
+             │  bpm-stickers fetch   →  releases.basic_information + raw_tracklist
              ▼
-   .tmp/collection.json       (+ per-release cache in .tmp/release_cache/)
-             │
-             │   tools/filter_dj_releases.py
-             ▼
-   .tmp/dj_releases.json      (.tmp/skipped.json for rejects)
-             │
-             │   tools/fetch_bpm.py   (5-source cascade)
-             ▼
-   .tmp/bpm_results.json      (+ persistent .tmp/bpm_cache.json)
-             │
-             │   tools/generate_sticker_pdf.py
+        ┌──────────────────────────┐
+        │   data/bpm_stickers.db   │   ← single SQLite file under project root
+        │   ─────────────────      │     replaces every JSON intermediate
+        │   releases / tracks      │
+        │   bpm_cache / source_hits│
+        │   overrides              │
+        │   print_runs / kv        │
+        └────────────┬─────────────┘
+             │  bpm-stickers filter  →  is_dj_release flag + tracks rows
+             │  bpm-stickers bpm     →  cascade fills bpm_cache + bpm_source_hits
+             │  bpm-stickers render  →  derives per-track BPM/key on the fly
              ▼
    .tmp/stickers.pdf          ← print this on A4, 100% scale
 ```
 
-Each step writes intermediates into `.tmp/` and **can be re-run independently**: caches mean re-runs only do new work.
+All persistent state — the Discogs collection, the BPM cache, your manual
+overrides, the print history — lives in a single SQLite file
+(`data/bpm_stickers.db`) under the project root. `.tmp/` still holds the final
+`stickers.pdf` (and any debug dumps), but nothing it contains is
+load-bearing — wipe it freely.
+
+Each step is re-runnable and **incremental**: re-runs only do new work
+because every cache lives in the DB.
 
 ---
 
@@ -88,7 +96,14 @@ pip install -e .               # editable install; bpm-stickers + tools/ both wo
 cp .env.example .env   # or create it from scratch — see below
 ```
 
-After install, the CLI is available as `bpm-stickers`. All commands resolve state files (`.tmp/`, `.env`, `overrides.json`, `printed.json`) against the current working directory by default — so always run `bpm-stickers` from the directory you want those files to live in. Override with `BPM_STICKERS_ROOT=/path/to/project bpm-stickers …` if needed.
+After install, the CLI is available as `bpm-stickers`. All commands resolve state files (`data/bpm_stickers.db`, `.tmp/`, `.env`) against the current working directory by default — so always run `bpm-stickers` from the directory you want those files to live in. Override with `BPM_STICKERS_ROOT=/path/to/project bpm-stickers …` if needed.
+
+**First run** auto-creates `data/bpm_stickers.db` and, if it finds any
+legacy JSON files (`collection.json`, `bpm_cache.json`, `release_cache/`,
+`overrides.json`, etc.), imports them in a single transaction and renames
+the originals to `*.bak`. If you previously had `bpm_stickers.db` at the
+project root (from before the `data/` move), it's relocated automatically
+on first run. Nothing manual to do — just run the pipeline.
 
 If a `.env.example` is not present, just create `.env` from scratch using the template in the next section.
 
@@ -185,32 +200,32 @@ python tools/fetch_discogs_collection.py --limit 10
 ```
 
 - **Runtime:** roughly **1.1 s per release** (Discogs allows 60 authenticated req/min). 500 releases ≈ 10 minutes. Unauthenticated CSV mode runs at 2.5 s per release (25 req/min).
-- **Output:** `.tmp/collection.json` plus a per-release cache at `.tmp/release_cache/<release_id>.json`.
-- **Resumable:** cached releases are served from disk, so re-runs after an interruption finish quickly.
+- **Output:** rows in `releases` (`basic_information`, `raw_tracklist`, `notes` JSON columns) — that table doubles as the per-release cache. Inspect via `bpm-stickers query releases`.
+- **Resumable:** rows with `raw_tracklist IS NOT NULL` are served from the DB, so re-runs after an interruption finish quickly.
 
 See [The CSV-export shortcut](#the-csv-export-shortcut) for why `--csv` is often the easier path.
 
 ### Step 2 — filter to DJ-usable vinyl
 
 ```bash
-python tools/filter_dj_releases.py
+bpm-stickers filter
 ```
 
 - Pure local transformation, no network.
-- Output: `.tmp/dj_releases.json` (the keepers) and `.tmp/skipped.json` (with a reason per skipped release).
+- Output: updates the `releases` table — sets `is_dj_release` to 1 (kept) or 0 (skipped, with `skip_reasons` populated), and inserts the normalized track rows into `tracks` for keepers.
 - Filter rule: a release is kept iff at least one of its format **descriptions** contains `12"` or `LP`. Discogs assigns these per release, so 12" Maxi/Single/EP and LP albums all come through; 7"/10"/CD/cassette/digital drop out.
 - No genre filter — every 12"/LP in the collection survives this step.
 
-Review `.tmp/skipped.json` if a record you expected is missing.
+Review the skipped set with `bpm-stickers query releases --where "is_dj_release = 0" --cols "id,artist,title,skip_reasons"` if a record you expected is missing.
 
 ### Step 3 — look up BPMs
 
 ```bash
-python tools/fetch_bpm.py
+bpm-stickers bpm
 ```
 
-- Iterates over every track in `dj_releases.json`, firing all 5 sources in parallel and reconciling them via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
-- Output: `.tmp/bpm_results.json` (the lookup results used by the PDF), plus a persistent `.tmp/bpm_cache.json` so the next run is fast.
+- Iterates over every track in the `tracks` table (DJ releases only), firing all 5 sources in parallel and reconciling them via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
+- Output: rows in `bpm_cache` (one per track, with `sources_tried` array) plus rows in `bpm_source_hits` (one per source-that-returned-something). Per-track consensus is derived on the fly by the renderer — no `bpm_results.json` needed.
 - Beatport is opt-in (see [Beatport: one-time auth](#beatport-one-time-auth)).
 
 Typical runtimes (parallel cascade — bounded by the slowest source for each track):
@@ -221,57 +236,117 @@ Typical runtimes (parallel cascade — bounded by the slowest source for each tr
 ### Step 4 — generate the PDF
 
 ```bash
-python tools/generate_sticker_pdf.py                           # default 96 x 50.8 mm with gutters + crop marks
-python tools/generate_sticker_pdf.py --sticker-w 70 --sticker-h 40   # smaller stickers, more per page
-python tools/generate_sticker_pdf.py --sticker-w 140 --sticker-h 80  # bigger stickers, fewer per page
-python tools/generate_sticker_pdf.py --tile                    # edge-to-edge: exactly 10 stickers per A4, slice with 5 ruler cuts
-python tools/generate_sticker_pdf.py --tile --tile-cols 3 --tile-rows 4   # 12-per-A4 tile (70 x 74.2 mm)
-python tools/generate_sticker_pdf.py --new-only                # only releases not yet in the print history
-python tools/generate_sticker_pdf.py --new-only --mark-printed # render new + record the print in history
+bpm-stickers render                              # default 96 x 50.8 mm with gutters + crop marks
+bpm-stickers render --sticker-w 70 --sticker-h 40    # smaller stickers, more per page
+bpm-stickers render --sticker-w 140 --sticker-h 80   # bigger stickers, fewer per page
+bpm-stickers render --tile                       # edge-to-edge: exactly 10 stickers per A4, slice with 5 ruler cuts
+bpm-stickers render --tile --tile-cols 3 --tile-rows 4    # 12-per-A4 tile (70 x 74.2 mm)
+bpm-stickers render --new-only                   # only releases not yet in the print history
+bpm-stickers render --new-only --mark-printed    # render new + record the print in history
 ```
 
 - Output: `.tmp/stickers.pdf`.
 - **Default mode** ships with crop marks and a 4 mm gutter between stickers, sized via `--sticker-w` / `--sticker-h` (mm). Columns and rows per page are auto-derived from the size so as many stickers as possible fit. Sizes that don't fit on A4 are rejected.
 - **Tile mode (`--tile`)** lays stickers edge-to-edge with zero gutters and zero page margin so the print can be sliced with just a few straight ruler cuts (`(cols − 1) + (rows − 1)` total). Sticker size is derived from `--tile-cols` × `--tile-rows` (default 2×5 = 10 per A4 → 105 × 59.4 mm). `--sticker-w` / `--sticker-h` are ignored when `--tile` is set. **Print borderless** or expect ~3 mm clipping on the outer stickers (most home printers have a small unprintable margin).
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
-- **Per-row columns** (left → right): position, artist + title, duration, Camelot key, BPM. The BPM column prepends a small **●** dot when two or more sources agreed (or the value came from `overrides.json`); single-source / disputed hits show just the digits. Tracks without any BPM hit show an **empty rectangle** for a hand-written value.
+- **Per-row columns** (left → right): position, artist + title, duration, Camelot key, BPM. The BPM column prepends a small **●** dot when two or more sources agreed (or the value came from a manual override); single-source / disputed hits show just the digits. Tracks without any BPM hit show an **empty rectangle** for a hand-written value.
 - **Header**: the artist line shows the playback **RPM** (`33⅓` / `45`) in grey when Discogs lists it. Releases where the Discogs `formats[*].descriptions` array doesn't include an RPM string simply have no badge — about 30–40 % of community-submitted releases.
 - **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
 
-**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. The tool keeps a per-print history in `.tmp/printed.json` (each entry: timestamp + list of release IDs). `--new-only` filters the render to releases not yet in that history; `--mark-printed` appends the rendered IDs to history after a successful render. Typical workflow:
+**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. The tool keeps a per-print history in the `print_runs` + `print_run_releases` tables (each row: timestamp + the release IDs that were on it). `--new-only` filters the render to releases that don't appear in any prior print run; `--mark-printed` inserts a new `print_runs` row after a successful render. Typical workflow:
 
 ```bash
 # First time: print everything, mark them all as printed
-python tools/generate_sticker_pdf.py --mark-printed
+bpm-stickers render --mark-printed
 
 # Later, after adding new records to Discogs and re-fetching:
-python tools/generate_sticker_pdf.py --new-only                  # preview new arrivals
-python tools/generate_sticker_pdf.py --new-only --mark-printed   # ready to print → commit to history
+bpm-stickers render --new-only                  # preview new arrivals
+bpm-stickers render --new-only --mark-printed   # ready to print → commit to history
 ```
 
 The two flags compose cleanly: alone, `--new-only` just filters; alone, `--mark-printed` marks the entire current collection (handy for marking pre-existing prints as already done). Releases that drop out of your Discogs collection later are ignored — `--new-only` only adds, never removes.
+
+Inspect history with `bpm-stickers query print_runs` and
+`bpm-stickers query print_run_releases`.
+
+---
+
+## Inspecting the data: `query` + `overrides`
+
+Every JSON file from the old layout is now a table in `data/bpm_stickers.db`.
+Two subcommands give you read/write access from the shell:
+
+```bash
+# List every table with its row count
+bpm-stickers query
+
+# Dump a table (with --where / --order-by / --cols / --limit / --json)
+bpm-stickers query releases --limit 5 --cols "id,artist,title,year"
+bpm-stickers query tracks --where "release_id = 12345"
+bpm-stickers query bpm_source_hits --where "source = 'beatport'" --order-by "bpm DESC"
+
+# Show the CREATE statements for a table (or all of them)
+bpm-stickers query --schema releases
+bpm-stickers query schema
+
+# Arbitrary read-only SQL (rejected if it's not SELECT / WITH / PRAGMA / EXPLAIN)
+bpm-stickers query --sql "SELECT source, COUNT(*) AS hits FROM bpm_source_hits GROUP BY source"
+bpm-stickers query --sql "SELECT r.artist, r.title, COUNT(t.position) FROM releases r
+                          JOIN tracks t ON t.release_id = r.id GROUP BY r.id ORDER BY 3 DESC LIMIT 5"
+
+# JSON output for piping into jq or another script
+bpm-stickers query releases --limit 0 --json | jq '.[].title'
+```
+
+Manual overrides — the only table you typically need to edit by hand —
+get a dedicated subcommand so you don't have to write SQL:
+
+```bash
+# Precise: a single track on a specific release
+bpm-stickers overrides add --release-id 123 --position A1 --bpm 128 --key 8A
+
+# Broad: every track with this artist+title (matches the BPM cascade's hash)
+bpm-stickers overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
+
+# Continuous-mix flag (skips BPM lookup, shows "mix" on the sticker)
+bpm-stickers overrides add --release-id 789 --position A --continuous-mix --note "DJ mix"
+
+bpm-stickers overrides list
+bpm-stickers overrides remove 3
+bpm-stickers overrides clear --yes
+```
+
+See [Manual overrides](#manual-overrides) for the full schema.
 
 ---
 
 ## Outputs
 
-After a complete run, `.tmp/` contains:
+After a complete run, the project layout looks like:
 
-| File | Purpose |
-|------|---------|
-| `collection.json` | Full release list with merged tracklists |
-| `release_cache/<id>.json` | One file per fetched release — persistent cache |
-| `dj_releases.json` | Releases that survived the 12"/LP filter |
-| `skipped.json` | Releases that were filtered out, with reason |
-| `bpm_results.json` | Per-track canonical BPM + key + confidence + source list, consumed by the PDF |
-| `bpm_cache.json` | Persistent v2 cache: per-source raw results so consensus can be recomputed without re-fetching |
-| `bpm_cache.v1.json.bak` | (Only if migrated.) Backup of the pre-consensus cache from before the parallel/consensus rewrite — safe to delete |
-| `beatport_tokens.json` | Beatport access + refresh tokens (auto-refreshed) |
-| `printed.json` | Per-print history (timestamp + release IDs) maintained by `--mark-printed` |
-| **`stickers.pdf`** | **The final printable PDF** |
+| Location | Purpose |
+|----------|---------|
+| **`data/bpm_stickers.db`** | **The single SQLite file containing all state** — your Discogs collection, the BPM cache, your overrides, your print history. See `bpm-stickers query` for inspection. |
+| `.tmp/stickers.pdf` | The final printable PDF (the only intermediate that's still a file). |
+| `.tmp/debug/*.html` | (Only on songbpm parser failures.) Raw HTML dumped for selector repair. |
 
-`.tmp/` is entirely **disposable** — delete it and re-run the steps and you will get the same result (slower the first time, because the caches need to repopulate).
+`.tmp/` is entirely **disposable** — wipe it freely; only `stickers.pdf`
+ever lives there and that gets rebuilt by `bpm-stickers render`.
+`data/bpm_stickers.db` is **not** disposable: it contains your overrides and
+print history. Back it up like any other source of truth.
+
+The DB tables in summary:
+
+| Table | What's in it |
+|-------|--------------|
+| `releases` | One row per Discogs release. `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm` etc. are the filter-derived columns; `is_dj_release` is 0/1/NULL. |
+| `tracks` | Normalized track rows for releases that passed the filter. |
+| `bpm_cache` | One row per (artist, title) hash. Tracks which sources have been queried. |
+| `bpm_source_hits` | One row per (cache_key, source) — the raw BPM/key/url returned by each source. |
+| `overrides` | Manual BPM/key overrides. Managed via `bpm-stickers overrides`. |
+| `print_runs` + `print_run_releases` | Print history for `--new-only` / `--mark-printed`. |
+| `kv` | Tiny key/value table — Beatport tokens, schema version. |
 
 ---
 
@@ -293,15 +368,24 @@ Folder filtering in `--csv` mode matches `--folder "NAME"` case-insensitively ag
 
 ## Resumability, caches and re-runs
 
-Every cache is designed so you can interrupt and resume safely.
+Every cache lives in `data/bpm_stickers.db` so you can interrupt and resume safely.
 
-- **`.tmp/release_cache/<id>.json`** — the raw `/releases/{id}` JSON. Existing files are served from disk and never re-fetched.
-- **`.tmp/bpm_cache.json`** — v2 schema. One entry per track key, with **per-source** raw results stored under `sources`. Each entry tracks `sources_tried`, so re-runs only call sources that have not yet been queried for that track. Because we store the per-source BPM/key, the consensus can be recomputed on every load without re-fetching.
-- **Schema migration:** if you ran an older version of this project, the legacy `bpm_cache.json` is detected on first run, archived to `bpm_cache.v1.json.bak`, and a fresh v2 cache is built. Per-source raw results don't exist in the v1 format, so migration without re-fetching isn't possible.
+- **`releases.raw_tracklist`** — the per-release Discogs detail. Rows where this is non-NULL are served from the DB and never re-fetched. This is the equivalent of the old `release_cache/<id>.json` files.
+- **`bpm_cache` + `bpm_source_hits`** — one `bpm_cache` row per (artist, title) hash, with `sources_tried` listing which sources have been queried. Each source that returned something gets one `bpm_source_hits` row with the raw `bpm`/`key_camelot`/`url`. Re-runs only call sources that have not yet been queried for that track; consensus is recomputed on the fly so you never re-fetch.
+- **Legacy JSON migration:** on first DB creation, any old `.tmp/*.json` files (incl. `release_cache/`) and the root `overrides.json` are imported into the DB in a single transaction; originals are renamed to `*.bak`. The pre-v2 `bpm_cache.json` shape (flat `cache_key → single_source_hit`) is mapped onto v2 by inferring the source from the `source_url`; entries with an unrecognised URL or no BPM/key are dropped (they'll be re-queried on the next `bpm` run).
 - **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
-- **Re-running steps:** Step 2 always rebuilds `dj_releases.json` from `collection.json` (cheap). Steps 3 and 4 are cache-aware.
+- **Re-running steps:** `filter` always rebuilds `tracks` from `releases.raw_tracklist` (cheap). `bpm` and `render` are cache-aware.
 
-To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` for a fresh BPM lookup) and re-run the step.
+To start a step clean, drop the relevant table — e.g. for a fresh BPM
+lookup:
+
+```bash
+sqlite3 data/bpm_stickers.db "DELETE FROM bpm_source_hits; DELETE FROM bpm_cache;"
+bpm-stickers bpm
+```
+
+To start completely fresh: `rm -rf data/` and re-run the pipeline.
+Your overrides go too — back up with `bpm-stickers query overrides --limit 0 --json` first if needed.
 
 ---
 
@@ -314,7 +398,7 @@ To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` fo
 | **songbpm.com** | ✓ | ✓ | HTML scrape of canonical detail pages. No auth, 1 req/s. Strong general coverage. |
 | **Deezer** | ✓ | — | Public `api.deezer.com/track` endpoint. No auth, ~4 req/s. `bpm: 0` = "known but not analysed" — counted as a miss. |
 | **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). |
-| **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `.tmp/beatport_tokens.json` (see next section). |
+| **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
@@ -322,16 +406,16 @@ To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` fo
 **Consensus** (per track):
 - **BPM** — cluster all returned values within ±1 BPM. The largest cluster with **≥2 members** wins, value = median, confidence = `high` (gets the ● dot on the sticker). Only one source returned → confidence = `single` (digits only). Multiple sources, none agreeing → priority-pick (`beatport > songbpm > reccobeats > deezer > acousticbrainz`), confidence = `disputed` (digits only).
 - **Key** — exact-Camelot-string majority across sources. All keys are normalised to Camelot before comparison (Beatport's `camelot_number`/`camelot_letter` fields are used directly; Spotify-style pitch class + mode is mapped; AcousticBrainz `tonal.key_key`/`tonal.key_scale` is parsed; songbpm.com is best-effort).
-- **Manual override** — `overrides.json` always wins over the consensus (see next section).
+- **Manual override** — rows in the `overrides` table always win over the consensus (see next section).
 
-**Cache schema (v2):** the cache stores per-source raw results so consensus can be recomputed offline without re-querying. Each entry:
-```json
-{
-  "sources": { "songbpm": {"bpm": 128, "key_camelot": "8A", "score": 95}, "deezer": {"bpm": 128, "score": 90}, ... },
-  "sources_tried":       ["songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz"],
-  "sources_unavailable": [],
-  "sources_errored":     []
-}
+**Cache schema:** `bpm_cache` holds one row per (artist, title) hash with `sources_tried` (JSON array); `bpm_source_hits` holds one row per (cache_key, source) with the raw `bpm`, `key_camelot`, `score`, `url`. Inspecting any of them is one `bpm-stickers query` away:
+
+```bash
+bpm-stickers query --sql "
+  SELECT c.artist, c.title, GROUP_CONCAT(h.source || '=' || h.bpm) AS hits
+  FROM bpm_cache c JOIN bpm_source_hits h ON h.cache_key = c.cache_key
+  WHERE h.bpm IS NOT NULL
+  GROUP BY c.cache_key HAVING COUNT(*) > 1 LIMIT 10"
 ```
 
 **Continuous mixes** — a track with a "side-only" position (e.g. `A`, with no `A1`/`A2` subnumbers) longer than 12 minutes is treated as a continuous mix: no BPM lookup is attempted and the sticker shows `(mix)`.
@@ -351,39 +435,42 @@ To start clean, delete the relevant cache file (e.g. `rm .tmp/bpm_cache.json` fo
 
 ## Manual overrides
 
-When a source returns the wrong BPM (e.g. picked up a remix, picked up a same-titled but unrelated track), or you have a needle-dropped value you trust over any online source, drop it in `overrides.json` at the repo root. Overrides win over the cache, the continuous-mix detector, and the entire cascade — they are checked **before** anything else for a given track.
+When a source returns the wrong BPM (e.g. picked up a remix, picked up a same-titled but unrelated track), or you have a needle-dropped value you trust over any online source, add it via the `overrides` subcommand. Overrides win over the cache, the continuous-mix detector, and the entire cascade — they're checked **before** anything else for a given track.
 
-Copy `overrides.example.json` to `overrides.json` and edit. The file is a flat JSON list; each entry uses one of two keying strategies:
+```bash
+# Precise: one specific track on one release
+bpm-stickers overrides add --release-id 123456 --position A1 --bpm 128 --key 8A
 
-```json
-[
-  { "release_id": 123456, "position": "A1", "bpm": 128, "key_camelot": "8A" },
-  { "release_id": 123456, "position": "B2", "bpm": null,
-    "note": "force empty box even though songbpm returned 174" },
-  { "release_id": 789012, "position": "A", "continuous_mix": true },
-  { "artist": "Daft Punk", "title": "Around the World", "bpm": 121, "key_camelot": "Am" }
-]
+# Broader: every track with this artist+title in the collection
+bpm-stickers overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
+
+# Flag a continuous DJ mix
+bpm-stickers overrides add --release-id 789012 --position A --continuous-mix --note "DJ mix"
+
+bpm-stickers overrides list
+bpm-stickers overrides remove 3
 ```
 
-- **`release_id` + `position`** — most precise. Both are printed on the sticker itself, so an override is a one-line edit after a needle-drop.
-- **`artist` + `title`** — broader. Matches every track in the collection whose normalized artist+title hash to the same key. Useful when the same track appears on multiple releases.
-- `release_id`+`position` takes priority when an entry of each shape matches the same track.
+Two ways to address a track:
+
+- **`--release-id` + `--position`** — most precise. Both are printed on the sticker itself, so an override is a one-command edit after a needle-drop.
+- **`--artist` + `--title`** — broader. Matches every track in the collection whose normalized artist+title hash to the same key. Useful when the same track appears on multiple releases.
+- `release_id` + `position` takes priority when an override of each shape matches the same track.
 
 Per-entry fields:
 
-| Field | Meaning |
+| Flag | Meaning |
 |---|---|
-| `bpm: <int>` (50–250) | Override the BPM. Sticker shows the digits with a **●** dot (manual values are treated as fully trusted). |
-| `bpm: null` | Force "no BPM" — sticker shows the empty fill-in box. Use to suppress a wrong source hit. |
-| `key_camelot: <str>` | Override the Camelot key. Accepts Camelot (`8A`, `12B`), musical (`Am`, `C#m`, `F# major`), or slash notation (`F♯/G♭ Major`); all are normalised to Camelot. |
-| `continuous_mix: true` | Mark the track as a continuous DJ mix — sticker shows `(mix)` instead of a number. |
-| `note` | Free-text reminder for yourself. Ignored by the script. |
+| `--bpm <int>` (50–250) | Override the BPM. Sticker shows the digits with a **●** dot (manual values are treated as fully trusted). |
+| `--key <str>` | Override the Camelot key. Accepts Camelot (`8A`, `12B`), musical (`Am`, `C#m`, `F# major`), or slash notation (`F♯/G♭ Major`); all are normalised to Camelot. |
+| `--continuous-mix` | Mark the track as a continuous DJ mix — sticker shows `(mix)` instead of a number. |
+| `--note <str>` | Free-text reminder for yourself. Ignored by the renderer. |
 
-Re-run `python tools/fetch_bpm.py` after editing — overrides are applied on the fly, the cache is not poisoned, so removing an override later restores the previously-cached value (or sends the track back through the cascade if it was never cached).
+Re-run `bpm-stickers bpm` (or `bpm-stickers render` if the cache is already populated) after editing — overrides are applied on the fly. They never poison the cache, so removing an override later restores the previously-cached value (or sends the track back through the cascade if it was never cached).
 
-**Validation:** parsing errors, out-of-range BPMs, and entries that match no track in your collection are reported as warnings — never fatal. The unmatched-entry warning is the one to watch for: a typo'd `release_id` produces no override and would otherwise be silent.
+**Validation:** parsing errors, out-of-range BPMs, and entries that match no track in your collection are reported as warnings — never fatal. The unmatched-entry warning is the one to watch for: a typo'd `--release-id` produces no override and would otherwise be silent.
 
-`overrides.json` is **not** gitignored by default. Decide for yourself whether to commit it: handy for sharing your hard-earned needle-drops with the repo, fine to leave local.
+**Bulk imports:** if you have a list of needle-drops, the cleanest path is a small shell loop over `bpm-stickers overrides add …`. For direct SQL surgery on an existing set, drop into `sqlite3 data/bpm_stickers.db` and edit the `overrides` table directly — read-only `bpm-stickers query overrides` still works either way.
 
 ---
 
@@ -397,10 +484,10 @@ Beatport coverage is opt-in. To enable it:
 #    BEATPORT_PASSWORD=your-password
 
 # 2. Mint the initial tokens (no browser, no popup):
-python tools/beatport_auth.py
+bpm-stickers auth-beatport
 ```
 
-This writes `.tmp/beatport_tokens.json`. From then on, `tools/fetch_bpm.py` refreshes access tokens automatically via the refresh token. If the refresh token is ever revoked, `fetch_bpm.py` silently falls back to a fresh login using the credentials in `.env` — you never have to touch this again.
+This writes the access + refresh tokens to `kv['beatport_tokens']` in the DB. From then on, `bpm-stickers bpm` refreshes access tokens automatically via the refresh token. If the refresh token is ever revoked, the cascade silently falls back to a fresh login using the credentials in `.env` — you never have to touch this again.
 
 Under the hood, the script uses the same fully-scripted authorization_code flow as the `beets-beatport4` plugin: POSTs your creds to `/auth/login/` for a session cookie, GETs `/auth/o/authorize/` to extract the code from the redirect's `Location` header, then exchanges the code at `/auth/o/token/`. The client_id is the public Swagger one (`0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd`), scraped from Beatport's own Swagger UI JS bundle. If Beatport ever rotates it, re-extract from `api.beatport.com/v4/docs/` → `/static/btprt/*.js` (grep for `API_CLIENT_ID`).
 
@@ -431,7 +518,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 | Continuous mix (single-letter position + duration > 12:00) | BPM lookup skipped; sticker shows `(mix)`. |
 | Non-ASCII characters (Björk, é, ø, …) | Matching uses NFKD normalisation; the PDF preserves the originals. |
 | Multiple SongBPM remix hits | The variant whose title matches the mix suffix wins; otherwise the shortest title (the original mix). |
-| Missing tracklist on Discogs | Release lands in `.tmp/skipped.json` with reason `no_tracklist`. |
+| Missing tracklist on Discogs | Release row gets `is_dj_release=0` with `skip_reasons` containing `"no_tracklist"`. |
 | Missing genre | No effect — there is no genre filter. |
 
 ---
@@ -444,10 +531,10 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 | `ERROR: <N> releases not cached and DISCOGS_TOKEN missing` (CSV mode) | You don't have a token AND the CSV references releases you've never fetched. Either add `DISCOGS_TOKEN` to `.env`, or be patient — without a token the script falls back to the public endpoint at 25 req/min (2.5 s per release). |
 | `Folder 'X' not found` | Pass an existing folder name (case-insensitive). In CSV mode the tool prints the folders present in the CSV; in API mode it prints the folders on your Discogs account. |
 | `401 Unauthorized` from Discogs/Spotify | Token expired or wrong. Re-issue it and update `.env`. |
-| `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `fetch_bpm.py` retries automatically with a fresh password grant; if that fails, re-run `python tools/beatport_auth.py`. |
+| `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `bpm-stickers bpm` retries automatically with a fresh password grant; if that fails, re-run `bpm-stickers auth-beatport`. |
 | HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute and try again. |
-| SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `tools/fetch_bpm.py`, delete the affected keys from `.tmp/bpm_cache.json`, and re-run Step 3. |
-| Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Open `dj_releases.json` and confirm the data is correct first; the PDF is a faithful render of that data. If you chose very small stickers via `--sticker-w/--sticker-h`, try a larger size — vertical space is the limiting factor for >6-track sides. |
+| SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `tools/fetch_bpm.py`, drop the affected rows with `sqlite3 data/bpm_stickers.db "DELETE FROM bpm_source_hits WHERE source='songbpm'; DELETE FROM bpm_cache WHERE cache_key NOT IN (SELECT cache_key FROM bpm_source_hits);"` (or just wipe both tables), and re-run `bpm-stickers bpm`. |
+| Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Inspect via `bpm-stickers query tracks --where "release_id = X"` and confirm the data is correct first; the PDF is a faithful render of that data. If you chose very small stickers via `--sticker-w/--sticker-h`, try a larger size — vertical space is the limiting factor for >6-track sides. |
 | `Sticker WxH mm doesn't fit on A4` | The requested `--sticker-w` / `--sticker-h` leaves no room for the 4 mm page edge on A4. Pick a smaller size, or stick to the default 96 × 50.8 mm. |
 
 ---
@@ -461,29 +548,25 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 ├── pyproject.toml                         ← packaging + `bpm-stickers` entry point
 ├── requirements.txt                       ← Python deps (for `pip install -r` mode)
 ├── .env                                   ← your secrets (gitignored)
-├── overrides.example.json                 ← template for manual BPM overrides
-├── overrides.json                         ← (optional) your manual BPM overrides
+├── data/                                  ← all persistent state (gitignored)
+│   └── bpm_stickers.db                    ← single SQLite file: collection, cache, overrides, print history
+├── overrides.example.json                 ← legacy JSON shape for reference only
 ├── tools/
 │   ├── __init__.py                        ← package marker + project_root() helper
 │   ├── cli.py                             ← `bpm-stickers` subcommand dispatcher
+│   ├── db.py                              ← SQLite schema + connection + JSON migration
 │   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV)
 │   ├── filter_dj_releases.py              ← Step 2: keep only 12"/LP vinyl
 │   ├── fetch_bpm.py                       ← Step 3: 5-source BPM cascade
 │   ├── generate_sticker_pdf.py            ← Step 4: render the PDF
+│   ├── query.py                           ← `bpm-stickers query` (browse the DB)
+│   ├── overrides.py                       ← `bpm-stickers overrides` (manage overrides)
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
 ├── workflows/
-│   └── discogs_dj_stickers.md             ← internal SOP (Dutch); this README mirrors and extends it
-└── .tmp/                                  ← all intermediates + final PDF (gitignored)
-    ├── collection.json
-    ├── release_cache/
-    ├── dj_releases.json
-    ├── skipped.json
-    ├── bpm_cache.json                     ← v2 cache (per-source results for consensus)
-    ├── bpm_cache.v1.json.bak              ← (only if migrated) legacy cache backup
-    ├── bpm_results.json
-    ├── beatport_tokens.json
-    ├── printed.json                       ← per-print history for --new-only / --mark-printed
-    └── stickers.pdf
+│   └── discogs_dj_stickers.md             ← internal SOP; this README mirrors and extends it
+└── .tmp/                                  ← disposable cache + final PDF (gitignored)
+    ├── stickers.pdf                       ← the only file you actually need to print
+    └── debug/                             ← (only on songbpm parser failure) raw HTML
 ```
 
 ---

@@ -1,10 +1,14 @@
-"""Fetch a Discogs collection folder + per-release tracklists into .tmp/.
+"""Fetch a Discogs collection folder + per-release tracklists into the DB.
 
 Two sources are supported for the release listing:
 - Default: paginated Discogs collection API (needs DISCOGS_USERNAME).
-- `--csv PATH`: a Discogs CSV export (Collection → Export). The CSV provides
-  release_ids (and `CollectionFolder` for folder filtering); tracklists are
-  still fetched from the per-release endpoint (cached in `.tmp/release_cache/`).
+- ``--csv PATH``: a Discogs CSV export (Collection → Export). The CSV provides
+  release_ids (and ``CollectionFolder`` for folder filtering); tracklists are
+  still fetched from the per-release endpoint.
+
+Per-release detail responses are written to the ``releases`` table, which
+doubles as the cache: rows with ``raw_tracklist`` already populated are
+skipped on subsequent runs.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -31,10 +36,10 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import project_root
+
+from tools import db as dbmod
+
 ROOT = project_root()
-TMP = ROOT / ".tmp"
-RELEASE_CACHE = TMP / "release_cache"
-COLLECTION_OUT = TMP / "collection.json"
 
 API_BASE = "https://api.discogs.com"
 USER_AGENT = "discogs-dj-stickers/0.1"
@@ -110,18 +115,50 @@ def resolve_folder(folder_arg: str | None, username: str, headers: dict[str, str
     raise SystemExit(f"Folder {folder_arg!r} not found. Available folders: {names}")
 
 
+def is_cached(conn, release_id: int) -> bool:
+    """A release counts as cached once we've stored its tracklist."""
+    row = conn.execute(
+        "SELECT 1 FROM releases WHERE id = ? AND raw_tracklist IS NOT NULL",
+        (release_id,),
+    ).fetchone()
+    return row is not None
+
+
+def upsert_release_detail(
+    conn,
+    release_id: int,
+    basic: dict,
+    tracklist: list,
+    notes: str | None,
+) -> None:
+    """Persist a release's raw API payload. Idempotent."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        """
+        INSERT INTO releases (id, basic_information, raw_tracklist, notes, fetched_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            basic_information = excluded.basic_information,
+            raw_tracklist     = excluded.raw_tracklist,
+            notes             = excluded.notes,
+            fetched_at        = excluded.fetched_at
+        """,
+        (
+            release_id,
+            json.dumps(basic or {}, ensure_ascii=False),
+            json.dumps(tracklist or [], ensure_ascii=False),
+            notes,
+            now,
+        ),
+    )
+
+
 def fetch_release_detail(
     release_id: int, headers: dict[str, str], gap_s: float = REQUEST_GAP_S
 ) -> dict:
-    cache_path = RELEASE_CACHE / f"{release_id}.json"
-    if cache_path.exists():
-        with cache_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+    """Fetch a release detail from the Discogs API. Caller checks the DB cache."""
     url = f"{API_BASE}/releases/{release_id}"
     detail = _get(url, headers)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    with cache_path.open("w", encoding="utf-8") as f:
-        json.dump(detail, f, ensure_ascii=False, indent=2)
     time.sleep(gap_s)
     return detail
 
@@ -213,84 +250,93 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("DISCOGS_TOKEN")
     username = os.environ.get("DISCOGS_USERNAME")
 
-    TMP.mkdir(parents=True, exist_ok=True)
-    RELEASE_CACHE.mkdir(parents=True, exist_ok=True)
+    with dbmod.session() as conn:
+        if args.csv:
+            return _run_csv_path(conn, args, token)
+        return _run_api_path(conn, args, token, username)
 
-    if args.csv:
-        csv_path = Path(args.csv).expanduser()
-        if not csv_path.is_absolute():
-            csv_path = (ROOT / csv_path).resolve()
-        if not csv_path.exists():
-            print(f"ERROR: CSV file not found: {csv_path}", file=sys.stderr)
-            return 2
-        if args.folder and args.folder.isdigit():
-            print(
-                "ERROR: --csv expects a folder name (the CSV has no folder ids); "
-                f"got {args.folder!r}.",
-                file=sys.stderr,
-            )
-            return 2
 
-        release_ids = load_release_ids_from_csv(csv_path, args.folder)
-        if args.limit:
-            release_ids = release_ids[: args.limit]
-        folder_label = args.folder if args.folder else "All"
+def _run_csv_path(conn, args, token: str | None) -> int:
+    csv_path = Path(args.csv).expanduser()
+    if not csv_path.is_absolute():
+        csv_path = (ROOT / csv_path).resolve()
+    if not csv_path.exists():
+        print(f"ERROR: CSV file not found: {csv_path}", file=sys.stderr)
+        return 2
+    if args.folder and args.folder.isdigit():
         print(
-            f"Loaded {len(release_ids)} release ids from {csv_path.name} "
-            f"(folder {folder_label!r})"
+            "ERROR: --csv expects a folder name (the CSV has no folder ids); "
+            f"got {args.folder!r}.",
+            file=sys.stderr,
         )
+        return 2
 
-        missing = [rid for rid in release_ids if not (RELEASE_CACHE / f"{rid}.json").exists()]
-        headers: dict[str, str] = {}
-        gap_s = REQUEST_GAP_S
-        if missing:
-            if token:
-                headers = auth_headers(token)
-                gap_s = REQUEST_GAP_S
-                eta_min = len(missing) * gap_s / 60
-                print(
-                    f"  {len(missing)} releases need a tracklist fetch "
-                    f"(authenticated, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
-                    "rest served from cache."
-                )
-            else:
-                headers = public_headers()
-                gap_s = REQUEST_GAP_PUBLIC_S
-                eta_min = len(missing) * gap_s / 60
-                print(
-                    f"  {len(missing)} releases need a tracklist fetch "
-                    f"(unauthenticated, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
-                    "rest served from cache."
-                )
-                print(
-                    "  TIP: set DISCOGS_TOKEN in .env for ~2× faster fetches (60 req/min)."
-                )
+    release_ids = load_release_ids_from_csv(csv_path, args.folder)
+    if args.limit:
+        release_ids = release_ids[: args.limit]
+    folder_label = args.folder if args.folder else "All"
+    print(
+        f"Loaded {len(release_ids)} release ids from {csv_path.name} "
+        f"(folder {folder_label!r})"
+    )
+
+    missing = [rid for rid in release_ids if not is_cached(conn, rid)]
+    headers: dict[str, str] = {}
+    gap_s = REQUEST_GAP_S
+    if missing:
+        if token:
+            headers = auth_headers(token)
+            gap_s = REQUEST_GAP_S
+            mode_label = "authenticated"
         else:
-            print("  all releases already cached; no API calls needed.")
-
-        merged: list[dict] = []
-        for i, release_id in enumerate(release_ids, start=1):
-            try:
-                detail = fetch_release_detail(release_id, headers, gap_s)
-            except Exception as e:
-                print(f"  [{i}/{len(release_ids)}] release {release_id}: ERROR {e}", file=sys.stderr)
-                continue
-            merged.append(
-                {
-                    "id": release_id,
-                    "basic_information": basic_from_detail(detail),
-                    "tracklist": detail.get("tracklist", []),
-                    "notes": detail.get("notes"),
-                }
+            headers = public_headers()
+            gap_s = REQUEST_GAP_PUBLIC_S
+            mode_label = "unauthenticated"
+        eta_min = len(missing) * gap_s / 60
+        print(
+            f"  {len(missing)} releases need a tracklist fetch "
+            f"({mode_label}, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
+            "rest served from cache."
+        )
+        if not token:
+            print(
+                "  TIP: set DISCOGS_TOKEN in .env for ~2× faster fetches (60 req/min)."
             )
-            if i % 25 == 0 or i == len(release_ids):
-                print(f"  [{i}/{len(release_ids)}] cached")
+    else:
+        print("  all releases already cached; no API calls needed.")
 
-        with COLLECTION_OUT.open("w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-        print(f"Wrote {COLLECTION_OUT} ({len(merged)} releases)")
-        return 0
+    fetched = 0
+    for i, rid in enumerate(release_ids, start=1):
+        if is_cached(conn, rid):
+            continue
+        try:
+            detail = fetch_release_detail(rid, headers, gap_s)
+        except Exception as e:
+            print(f"  [{i}/{len(release_ids)}] release {rid}: ERROR {e}", file=sys.stderr)
+            continue
+        upsert_release_detail(
+            conn, rid,
+            basic_from_detail(detail),
+            detail.get("tracklist") or [],
+            detail.get("notes"),
+        )
+        fetched += 1
+        if fetched % 25 == 0:
+            conn.commit()
+            print(f"  [{i}/{len(release_ids)}] cached (fetched {fetched} this run)")
+    conn.commit()
 
+    total_cached = conn.execute(
+        "SELECT COUNT(*) AS n FROM releases WHERE raw_tracklist IS NOT NULL"
+    ).fetchone()["n"]
+    print(
+        f"Stored {len(release_ids)} releases in {dbmod.db_path().name} "
+        f"(fetched {fetched} this run, total cached: {total_cached})."
+    )
+    return 0
+
+
+def _run_api_path(conn, args, token: str | None, username: str | None) -> int:
     if not token or not username:
         print("ERROR: set DISCOGS_TOKEN and DISCOGS_USERNAME in .env", file=sys.stderr)
         return 2
@@ -319,31 +365,37 @@ def main(argv: list[str] | None = None) -> int:
         basics = basics[: args.limit]
     print(f"Fetched {len(basics)} release rows; fetching tracklists...")
 
-    merged = []
+    fetched = 0
     for i, row in enumerate(basics, start=1):
         basic = row.get("basic_information", {})
         release_id = basic.get("id")
         if not release_id:
+            continue
+        if is_cached(conn, release_id):
             continue
         try:
             detail = fetch_release_detail(release_id, headers)
         except Exception as e:
             print(f"  [{i}/{len(basics)}] release {release_id}: ERROR {e}", file=sys.stderr)
             continue
-        merged.append(
-            {
-                "id": release_id,
-                "basic_information": basic,
-                "tracklist": detail.get("tracklist", []),
-                "notes": detail.get("notes"),
-            }
+        upsert_release_detail(
+            conn, release_id, basic,
+            detail.get("tracklist") or [],
+            detail.get("notes"),
         )
-        if i % 25 == 0 or i == len(basics):
-            print(f"  [{i}/{len(basics)}] cached")
+        fetched += 1
+        if fetched % 25 == 0:
+            conn.commit()
+            print(f"  [{i}/{len(basics)}] cached (fetched {fetched} this run)")
+    conn.commit()
 
-    with COLLECTION_OUT.open("w", encoding="utf-8") as f:
-        json.dump(merged, f, ensure_ascii=False, indent=2)
-    print(f"Wrote {COLLECTION_OUT} ({len(merged)} releases)")
+    total_cached = conn.execute(
+        "SELECT COUNT(*) AS n FROM releases WHERE raw_tracklist IS NOT NULL"
+    ).fetchone()["n"]
+    print(
+        f"Stored {len(basics)} releases in {dbmod.db_path().name} "
+        f"(fetched {fetched} this run, total cached: {total_cached})."
+    )
     return 0
 
 

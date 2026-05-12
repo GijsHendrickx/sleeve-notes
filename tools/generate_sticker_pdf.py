@@ -28,39 +28,31 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import project_root
+
+from tools import db as dbmod
+from tools.fetch_bpm import derive_track_result, load_overrides
+
 ROOT = project_root()
 TMP = ROOT / ".tmp"
-DJ_IN = TMP / "dj_releases.json"
-BPM_IN = TMP / "bpm_results.json"
 PDF_OUT = TMP / "stickers.pdf"
-PRINTED_HISTORY_FILE = TMP / "printed.json"
 
 PAGE_W, PAGE_H = A4
 DEFAULT_STICKER_W_MM = 96.0
 DEFAULT_STICKER_H_MM = 50.8
 DEFAULT_GUTTER_MM = 4.0
-MIN_PAGE_EDGE = 4 * mm     # minimum white border the printer needs on each edge
+MIN_PAGE_EDGE = 4 * mm
 CROP_LEN = 2.5 * mm
 PAD_X = 3.5 * mm
 PAD_Y = 2.8 * mm
 GREY = HexColor("#888888")
 
-# QR code linking to the Discogs release page. Bumped to 14 mm so each module
-# is ~0.48 mm at print size — well above the threshold for reliable phone-camera
-# scanning. Mixed case is required: Discogs treats URL paths case-sensitively
-# so we can't uppercase to trigger QR alphanumeric mode (would 404).
 QR_SIZE = 14 * mm
-QR_GAP = 1.5 * mm           # space between QR and surrounding text
-QR_CORNER_PAD = 1 * mm      # inset from the sticker corner — small so the
-                            # header text reclaims most of PAD_X / PAD_Y
+QR_GAP = 1.5 * mm
+QR_CORNER_PAD = 1 * mm
 DISCOGS_RELEASE_URL = "https://www.discogs.com/release/{id}"
 
-# Vulgar-fraction characters Helvetica's PostScript encoding lacks. We render
-# them as ASCII so the RPM badge is always readable.
 _RPM_FRACTION_FALLBACK = {"⅓": " 1/3", "⅔": " 2/3", "½": " 1/2", "¼": " 1/4", "¾": " 3/4"}
 
-# Populated by main() from CLI args; module-level so the draw functions
-# (which already read them as globals) keep working unchanged.
 STICKER_W = DEFAULT_STICKER_W_MM * mm
 STICKER_H = DEFAULT_STICKER_H_MM * mm
 GUTTER_X = DEFAULT_GUTTER_MM * mm
@@ -69,7 +61,7 @@ COLS = 2
 ROWS = 3
 MARGIN_X = (PAGE_W - COLS * STICKER_W - (COLS - 1) * GUTTER_X) / 2
 MARGIN_Y = (PAGE_H - ROWS * STICKER_H - (ROWS - 1) * GUTTER_Y) / 2
-TILE_MODE = False           # when True: zero gutters, zero margins, no crop marks
+TILE_MODE = False
 
 
 def configure_layout(
@@ -85,10 +77,7 @@ def configure_layout(
       gutters between them and a 4 mm page edge. Columns and rows are
       auto-derived to maximise the grid that fits on A4.
     - Tile mode (tile=True): exactly tile_cols x tile_rows stickers fill A4
-      edge-to-edge. Sticker size is derived as PAGE_W/cols x PAGE_H/rows;
-      gutters and page margins are zero so a print can be sliced into
-      stickers with just (tile_cols - 1) + (tile_rows - 1) straight ruler
-      cuts. --sticker-w / --sticker-h are ignored in this mode.
+      edge-to-edge. Sticker size is derived as PAGE_W/cols x PAGE_H/rows.
     """
     global STICKER_W, STICKER_H, COLS, ROWS, MARGIN_X, MARGIN_Y
     global GUTTER_X, GUTTER_Y, TILE_MODE
@@ -157,7 +146,6 @@ def draw_sticker_border(c: canvas.Canvas, x: float, y: float) -> None:
 
 
 def draw_qr(c: canvas.Canvas, x: float, y: float, size: float, data: str) -> None:
-    """Render a QR widget at (x, y) with edge length `size`. Bottom-left origin."""
     qr = QrCodeWidget(data, barLevel="M")
     bx, by, bx2, by2 = qr.getBounds()
     w = bx2 - bx
@@ -168,7 +156,6 @@ def draw_qr(c: canvas.Canvas, x: float, y: float, size: float, data: str) -> Non
 
 
 def display_rpm(rpm_token: str) -> str:
-    """Render a normalized RPM token like '33⅓' for Helvetica (no vulgar fractions)."""
     for k, v in _RPM_FRACTION_FALLBACK.items():
         rpm_token = rpm_token.replace(k, v)
     return rpm_token
@@ -199,8 +186,8 @@ def group_tracks_by_side(tracks: list[dict]) -> dict[str, list[dict]]:
 HEADER_ARTIST_PT = 11.0
 HEADER_TITLE_PT = 9.0
 SIDE_LABEL_PT = 8.0
-BPM_FONT_PT_MAX = 13.0       # cap so BPM stays prominent on roomy stickers
-BPM_TO_TRACK_RATIO = 1.5     # bpm_size = min(BPM_FONT_PT_MAX, ratio * track_font)
+BPM_FONT_PT_MAX = 13.0
+BPM_TO_TRACK_RATIO = 1.5
 LINE_GAP = 1.35
 SECTION_GAP = 3.0
 HEADER_H = HEADER_ARTIST_PT + 2 + HEADER_TITLE_PT + 4
@@ -210,13 +197,6 @@ MAX_TRACKS_PER_STICKER = 8
 
 
 def bpm_font_for(track_font: float) -> float:
-    """Pick a BPM font that stays prominent but never overflows the track row.
-
-    With LINE_GAP=1.35 and Helvetica ascent ~0.72 + descent ~0.21, the
-    no-overlap budget is bpm <= ~1.58 * track_font. Using 1.5x gives a small
-    safety margin; the BPM_FONT_PT_MAX cap keeps BPM from running away on
-    sparsely-tracked stickers.
-    """
     return min(BPM_FONT_PT_MAX, BPM_TO_TRACK_RATIO * track_font)
 
 
@@ -231,14 +211,10 @@ def label_for_track(t: dict, compilation: bool, release_artist: str) -> str:
 def column_widths(
     track_font: float, inner_w: float
 ) -> tuple[float, float, float, float, float]:
-    """Return (pos, middle, duration, key, bpm) column widths.
-
-    The BPM column reserves room for an optional confidence dot drawn to the
-    left of the digits — the dot is ~0.4× the BPM font height.
-    """
+    """Return (pos, middle, duration, key, bpm) column widths."""
     bpm_size = bpm_font_for(track_font)
     bpm_digits_w = stringWidth("888", "Helvetica-Bold", bpm_size)
-    bpm_col_w = bpm_digits_w + bpm_size * 0.6 + 2  # extra for confidence dot
+    bpm_col_w = bpm_digits_w + bpm_size * 0.6 + 2
     key_col_w = stringWidth("12B", "Helvetica-Bold", track_font) + 4
     dur_col_w = stringWidth("88:88", "Helvetica", track_font) + 4
     pos_col_w = stringWidth("AA1", "Courier-Bold", track_font) + 4
@@ -247,11 +223,7 @@ def column_widths(
 
 
 def split_release_into_stickers(release: dict) -> list[dict[str, list[dict]]]:
-    """Group sides into stickers obeying MAX_SIDES_PER_STICKER and MAX_TRACKS_PER_STICKER.
-
-    A single side that already exceeds MAX_TRACKS_PER_STICKER stays on one sticker
-    (you can't split a side mid-tracklist); the font will auto-shrink to fit.
-    """
+    """Group sides into stickers obeying MAX_SIDES_PER_STICKER and MAX_TRACKS_PER_STICKER."""
     sides_map = group_tracks_by_side(release["tracks"])
     stickers: list[dict[str, list[dict]]] = []
     current: dict[str, list[dict]] = {}
@@ -280,11 +252,6 @@ def fit_track_font(
     inner_w: float,
     inner_h: float,
 ) -> tuple[float, bool]:
-    """Find largest font that fits all content vertically AND all titles horizontally.
-
-    Returns (font_size, must_ellipsize). must_ellipsize=True only when titles
-    still overflow at the smallest font; we then ellipsize them.
-    """
     side_count = len(sides_map)
     total = sum(len(v) for v in sides_map.values())
     if total == 0:
@@ -331,8 +298,6 @@ def draw_sticker(
     inner_w = STICKER_W - 2 * PAD_X
     top = y + STICKER_H - PAD_Y
 
-    # QR + RPM. The QR is anchored to the sticker corner (QR_CORNER_PAD inset,
-    # not PAD_X/PAD_Y) so the header reclaims the difference for text.
     release_id = release.get("id")
     if release_id:
         qr_x = x + STICKER_W - QR_CORNER_PAD - QR_SIZE
@@ -340,10 +305,6 @@ def draw_sticker(
         qr_payload = DISCOGS_RELEASE_URL.format(id=release_id)
         draw_qr(c, qr_x, qr_y, QR_SIZE, qr_payload)
         header_inner_w = qr_x - QR_GAP - inner_x
-        # Tracks must clear the QR's bottom edge. `top - qr_y` is how far the
-        # QR drops below the inner content top; effective_header_h ensures the
-        # track area starts below that (or below the text header, whichever
-        # is taller).
         effective_header_h = max(HEADER_H, top - qr_y + 2)
     else:
         header_inner_w = inner_w
@@ -388,7 +349,6 @@ def draw_sticker(
     line_h = track_font * LINE_GAP
     pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w = column_widths(track_font, inner_w)
 
-    # Column right edges (where each right-aligned column ends)
     bpm_right = inner_x + inner_w
     key_right = bpm_right - bpm_col_w
     dur_right = key_right - key_col_w
@@ -439,8 +399,6 @@ def draw_sticker(
             if bpm:
                 c.setFillColor(black)
                 c.drawRightString(bpm_right, baseline, str(bpm))
-                # Confidence marker: filled dot to the left of the digits when
-                # multiple sources agree or the user supplied the value.
                 if bpm_conf in ("high", "manual"):
                     dot_r = bpm_size * 0.18
                     digits_w = stringWidth(str(bpm), "Helvetica-Bold", bpm_size)
@@ -488,121 +446,129 @@ def draw_sticker_pages(c: canvas.Canvas, releases: list[dict], bpm_lookup: dict[
     return total_stickers
 
 
-def build_bpm_lookup(bpm_results: list[dict]) -> dict[int, dict[str, dict]]:
-    lookup: dict[int, dict[str, dict]] = {}
-    for release in bpm_results:
-        per_pos: dict[str, dict] = {}
-        for t in release["tracks"]:
-            per_pos[t["position"]] = t
-        lookup[release["id"]] = per_pos
-    return lookup
+# ---------------------------------------------------------------------------
+# Print history (replaces .tmp/printed.json)
+# ---------------------------------------------------------------------------
+
+def already_printed_ids(conn) -> set[int]:
+    rows = conn.execute("SELECT DISTINCT release_id FROM print_run_releases").fetchall()
+    return {int(r["release_id"]) for r in rows}
 
 
-def load_print_history() -> dict:
-    """Load the local print-history file. Schema:
-
-        {
-          "_meta": {"version": 1},
-          "prints": [
-              {"timestamp": "2026-05-12T11:42:00+00:00", "release_ids": [12345, ...]},
-              ...
-          ]
-        }
-    """
-    if not PRINTED_HISTORY_FILE.exists():
-        return {"_meta": {"version": 1}, "prints": []}
-    try:
-        with PRINTED_HISTORY_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return {"_meta": {"version": 1}, "prints": []}
-    if not isinstance(data, dict) or "prints" not in data:
-        return {"_meta": {"version": 1}, "prints": []}
-    return data
+def append_print_run(conn, release_ids: list[int]) -> int:
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cur = conn.execute("INSERT INTO print_runs (timestamp) VALUES (?)", (timestamp,))
+    pr_id = cur.lastrowid
+    for rid in sorted(set(release_ids)):
+        conn.execute(
+            "INSERT OR IGNORE INTO print_run_releases (print_run_id, release_id) VALUES (?, ?)",
+            (pr_id, int(rid)),
+        )
+    return pr_id
 
 
-def already_printed_ids(history: dict) -> set[int]:
-    """Flat set of every release ID across every recorded print run."""
-    out: set[int] = set()
-    for entry in history.get("prints") or []:
-        for rid in entry.get("release_ids") or []:
-            try:
-                out.add(int(rid))
-            except (TypeError, ValueError):
-                continue
+def last_print_timestamp(conn) -> str | None:
+    row = conn.execute(
+        "SELECT timestamp FROM print_runs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["timestamp"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# DB → in-memory release dicts (shape the draw code already expects)
+# ---------------------------------------------------------------------------
+
+def load_dj_releases(conn) -> list[dict]:
+    releases = conn.execute(
+        "SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
+        "FROM releases WHERE is_dj_release = 1 ORDER BY id"
+    ).fetchall()
+    out: list[dict] = []
+    for r in releases:
+        tracks = conn.execute(
+            "SELECT position, side, artist, title, duration, duration_s "
+            "FROM tracks WHERE release_id = ? ORDER BY position",
+            (r["id"],),
+        ).fetchall()
+        out.append({
+            "id": r["id"],
+            "artist": r["artist"],
+            "title": r["title"],
+            "year": r["year"],
+            "compilation": bool(r["compilation"]),
+            "labels": _json_loads(r["labels"], []),
+            "genres": _json_loads(r["genres"], []),
+            "styles": _json_loads(r["styles"], []),
+            "rpm": _json_loads(r["rpm"], []),
+            "tracks": [dict(t) for t in tracks],
+        })
     return out
 
 
-def append_print_run(history: dict, release_ids: list[int]) -> None:
-    """Append a print run record and persist atomically."""
-    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    history.setdefault("prints", []).append({
-        "timestamp": timestamp,
-        "release_ids": sorted(set(release_ids)),
-    })
-    PRINTED_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = PRINTED_HISTORY_FILE.with_suffix(PRINTED_HISTORY_FILE.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
-    tmp.replace(PRINTED_HISTORY_FILE)
+def _json_loads(raw: str | None, default):
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return default
 
 
-def last_print_timestamp(history: dict) -> str | None:
-    prints = history.get("prints") or []
-    if not prints:
-        return None
-    return prints[-1].get("timestamp")
+def build_bpm_lookup(conn, releases: list[dict]) -> dict[int, dict[str, dict]]:
+    """Map (release_id → position → per-track BPM dict) using cache + overrides."""
+    by_rp, by_tk, _ = load_overrides(conn)
+    lookup: dict[int, dict[str, dict]] = {}
+    for r in releases:
+        per_pos: dict[str, dict] = {}
+        release_artist = r.get("artist") or "V/A"
+        for t in r["tracks"]:
+            result = derive_track_result(
+                conn,
+                r["id"],
+                t.get("position", ""),
+                t.get("artist") or release_artist,
+                t.get("title") or "",
+                t.get("duration_s"),
+                by_rp,
+                by_tk,
+            )
+            per_pos[t.get("position", "")] = result
+        lookup[r["id"]] = per_pos
+    return lookup
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--sticker-w",
-        type=float,
-        default=DEFAULT_STICKER_W_MM,
-        help=f"Sticker width in mm (default: {DEFAULT_STICKER_W_MM}). A4 is the constraint; "
-        "columns per page are auto-derived.",
+        "--sticker-w", type=float, default=DEFAULT_STICKER_W_MM,
+        help=f"Sticker width in mm (default: {DEFAULT_STICKER_W_MM}).",
     )
     parser.add_argument(
-        "--sticker-h",
-        type=float,
-        default=DEFAULT_STICKER_H_MM,
-        help=f"Sticker height in mm (default: {DEFAULT_STICKER_H_MM}). A4 is the constraint; "
-        "rows per page are auto-derived.",
+        "--sticker-h", type=float, default=DEFAULT_STICKER_H_MM,
+        help=f"Sticker height in mm (default: {DEFAULT_STICKER_H_MM}).",
     )
     parser.add_argument(
-        "--tile",
-        action="store_true",
+        "--tile", action="store_true",
         help="Tile stickers edge-to-edge with no gutters or page margin so the "
-        "print can be sliced with just a few straight ruler cuts. Sticker size "
-        "is derived from --tile-cols / --tile-rows (default 2x5 = exactly 10 "
-        "per A4); --sticker-w / --sticker-h are ignored.",
+        "print can be sliced with just a few straight ruler cuts.",
     )
     parser.add_argument(
-        "--tile-cols",
-        type=int,
-        default=2,
+        "--tile-cols", type=int, default=2,
         help="(with --tile) columns per page. Default 2.",
     )
     parser.add_argument(
-        "--tile-rows",
-        type=int,
-        default=5,
+        "--tile-rows", type=int, default=5,
         help="(with --tile) rows per page. Default 5.",
     )
     parser.add_argument(
-        "--new-only",
-        action="store_true",
-        help="Only include releases that aren't already in the local print history "
-        f"({PRINTED_HISTORY_FILE.name}). Use with --mark-printed to commit the new "
-        "additions to history after a successful print.",
+        "--new-only", action="store_true",
+        help="Only include releases that aren't already in the DB print history. "
+        "Use with --mark-printed to commit the new additions after a successful print.",
     )
     parser.add_argument(
-        "--mark-printed",
-        action="store_true",
-        help="After a successful render, append the rendered release IDs to the print "
-        "history. Combine with --new-only for the typical 'print what's new and remember' "
-        "flow; use alone after a full reprint to mark the whole collection as printed.",
+        "--mark-printed", action="store_true",
+        help="After a successful render, append the rendered release IDs to the "
+        "print history (print_runs / print_run_releases tables).",
     )
     args = parser.parse_args(argv)
 
@@ -611,76 +577,81 @@ def main(argv: list[str] | None = None) -> int:
         tile=args.tile, tile_cols=args.tile_cols, tile_rows=args.tile_rows,
     )
 
-    if not DJ_IN.exists() or not BPM_IN.exists():
-        print("ERROR: run fetch_discogs_collection.py → filter_dj_releases.py → fetch_bpm.py first.", file=sys.stderr)
-        return 2
-
-    with DJ_IN.open("r", encoding="utf-8") as f:
-        releases = json.load(f)
-    with BPM_IN.open("r", encoding="utf-8") as f:
-        bpm_results = json.load(f)
-
-    history = load_print_history()
-    if args.new_only:
-        already = already_printed_ids(history)
-        before = len(releases)
-        releases = [r for r in releases if int(r["id"]) not in already]
-        skipped = before - len(releases)
-        last_ts = last_print_timestamp(history)
-        last_str = f" (last print: {last_ts})" if last_ts else ""
+    with dbmod.session() as conn:
+        releases = load_dj_releases(conn)
         if not releases:
             print(
-                f"Nothing new to print. All {before} release(s) are already in the "
-                f"print history{last_str}.",
+                "ERROR: no DJ-filtered releases found. Run "
+                "`bpm-stickers fetch && bpm-stickers filter` first.",
                 file=sys.stderr,
             )
-            return 0
-        print(f"--new-only: rendering {len(releases)} new release(s); skipping {skipped} already-printed{last_str}.")
+            return 2
 
-    bpm_lookup = build_bpm_lookup(bpm_results)
-    TMP.mkdir(parents=True, exist_ok=True)
+        if args.new_only:
+            already = already_printed_ids(conn)
+            before = len(releases)
+            releases = [r for r in releases if int(r["id"]) not in already]
+            skipped = before - len(releases)
+            last_ts = last_print_timestamp(conn)
+            last_str = f" (last print: {last_ts})" if last_ts else ""
+            if not releases:
+                print(
+                    f"Nothing new to print. All {before} release(s) are already in the "
+                    f"print history{last_str}.",
+                    file=sys.stderr,
+                )
+                return 0
+            print(
+                f"--new-only: rendering {len(releases)} new release(s); skipping "
+                f"{skipped} already-printed{last_str}."
+            )
 
-    c = canvas.Canvas(str(PDF_OUT), pagesize=A4)
-    c.setTitle("Discogs DJ Stickers")
+        bpm_lookup = build_bpm_lookup(conn, releases)
+        TMP.mkdir(parents=True, exist_ok=True)
 
-    sticker_count = draw_sticker_pages(c, releases, bpm_lookup)
+        c = canvas.Canvas(str(PDF_OUT), pagesize=A4)
+        c.setTitle("Discogs DJ Stickers")
+        sticker_count = draw_sticker_pages(c, releases, bpm_lookup)
+        c.save()
 
-    c.save()
-    per_page = COLS * ROWS
-    pages = (sticker_count + per_page - 1) // per_page
-    extra = sticker_count - len(releases)
-    extra_note = f" (incl. {extra} extra stickers from multi-disc / >8-track splits)" if extra else ""
-    missing_count = sum(
-        1
-        for r in releases
-        for t in r["tracks"]
-        if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
-        and bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("reason") != "continuous_mix"
-    )
-    layout_note = " edge-to-edge (tile mode)" if TILE_MODE else ""
-    print(
-        f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
-        f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
-        f"on a {COLS}x{ROWS} grid{layout_note}){extra_note}."
-    )
-    if TILE_MODE:
-        cuts = (COLS - 1) + (ROWS - 1)
-        print(
-            f"  Tile mode: slice each page with {cuts} straight ruler cuts "
-            f"({COLS - 1} vertical + {ROWS - 1} horizontal). Print borderless or "
-            "expect ~3 mm printer clipping on the outer stickers."
+        per_page = COLS * ROWS
+        pages = (sticker_count + per_page - 1) // per_page
+        extra = sticker_count - len(releases)
+        extra_note = (
+            f" (incl. {extra} extra stickers from multi-disc / >8-track splits)"
+            if extra else ""
         )
-    if missing_count:
-        print(f"  {missing_count} tracks have an empty BPM box for handwriting.")
-
-    if args.mark_printed:
-        rendered_ids = [int(r["id"]) for r in releases]
-        append_print_run(history, rendered_ids)
-        total_in_history = len(already_printed_ids(history))
-        print(
-            f"  --mark-printed: appended {len(rendered_ids)} release(s) to "
-            f"{PRINTED_HISTORY_FILE.name}. Total in print history: {total_in_history}."
+        missing_count = sum(
+            1
+            for r in releases
+            for t in r["tracks"]
+            if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
+            and bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("reason") != "continuous_mix"
         )
+        layout_note = " edge-to-edge (tile mode)" if TILE_MODE else ""
+        print(
+            f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
+            f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
+            f"on a {COLS}x{ROWS} grid{layout_note}){extra_note}."
+        )
+        if TILE_MODE:
+            cuts = (COLS - 1) + (ROWS - 1)
+            print(
+                f"  Tile mode: slice each page with {cuts} straight ruler cuts "
+                f"({COLS - 1} vertical + {ROWS - 1} horizontal). Print borderless or "
+                "expect ~3 mm printer clipping on the outer stickers."
+            )
+        if missing_count:
+            print(f"  {missing_count} tracks have an empty BPM box for handwriting.")
+
+        if args.mark_printed:
+            rendered_ids = [int(r["id"]) for r in releases]
+            append_print_run(conn, rendered_ids)
+            total_in_history = len(already_printed_ids(conn))
+            print(
+                f"  --mark-printed: appended {len(rendered_ids)} release(s) to "
+                f"print history. Total in print history: {total_in_history}."
+            )
 
     return 0
 

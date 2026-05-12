@@ -5,6 +5,11 @@ are owned by its underlying module — `bpm-stickers fetch --csv x.csv` is the
 same as `python tools/fetch_discogs_collection.py --csv x.csv`. The `run`
 subcommand chains the four steps in order with a small allow-list of the
 flags most commonly customised end-to-end.
+
+Inspection: every JSON file from the old layout has moved into a single
+SQLite DB at `bpm_stickers.db` in the project root. Use `bpm-stickers query`
+to browse any of its tables (and `bpm-stickers overrides` for the only
+table you typically need to edit by hand).
 """
 
 from __future__ import annotations
@@ -13,21 +18,22 @@ import argparse
 import sys
 from typing import Callable
 
-# Lazy imports — each subcommand only loads its module on dispatch so e.g.
-# `bpm-stickers filter` doesn't import requests/reportlab.
-
 _USAGE = """\
 usage: bpm-stickers <subcommand> [options]
 
-Subcommands:
+Pipeline:
   fetch          Step 1 — fetch your Discogs collection (API or --csv export)
-  filter         Step 2 — keep only 12"/LP vinyl, write dj_releases.json
+  filter         Step 2 — keep only 12"/LP vinyl, populate tracks table
   bpm            Step 3 — look up BPM + key for every track (parallel cascade)
   render         Step 4 — generate the printable A4 sticker PDF
-  auth-beatport  One-time Beatport OAuth bootstrap (writes .tmp/beatport_tokens.json)
   run            Chain steps 1→4 with common defaults
 
-  Pass -h/--help to any subcommand for its own options.
+Inspection / data:
+  query          Browse the SQLite DB: tables, schema, arbitrary SELECT
+  overrides      Add/list/remove manual BPM/key overrides
+  auth-beatport  One-time Beatport OAuth bootstrap
+
+Pass -h/--help to any subcommand for its own options.
 """
 
 
@@ -48,6 +54,12 @@ def _resolve(name: str) -> Callable[[list[str] | None], int]:
     if name == "auth-beatport":
         from tools import beatport_auth
         return beatport_auth.main
+    if name == "query":
+        from tools import query
+        return query.main
+    if name == "overrides":
+        from tools import overrides
+        return overrides.main
     raise KeyError(name)
 
 
@@ -63,11 +75,9 @@ def _run(argv: list[str]) -> int:
         description="Fetch → filter → BPM lookup → render. "
                     "For more granular control, run the subcommands individually.",
     )
-    # Fetch options
     parser.add_argument("--csv", help="Forwarded to fetch: use a Discogs CSV export.")
     parser.add_argument("--folder", help="Forwarded to fetch: collection folder name (or id).")
     parser.add_argument("--limit", type=int, help="Forwarded to fetch: stop after N releases (debug).")
-    # Render options
     parser.add_argument("--sticker-w", type=float, help="Forwarded to render.")
     parser.add_argument("--sticker-h", type=float, help="Forwarded to render.")
     parser.add_argument("--tile", action="store_true", help="Forwarded to render.")

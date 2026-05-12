@@ -32,6 +32,6 @@ def project_root() -> Path:
     if env:
         return Path(env).resolve()
     cwd = Path.cwd()
-    if any((cwd / m).exists() for m in (".tmp", ".env", "pyproject.toml", "overrides.json")):
+    if any((cwd / m).exists() for m in ("data", ".tmp", ".env", "pyproject.toml", "overrides.json")):
         return cwd
     return Path(__file__).resolve().parent.parent
