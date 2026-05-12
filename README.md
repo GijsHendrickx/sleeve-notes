@@ -4,7 +4,7 @@ Generate a printable A4 PDF with one sticker per record from your Discogs collec
 
 Filter is conservative: **only 12"/LP vinyl** is kept (7"/10"/CD/cassette/digital are skipped). Genre is **not** filtered — every 12"/LP in the collection produces a sticker.
 
-BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats/Spotify → Beatport → AcousticBrainz). Tracks for which no BPM can be found get listed on a "BPM invul-pagina" at the end of the PDF, so you can fill them in by hand or after a needle-drop.
+BPMs are looked up through a 5-source cascade (songbpm → Deezer → ReccoBeats/Spotify → Beatport → AcousticBrainz). Tracks for which no BPM can be found get listed on a "BPM fill-in page" at the end of the PDF, so you can fill them in by hand or after a needle-drop.
 
 ---
 
@@ -209,7 +209,7 @@ python tools/generate_sticker_pdf.py
 ```
 
 - Output: `.tmp/stickers.pdf`. Two stickers per row on A4, three rows per page (≈ 6 per page) at 96 × 50.8 mm with crop marks and a faint border.
-- Tracks without a BPM hit end up on appended **"BPM invul-pagina"** pages (write-in lines), so you can needle-drop them later.
+- Tracks without a BPM hit end up on appended **"BPM fill-in page"** pages (write-in lines), so you can needle-drop them later.
 - The console output reports the sticker count, pages used, and how many BPMs are still missing.
 
 ---
@@ -315,7 +315,7 @@ Under the hood, the script uses the same fully-scripted authorization_code flow 
 3. After printing one test page, **measure a sticker with a ruler**. If it's not 96 × 50.8 mm to within a millimetre, the printer is scaling — fix the print settings and try again.
 4. Print onto **A4 self-adhesive paper** (any matte sticker paper works). Cut along the crop marks. Stick on the sleeve.
 
-The last page(s) of the PDF contain a "BPM invul-pagina" — a table of `artist – title` rows with a blank box for the BPM. Print these onto plain paper to record BPMs you needle-drop later, then re-run the workflow if you want them rendered into stickers.
+The last page(s) of the PDF contain a "BPM fill-in page" — a table of `artist – title` rows with a blank box for the BPM. Print these onto plain paper to record BPMs you needle-drop later, then re-run the workflow if you want them rendered into stickers.
 
 ---
 

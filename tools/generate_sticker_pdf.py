@@ -224,7 +224,7 @@ def draw_sticker(
 
         c.setFillColor(GREY)
         c.setFont("Helvetica-Bold", SIDE_LABEL_PT)
-        c.drawString(inner_x, cursor_y - SIDE_LABEL_PT, f"{side}-KANT")
+        c.drawString(inner_x, cursor_y - SIDE_LABEL_PT, f"{side}-SIDE")
         c.setFillColor(black)
         cursor_y -= SIDE_LABEL_PT + 3
 
@@ -322,10 +322,10 @@ def draw_fill_in_pages(c: canvas.Canvas, missing: list[dict]) -> None:
     def page_header():
         c.setFillColor(black)
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(col_pad, PAGE_H - col_pad, "BPM invul-pagina")
+        c.drawString(col_pad, PAGE_H - col_pad, "BPM fill-in page")
         c.setFont("Helvetica", 9)
         c.setFillColor(GREY)
-        c.drawString(col_pad, PAGE_H - col_pad - 14, "Tracks zonder automatische BPM-hit. Schrijf de BPM in de rechterkolom.")
+        c.drawString(col_pad, PAGE_H - col_pad - 14, "Tracks without an automatic BPM hit. Write the BPM in the right-hand column.")
         c.setFillColor(black)
 
     def draw_row(y: float, item: dict) -> None:

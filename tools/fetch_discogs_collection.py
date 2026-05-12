@@ -190,7 +190,7 @@ def main() -> int:
         "--folder",
         type=str,
         default=None,
-        help="Discogs folder name or id. Default: hele collectie (folder 'All', id 0).",
+        help="Discogs folder name or id. Default: whole collection (folder 'All', id 0).",
     )
     parser.add_argument(
         "--csv",
