@@ -85,6 +85,7 @@ def _run(argv: list[str]) -> int:
     parser.add_argument("--tile-rows", type=int, help="Forwarded to render.")
     parser.add_argument("--new-only", action="store_true", help="Forwarded to render.")
     parser.add_argument("--mark-printed", action="store_true", help="Forwarded to render.")
+    parser.add_argument("-o", "--output", help="Forwarded to render: output PDF path.")
     args = parser.parse_args(argv)
 
     fetch_argv: list[str] = []
@@ -110,6 +111,8 @@ def _run(argv: list[str]) -> int:
         render_argv.append("--new-only")
     if args.mark_printed:
         render_argv.append("--mark-printed")
+    if args.output:
+        render_argv += ["--output", args.output]
 
     print(">>> Step 1/4: fetch", flush=True)
     rc = _resolve("fetch")(fetch_argv)

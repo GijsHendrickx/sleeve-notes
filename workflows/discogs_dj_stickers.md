@@ -80,7 +80,7 @@ All persistent state lives in **a single SQLite file** at `data/bpm_stickers.db`
    ```
    bpm-stickers render
    ```
-   - Output: `.tmp/stickers.pdf`.
+   - Output: `.tmp/stickers.pdf` by default. Override with `-o/--output <path>` (full PDF path or a directory; missing parents are created, missing `.pdf` suffix is appended).
    - Stickers are 96×50.8 mm by default (configurable via `--sticker-w` / `--sticker-h` in mm), two per row on A4, with crop marks and a faint border. Tracks without a found BPM get a small empty rectangle in the BPM column on the sticker so the user can pen the value in by hand after printing.
    - **Tile mode**: pass `--tile` to lay stickers edge-to-edge (no gutters, no page margin) so the print can be sliced with `(cols−1)+(rows−1)` straight ruler cuts. Default `--tile-cols 2 --tile-rows 5` gives exactly 10 stickers per A4 at 105×59.4 mm; the print needs 5 cuts (1 vertical + 4 horizontal). Use borderless printing or expect ~3 mm clipping on outer stickers.
    - **Incremental** (`--new-only`/`--mark-printed`): print history lives in `print_runs` + `print_run_releases`. Inspect via `bpm-stickers query print_runs` and `bpm-stickers query print_run_releases`.

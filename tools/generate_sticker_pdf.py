@@ -34,7 +34,7 @@ from tools.fetch_bpm import derive_track_result, load_overrides
 
 ROOT = project_root()
 TMP = ROOT / ".tmp"
-PDF_OUT = TMP / "stickers.pdf"
+DEFAULT_PDF_OUT = TMP / "stickers.pdf"
 
 PAGE_W, PAGE_H = A4
 DEFAULT_STICKER_W_MM = 96.0
@@ -570,7 +570,18 @@ def main(argv: list[str] | None = None) -> int:
         help="After a successful render, append the rendered release IDs to the "
         "print history (print_runs / print_run_releases tables).",
     )
+    parser.add_argument(
+        "-o", "--output", type=Path, default=DEFAULT_PDF_OUT,
+        help=f"Output PDF path (default: {DEFAULT_PDF_OUT.relative_to(ROOT)}). "
+        "Parent directory is created if needed. A bare filename writes to the "
+        "current working directory.",
+    )
     args = parser.parse_args(argv)
+    pdf_out: Path = args.output.expanduser()
+    if pdf_out.is_dir() or str(args.output).endswith(("/", "\\")):
+        pdf_out = pdf_out / "stickers.pdf"
+    if pdf_out.suffix.lower() != ".pdf":
+        pdf_out = pdf_out.with_suffix(".pdf")
 
     configure_layout(
         args.sticker_w, args.sticker_h,
@@ -607,9 +618,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         bpm_lookup = build_bpm_lookup(conn, releases)
-        TMP.mkdir(parents=True, exist_ok=True)
+        pdf_out.parent.mkdir(parents=True, exist_ok=True)
 
-        c = canvas.Canvas(str(PDF_OUT), pagesize=A4)
+        c = canvas.Canvas(str(pdf_out), pagesize=A4)
         c.setTitle("Discogs DJ Stickers")
         sticker_count = draw_sticker_pages(c, releases, bpm_lookup)
         c.save()
@@ -630,7 +641,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         layout_note = " edge-to-edge (tile mode)" if TILE_MODE else ""
         print(
-            f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
+            f"Wrote {pdf_out}: {sticker_count} stickers from {len(releases)} releases across "
             f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
             f"on a {COLS}x{ROWS} grid{layout_note}){extra_note}."
         )

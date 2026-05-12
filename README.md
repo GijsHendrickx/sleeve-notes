@@ -243,9 +243,11 @@ bpm-stickers render --tile                       # edge-to-edge: exactly 10 stic
 bpm-stickers render --tile --tile-cols 3 --tile-rows 4    # 12-per-A4 tile (70 x 74.2 mm)
 bpm-stickers render --new-only                   # only releases not yet in the print history
 bpm-stickers render --new-only --mark-printed    # render new + record the print in history
+bpm-stickers render -o ~/Desktop/crate-2026-05.pdf   # custom output path
+bpm-stickers render -o out/                       # custom dir; filename defaults to stickers.pdf
 ```
 
-- Output: `.tmp/stickers.pdf`.
+- Output: `.tmp/stickers.pdf` by default. Override with `-o/--output <path>` — either a full PDF path, or a directory (filename falls back to `stickers.pdf`). Parent directories are created as needed; a `.pdf` suffix is appended if missing.
 - **Default mode** ships with crop marks and a 4 mm gutter between stickers, sized via `--sticker-w` / `--sticker-h` (mm). Columns and rows per page are auto-derived from the size so as many stickers as possible fit. Sizes that don't fit on A4 are rejected.
 - **Tile mode (`--tile`)** lays stickers edge-to-edge with zero gutters and zero page margin so the print can be sliced with just a few straight ruler cuts (`(cols − 1) + (rows − 1)` total). Sticker size is derived from `--tile-cols` × `--tile-rows` (default 2×5 = 10 per A4 → 105 × 59.4 mm). `--sticker-w` / `--sticker-h` are ignored when `--tile` is set. **Print borderless** or expect ~3 mm clipping on the outer stickers (most home printers have a small unprintable margin).
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
@@ -328,7 +330,7 @@ After a complete run, the project layout looks like:
 | Location | Purpose |
 |----------|---------|
 | **`data/bpm_stickers.db`** | **The single SQLite file containing all state** — your Discogs collection, the BPM cache, your overrides, your print history. See `bpm-stickers query` for inspection. |
-| `.tmp/stickers.pdf` | The final printable PDF (the only intermediate that's still a file). |
+| `.tmp/stickers.pdf` | The default printable PDF location (override with `bpm-stickers render -o <path>`). |
 | `.tmp/debug/*.html` | (Only on songbpm parser failures.) Raw HTML dumped for selector repair. |
 
 `.tmp/` is entirely **disposable** — wipe it freely; only `stickers.pdf`
