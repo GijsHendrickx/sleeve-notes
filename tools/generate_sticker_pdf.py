@@ -1,7 +1,14 @@
-"""Render the sticker PDF (96x50.8mm grid, 2 per row, auto-shrink fonts)."""
+"""Render the sticker PDF on A4. Sticker size is configurable; grid auto-derived.
+
+Defaults: 96 x 50.8 mm stickers, two per row on A4, fonts auto-shrink to fit.
+Pass --sticker-w / --sticker-h (in mm) to change the size. Columns and rows
+per page are derived from the chosen size so as many stickers as possible
+fit on A4 while keeping the page-edge margin non-negative.
+"""
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -19,18 +26,48 @@ BPM_IN = TMP / "bpm_results.json"
 PDF_OUT = TMP / "stickers.pdf"
 
 PAGE_W, PAGE_H = A4
-STICKER_W = 96 * mm
-STICKER_H = 50.8 * mm
-COLS = 2
+DEFAULT_STICKER_W_MM = 96.0
+DEFAULT_STICKER_H_MM = 50.8
+MIN_PAGE_EDGE = 4 * mm     # minimum white border the printer needs on each edge
 GUTTER_X = 4 * mm
 GUTTER_Y = 4 * mm
-MARGIN_X = (PAGE_W - COLS * STICKER_W - (COLS - 1) * GUTTER_X) / 2
-ROWS = int((PAGE_H - 2 * 8 * mm + GUTTER_Y) // (STICKER_H + GUTTER_Y))
-MARGIN_Y = (PAGE_H - ROWS * STICKER_H - (ROWS - 1) * GUTTER_Y) / 2
 CROP_LEN = 2.5 * mm
 PAD_X = 3.5 * mm
 PAD_Y = 2.8 * mm
 GREY = HexColor("#888888")
+
+# Populated by main() from CLI args; module-level so the draw functions
+# (which already read them as globals) keep working unchanged.
+STICKER_W = DEFAULT_STICKER_W_MM * mm
+STICKER_H = DEFAULT_STICKER_H_MM * mm
+COLS = 2
+ROWS = 3
+MARGIN_X = (PAGE_W - COLS * STICKER_W - (COLS - 1) * GUTTER_X) / 2
+MARGIN_Y = (PAGE_H - ROWS * STICKER_H - (ROWS - 1) * GUTTER_Y) / 2
+
+
+def configure_layout(sticker_w_mm: float, sticker_h_mm: float) -> None:
+    """Set module-level layout for the chosen sticker size. Validates A4 fit."""
+    global STICKER_W, STICKER_H, COLS, ROWS, MARGIN_X, MARGIN_Y
+    sticker_w = sticker_w_mm * mm
+    sticker_h = sticker_h_mm * mm
+    if sticker_w <= 0 or sticker_h <= 0:
+        raise SystemExit(f"Sticker size must be positive (got {sticker_w_mm}x{sticker_h_mm} mm).")
+    usable_w = PAGE_W - 2 * MIN_PAGE_EDGE
+    usable_h = PAGE_H - 2 * MIN_PAGE_EDGE
+    if sticker_w > usable_w or sticker_h > usable_h:
+        raise SystemExit(
+            f"Sticker {sticker_w_mm}x{sticker_h_mm} mm doesn't fit on A4 "
+            f"with a {MIN_PAGE_EDGE/mm:.0f}mm page edge "
+            f"(max usable {usable_w/mm:.1f}x{usable_h/mm:.1f} mm)."
+        )
+    cols = max(1, int((usable_w + GUTTER_X) // (sticker_w + GUTTER_X)))
+    rows = max(1, int((usable_h + GUTTER_Y) // (sticker_h + GUTTER_Y)))
+    margin_x = (PAGE_W - cols * sticker_w - (cols - 1) * GUTTER_X) / 2
+    margin_y = (PAGE_H - rows * sticker_h - (rows - 1) * GUTTER_Y) / 2
+    STICKER_W, STICKER_H = sticker_w, sticker_h
+    COLS, ROWS = cols, rows
+    MARGIN_X, MARGIN_Y = margin_x, margin_y
 
 
 def sticker_origins() -> list[tuple[float, float]]:
@@ -82,13 +119,25 @@ def group_tracks_by_side(tracks: list[dict]) -> dict[str, list[dict]]:
 HEADER_ARTIST_PT = 11.0
 HEADER_TITLE_PT = 9.0
 SIDE_LABEL_PT = 8.0
-BPM_FONT_PT = 12.0
+BPM_FONT_PT_MAX = 13.0       # cap so BPM stays prominent on roomy stickers
+BPM_TO_TRACK_RATIO = 1.5     # bpm_size = min(BPM_FONT_PT_MAX, ratio * track_font)
 LINE_GAP = 1.35
 SECTION_GAP = 3.0
 HEADER_H = HEADER_ARTIST_PT + 2 + HEADER_TITLE_PT + 4
 TRACK_FONT_CANDIDATES = (10.0, 9.0, 8.0, 7.5, 7.0, 6.5, 6.0)
 MAX_SIDES_PER_STICKER = 2
 MAX_TRACKS_PER_STICKER = 8
+
+
+def bpm_font_for(track_font: float) -> float:
+    """Pick a BPM font that stays prominent but never overflows the track row.
+
+    With LINE_GAP=1.35 and Helvetica ascent ~0.72 + descent ~0.21, the
+    no-overlap budget is bpm <= ~1.58 * track_font. Using 1.5x gives a small
+    safety margin; the BPM_FONT_PT_MAX cap keeps BPM from running away on
+    sparsely-tracked stickers.
+    """
+    return min(BPM_FONT_PT_MAX, BPM_TO_TRACK_RATIO * track_font)
 
 
 def label_for_track(t: dict, compilation: bool, release_artist: str) -> str:
@@ -100,7 +149,7 @@ def label_for_track(t: dict, compilation: bool, release_artist: str) -> str:
 
 
 def column_widths(track_font: float, inner_w: float) -> tuple[float, float, float, float]:
-    bpm_col_w = stringWidth("888", "Helvetica-Bold", BPM_FONT_PT) + 2
+    bpm_col_w = stringWidth("888", "Helvetica-Bold", bpm_font_for(track_font)) + 2
     dur_col_w = stringWidth("88:88", "Helvetica", track_font) + 4
     pos_col_w = stringWidth("AA1", "Courier-Bold", track_font) + 4
     middle_w = inner_w - pos_col_w - dur_col_w - bpm_col_w - 4
@@ -214,6 +263,7 @@ def draw_sticker(
     compilation = bool(release.get("compilation"))
     release_artist = release.get("artist", "")
     track_font, must_ellipsize = fit_track_font(sides_map, compilation, release_artist, inner_w, inner_h)
+    bpm_size = bpm_font_for(track_font)
     line_h = track_font * LINE_GAP
     pos_col_w, middle_w, dur_col_w, bpm_col_w = column_widths(track_font, inner_w)
 
@@ -253,7 +303,7 @@ def draw_sticker(
             c.setFillColor(GREY)
             c.drawRightString(inner_x + inner_w - bpm_col_w - 4, baseline, duration)
 
-            c.setFont("Helvetica-Bold", BPM_FONT_PT)
+            c.setFont("Helvetica-Bold", bpm_size)
             if bpm:
                 c.setFillColor(black)
                 c.drawRightString(inner_x + inner_w, baseline, str(bpm))
@@ -372,6 +422,25 @@ def build_bpm_lookup(bpm_results: list[dict]) -> dict[int, dict[str, dict]]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--sticker-w",
+        type=float,
+        default=DEFAULT_STICKER_W_MM,
+        help=f"Sticker width in mm (default: {DEFAULT_STICKER_W_MM}). A4 is the constraint; "
+        "columns per page are auto-derived.",
+    )
+    parser.add_argument(
+        "--sticker-h",
+        type=float,
+        default=DEFAULT_STICKER_H_MM,
+        help=f"Sticker height in mm (default: {DEFAULT_STICKER_H_MM}). A4 is the constraint; "
+        "rows per page are auto-derived.",
+    )
+    args = parser.parse_args()
+
+    configure_layout(args.sticker_w, args.sticker_h)
+
     if not DJ_IN.exists() or not BPM_IN.exists():
         print("ERROR: run fetch_discogs_collection.py → filter_dj_releases.py → fetch_bpm.py first.", file=sys.stderr)
         return 2
@@ -397,7 +466,11 @@ def main() -> int:
     pages = (sticker_count + per_page - 1) // per_page
     extra = sticker_count - len(releases)
     extra_note = f" (incl. {extra} extra stickers from multi-disc / >8-track splits)" if extra else ""
-    print(f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across {pages} sticker page(s) ({per_page}/page){extra_note}.")
+    print(
+        f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
+        f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
+        f"on a {COLS}x{ROWS} grid){extra_note}."
+    )
     if missing:
         print(f"  {len(missing)} tracks need manual BPM entry (fill-in pages appended).")
     return 0

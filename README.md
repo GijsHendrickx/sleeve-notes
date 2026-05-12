@@ -205,12 +205,16 @@ Typical runtimes (rough, depending on cache state and how many sources are confi
 ### Step 4 — generate the PDF
 
 ```bash
-python tools/generate_sticker_pdf.py
+python tools/generate_sticker_pdf.py                           # default 96 x 50.8 mm
+python tools/generate_sticker_pdf.py --sticker-w 70 --sticker-h 40   # smaller stickers, more per page
+python tools/generate_sticker_pdf.py --sticker-w 140 --sticker-h 80  # bigger stickers, fewer per page
 ```
 
-- Output: `.tmp/stickers.pdf`. Two stickers per row on A4, three rows per page (≈ 6 per page) at 96 × 50.8 mm with crop marks and a faint border.
+- Output: `.tmp/stickers.pdf` with crop marks and a faint border.
+- **Sticker size is configurable** via `--sticker-w` and `--sticker-h` (both in millimetres). A4 is the constraint; columns and rows per page are auto-derived from the chosen size so as many stickers as possible fit while keeping a 4 mm page edge. Sizes that don't fit on A4 are rejected with a clear error.
+- Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
 - Tracks without a BPM hit end up on appended **"BPM fill-in page"** pages (write-in lines), so you can needle-drop them later.
-- The console output reports the sticker count, pages used, and how many BPMs are still missing.
+- The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid`).
 
 ---
 
@@ -344,7 +348,8 @@ The last page(s) of the PDF contain a "BPM fill-in page" — a table of `artist 
 | `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `fetch_bpm.py` retries automatically with a fresh password grant; if that fails, re-run `python tools/beatport_auth.py`. |
 | HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute and try again. |
 | SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `tools/fetch_bpm.py`, delete the affected keys from `.tmp/bpm_cache.json`, and re-run Step 3. |
-| Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Open `dj_releases.json` and confirm the data is correct first; the PDF is a faithful render of that data. |
+| Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Open `dj_releases.json` and confirm the data is correct first; the PDF is a faithful render of that data. If you chose very small stickers via `--sticker-w/--sticker-h`, try a larger size — vertical space is the limiting factor for >6-track sides. |
+| `Sticker WxH mm doesn't fit on A4` | The requested `--sticker-w` / `--sticker-h` leaves no room for the 4 mm page edge on A4. Pick a smaller size, or stick to the default 96 × 50.8 mm. |
 
 ---
 
