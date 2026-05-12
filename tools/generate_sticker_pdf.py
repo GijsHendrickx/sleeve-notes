@@ -28,9 +28,8 @@ PDF_OUT = TMP / "stickers.pdf"
 PAGE_W, PAGE_H = A4
 DEFAULT_STICKER_W_MM = 96.0
 DEFAULT_STICKER_H_MM = 50.8
+DEFAULT_GUTTER_MM = 4.0
 MIN_PAGE_EDGE = 4 * mm     # minimum white border the printer needs on each edge
-GUTTER_X = 4 * mm
-GUTTER_Y = 4 * mm
 CROP_LEN = 2.5 * mm
 PAD_X = 3.5 * mm
 PAD_Y = 2.8 * mm
@@ -40,15 +39,50 @@ GREY = HexColor("#888888")
 # (which already read them as globals) keep working unchanged.
 STICKER_W = DEFAULT_STICKER_W_MM * mm
 STICKER_H = DEFAULT_STICKER_H_MM * mm
+GUTTER_X = DEFAULT_GUTTER_MM * mm
+GUTTER_Y = DEFAULT_GUTTER_MM * mm
 COLS = 2
 ROWS = 3
 MARGIN_X = (PAGE_W - COLS * STICKER_W - (COLS - 1) * GUTTER_X) / 2
 MARGIN_Y = (PAGE_H - ROWS * STICKER_H - (ROWS - 1) * GUTTER_Y) / 2
+TILE_MODE = False           # when True: zero gutters, zero margins, no crop marks
 
 
-def configure_layout(sticker_w_mm: float, sticker_h_mm: float) -> None:
-    """Set module-level layout for the chosen sticker size. Validates A4 fit."""
+def configure_layout(
+    sticker_w_mm: float,
+    sticker_h_mm: float,
+    tile: bool = False,
+    tile_cols: int = 2,
+    tile_rows: int = 5,
+) -> None:
+    """Set module-level layout. Two modes:
+
+    - Default (tile=False): stickers at the requested mm size, with 4 mm
+      gutters between them and a 4 mm page edge. Columns and rows are
+      auto-derived to maximise the grid that fits on A4.
+    - Tile mode (tile=True): exactly tile_cols x tile_rows stickers fill A4
+      edge-to-edge. Sticker size is derived as PAGE_W/cols x PAGE_H/rows;
+      gutters and page margins are zero so a print can be sliced into
+      stickers with just (tile_cols - 1) + (tile_rows - 1) straight ruler
+      cuts. --sticker-w / --sticker-h are ignored in this mode.
+    """
     global STICKER_W, STICKER_H, COLS, ROWS, MARGIN_X, MARGIN_Y
+    global GUTTER_X, GUTTER_Y, TILE_MODE
+
+    if tile:
+        if tile_cols < 1 or tile_rows < 1:
+            raise SystemExit(
+                f"--tile-cols / --tile-rows must be >= 1 (got {tile_cols}x{tile_rows})."
+            )
+        sticker_w = PAGE_W / tile_cols
+        sticker_h = PAGE_H / tile_rows
+        STICKER_W, STICKER_H = sticker_w, sticker_h
+        COLS, ROWS = tile_cols, tile_rows
+        GUTTER_X = GUTTER_Y = 0.0
+        MARGIN_X = MARGIN_Y = 0.0
+        TILE_MODE = True
+        return
+
     sticker_w = sticker_w_mm * mm
     sticker_h = sticker_h_mm * mm
     if sticker_w <= 0 or sticker_h <= 0:
@@ -61,13 +95,17 @@ def configure_layout(sticker_w_mm: float, sticker_h_mm: float) -> None:
             f"with a {MIN_PAGE_EDGE/mm:.0f}mm page edge "
             f"(max usable {usable_w/mm:.1f}x{usable_h/mm:.1f} mm)."
         )
-    cols = max(1, int((usable_w + GUTTER_X) // (sticker_w + GUTTER_X)))
-    rows = max(1, int((usable_h + GUTTER_Y) // (sticker_h + GUTTER_Y)))
-    margin_x = (PAGE_W - cols * sticker_w - (cols - 1) * GUTTER_X) / 2
-    margin_y = (PAGE_H - rows * sticker_h - (rows - 1) * GUTTER_Y) / 2
+    gutter_x = DEFAULT_GUTTER_MM * mm
+    gutter_y = DEFAULT_GUTTER_MM * mm
+    cols = max(1, int((usable_w + gutter_x) // (sticker_w + gutter_x)))
+    rows = max(1, int((usable_h + gutter_y) // (sticker_h + gutter_y)))
+    margin_x = (PAGE_W - cols * sticker_w - (cols - 1) * gutter_x) / 2
+    margin_y = (PAGE_H - rows * sticker_h - (rows - 1) * gutter_y) / 2
     STICKER_W, STICKER_H = sticker_w, sticker_h
     COLS, ROWS = cols, rows
+    GUTTER_X, GUTTER_Y = gutter_x, gutter_y
     MARGIN_X, MARGIN_Y = margin_x, margin_y
+    TILE_MODE = False
 
 
 def sticker_origins() -> list[tuple[float, float]]:
@@ -338,7 +376,8 @@ def draw_sticker_pages(c: canvas.Canvas, releases: list[dict], bpm_lookup: dict[
         stickers = split_release_into_stickers(release)
         for sticker_idx, sides_map in enumerate(stickers):
             x, y = origins[slot]
-            draw_crop_marks(c, x, y)
+            if not TILE_MODE:
+                draw_crop_marks(c, x, y)
             draw_sticker(c, x, y, release, sides_map, bpm_tracks, sticker_idx, len(stickers))
             slot += 1
             total_stickers += 1
@@ -376,9 +415,32 @@ def main() -> int:
         help=f"Sticker height in mm (default: {DEFAULT_STICKER_H_MM}). A4 is the constraint; "
         "rows per page are auto-derived.",
     )
+    parser.add_argument(
+        "--tile",
+        action="store_true",
+        help="Tile stickers edge-to-edge with no gutters or page margin so the "
+        "print can be sliced with just a few straight ruler cuts. Sticker size "
+        "is derived from --tile-cols / --tile-rows (default 2x5 = exactly 10 "
+        "per A4); --sticker-w / --sticker-h are ignored.",
+    )
+    parser.add_argument(
+        "--tile-cols",
+        type=int,
+        default=2,
+        help="(with --tile) columns per page. Default 2.",
+    )
+    parser.add_argument(
+        "--tile-rows",
+        type=int,
+        default=5,
+        help="(with --tile) rows per page. Default 5.",
+    )
     args = parser.parse_args()
 
-    configure_layout(args.sticker_w, args.sticker_h)
+    configure_layout(
+        args.sticker_w, args.sticker_h,
+        tile=args.tile, tile_cols=args.tile_cols, tile_rows=args.tile_rows,
+    )
 
     if not DJ_IN.exists() or not BPM_IN.exists():
         print("ERROR: run fetch_discogs_collection.py → filter_dj_releases.py → fetch_bpm.py first.", file=sys.stderr)
@@ -409,11 +471,19 @@ def main() -> int:
         if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
         and bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("reason") != "continuous_mix"
     )
+    layout_note = " edge-to-edge (tile mode)" if TILE_MODE else ""
     print(
         f"Wrote {PDF_OUT}: {sticker_count} stickers from {len(releases)} releases across "
         f"{pages} sticker page(s) ({per_page}/page; {STICKER_W/mm:.1f}x{STICKER_H/mm:.1f} mm "
-        f"on a {COLS}x{ROWS} grid){extra_note}."
+        f"on a {COLS}x{ROWS} grid{layout_note}){extra_note}."
     )
+    if TILE_MODE:
+        cuts = (COLS - 1) + (ROWS - 1)
+        print(
+            f"  Tile mode: slice each page with {cuts} straight ruler cuts "
+            f"({COLS - 1} vertical + {ROWS - 1} horizontal). Print borderless or "
+            "expect ~3 mm printer clipping on the outer stickers."
+        )
     if missing_count:
         print(f"  {missing_count} tracks have an empty BPM box for handwriting.")
     return 0

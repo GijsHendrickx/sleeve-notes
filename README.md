@@ -205,16 +205,19 @@ Typical runtimes (rough, depending on cache state and how many sources are confi
 ### Step 4 — generate the PDF
 
 ```bash
-python tools/generate_sticker_pdf.py                           # default 96 x 50.8 mm
+python tools/generate_sticker_pdf.py                           # default 96 x 50.8 mm with gutters + crop marks
 python tools/generate_sticker_pdf.py --sticker-w 70 --sticker-h 40   # smaller stickers, more per page
 python tools/generate_sticker_pdf.py --sticker-w 140 --sticker-h 80  # bigger stickers, fewer per page
+python tools/generate_sticker_pdf.py --tile                    # edge-to-edge: exactly 10 stickers per A4, slice with 5 ruler cuts
+python tools/generate_sticker_pdf.py --tile --tile-cols 3 --tile-rows 4   # 12-per-A4 tile (70 x 74.2 mm)
 ```
 
-- Output: `.tmp/stickers.pdf` with crop marks and a faint border.
-- **Sticker size is configurable** via `--sticker-w` and `--sticker-h` (both in millimetres). A4 is the constraint; columns and rows per page are auto-derived from the chosen size so as many stickers as possible fit while keeping a 4 mm page edge. Sizes that don't fit on A4 are rejected with a clear error.
+- Output: `.tmp/stickers.pdf`.
+- **Default mode** ships with crop marks and a 4 mm gutter between stickers, sized via `--sticker-w` / `--sticker-h` (mm). Columns and rows per page are auto-derived from the size so as many stickers as possible fit. Sizes that don't fit on A4 are rejected.
+- **Tile mode (`--tile`)** lays stickers edge-to-edge with zero gutters and zero page margin so the print can be sliced with just a few straight ruler cuts (`(cols − 1) + (rows − 1)` total). Sticker size is derived from `--tile-cols` × `--tile-rows` (default 2×5 = 10 per A4 → 105 × 59.4 mm). `--sticker-w` / `--sticker-h` are ignored when `--tile` is set. **Print borderless** or expect ~3 mm clipping on the outer stickers (most home printers have a small unprintable margin).
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
 - Tracks without a BPM hit get a small **empty rectangle** drawn in the BPM column on the sticker itself — pen the value in by hand after a needle-drop. No separate fill-in pages are added.
-- The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid`).
+- The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
 
 ---
 
@@ -315,9 +318,14 @@ Under the hood, the script uses the same fully-scripted authorization_code flow 
 ## Printing
 
 1. Open `.tmp/stickers.pdf` in any PDF reader.
-2. Print at **A4, 100% scale**, **no** "fit to page" / "shrink to fit". This is critical: the sticker size is calibrated to 96 × 50.8 mm and any scaling will throw it off.
-3. After printing one test page, **measure a sticker with a ruler**. If it's not 96 × 50.8 mm to within a millimetre, the printer is scaling — fix the print settings and try again.
-4. Print onto **A4 self-adhesive paper** (any matte sticker paper works). Cut along the crop marks. Stick on the sleeve.
+2. Print at **A4, 100% scale**, **no** "fit to page" / "shrink to fit". This is critical: sticker sizes are calibrated to exact millimetres and any scaling will throw them off.
+3. After printing one test page, **measure a sticker with a ruler**. If it's not the expected mm size to within a millimetre, the printer is scaling — fix the print settings and try again.
+4. Print onto **A4 self-adhesive paper** (any matte sticker paper works).
+
+**Cutting depends on the mode you chose in Step 4:**
+
+- **Default mode** (with gutters and crop marks): cut along the crop marks at each sticker's corners. Two cuts per side of each sticker.
+- **Tile mode (`--tile`)**: stickers are edge-to-edge so you only need straight cuts that span the whole sheet — for the 2 × 5 default that's **1 vertical + 4 horizontal cuts (5 total per page)**. Print **borderless** if your printer supports it; otherwise the outer ~3 mm of the outermost stickers will be clipped by the printer's unprintable margin. The sticker borders that get drawn along every cut line act as ruler guides — line up a metal ruler with the printed border and slice in one pass.
 
 Tracks for which no BPM could be found get an empty rectangle on the sticker itself in the right-hand column — write the BPM in by hand once you've needle-dropped it.
 

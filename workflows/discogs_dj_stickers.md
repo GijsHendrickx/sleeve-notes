@@ -81,6 +81,7 @@ Generate a printable A4 PDF with stickers (one per release) for the DJ-usable 12
    ```
    - Output: `.tmp/stickers.pdf`.
    - Stickers are 96×50.8 mm by default (configurable via `--sticker-w` / `--sticker-h` in mm), two per row on A4, with crop marks and a faint border. Tracks without a found BPM get a small empty rectangle in the BPM column on the sticker so the user can pen the value in by hand after printing.
+   - **Tile mode**: pass `--tile` to lay stickers edge-to-edge (no gutters, no page margin) so the print can be sliced with `(cols−1)+(rows−1)` straight ruler cuts. Default `--tile-cols 2 --tile-rows 5` gives exactly 10 stickers per A4 at 105×59.4 mm; the print needs 5 cuts (1 vertical + 4 horizontal). Use borderless printing or expect ~3 mm clipping on outer stickers.
 
 ## Outputs
 - `.tmp/stickers.pdf` — print on A4 at **100% scale** (no "fit to page"), preferably on self-adhesive paper. Sticker size is 96×50.8 mm; verify with a ruler after the first print.
