@@ -1,0 +1,17 @@
+{# Per-track "listen" icon. Spotify if we have an ID, YouTube otherwise.
+   Caller must pass release_id, position, spotify_track_id. #}
+<a href="/track/listen?release_id={{ release_id }}&position={{ position|urlencode }}"
+   target="_blank" rel="noopener"
+   class="inline-flex h-4 w-6 items-center justify-center align-middle leading-none opacity-70 hover:opacity-100 transition-opacity"
+   title="{% if spotify_track_id %}Listen on Spotify{% else %}Listen on YouTube{% endif %}">
+  {% if spotify_track_id %}
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="#1DB954" aria-hidden="true" class="block">
+      <path d="M12 0a12 12 0 1 0 12 12A12 12 0 0 0 12 0Zm5.5 17.3a.75.75 0 0 1-1 .25c-2.8-1.7-6.4-2.1-10.5-1.1a.75.75 0 0 1-.34-1.46c4.6-1.05 8.5-.6 11.6 1.3a.75.75 0 0 1 .24 1.02Zm1.47-3.27a.94.94 0 0 1-1.3.3c-3.2-2-8.1-2.6-11.9-1.4a.94.94 0 1 1-.55-1.8c4.36-1.34 9.78-.66 13.45 1.6a.94.94 0 0 1 .3 1.3Zm.13-3.4c-3.85-2.3-10.21-2.5-13.9-1.4a1.13 1.13 0 1 1-.65-2.16c4.24-1.27 11.27-1.03 15.7 1.6a1.13 1.13 0 0 1-1.15 1.95Z"/>
+    </svg>
+  {% else %}
+    <svg width="18" height="14" viewBox="0 0 24 18" aria-hidden="true" class="block">
+      <path fill="#FF0000" d="M23.5 2.8a3 3 0 0 0-2.1-2.1C19.5 0 12 0 12 0S4.5 0 2.6.7A3 3 0 0 0 .5 2.8 31.4 31.4 0 0 0 0 9a31.4 31.4 0 0 0 .5 6.2 3 3 0 0 0 2.1 2.1C4.5 18 12 18 12 18s7.5 0 9.4-.7a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 9a31.4 31.4 0 0 0-.5-6.2Z"/>
+      <path fill="#FFFFFF" d="M9.6 12.9 15.8 9 9.6 5.1Z"/>
+    </svg>
+  {% endif %}
+</a>

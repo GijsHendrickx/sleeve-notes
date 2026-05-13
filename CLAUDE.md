@@ -48,7 +48,7 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 **Visual style.**
 - No greyed-out text in actionable buttons — it reads as disabled. `.btn-quiet` uses `--ink` for text; reserve `--dim` for decorative glyphs inside buttons or genuinely inactive states.
 - No italics on song or release titles.
-- No abbreviated column headers, except `BPM` (universally abbreviated). `Position` over `Pos`, `Format` over `Fmt`, `Duration` over `Dur`.
+- Prefer full column headers (`Position`, `Format`, `Duration`) over abbreviations. `BPM` is the one universal exception. Abbreviate (`Pos`, `Fmt`, `Dur`) only when space is genuinely tight — e.g. the release detail drawer on `/collection` — never on full-width listing pages like `/tracks`.
 - Form controls placed on the same row share an explicit height (`h-8` for `.field` inputs/selects/buttons). Native `<select>` adds invisible vertical chrome that doesn't match `<input>` even with identical Tailwind padding classes.
 - Don't show redundant information in detail panels (e.g. an explicit ID immediately above a link that already encodes the same ID).
 - Table rows that mix multi-line text (e.g. release-artist + release-title stacked) with single-line inputs use `align-middle`, NOT `align-top`. Top-align makes the inputs in adjacent cells look misaligned next to the multi-line text.

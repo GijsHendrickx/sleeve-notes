@@ -58,13 +58,14 @@
           <th class="text-right w-24 border-l hairline-2 pl-3">Override BPM</th>
           <th class="text-left w-24">Override key</th>
           <th class="text-left w-52">Note</th>
+          <th class="w-10 border-l hairline-2 pl-3"></th>
         </tr>
       </thead>
       <tbody>
         {% for r in rows %}
           {% include "tracks/_row.html" %}
         {% else %}
-        <tr><td colspan="9" class="text-center py-12 text-app-mute">Nothing matches this filter.</td></tr>
+        <tr><td colspan="10" class="text-center py-12 text-app-mute">Nothing matches this filter.</td></tr>
         {% endfor %}
       </tbody>
     </table>

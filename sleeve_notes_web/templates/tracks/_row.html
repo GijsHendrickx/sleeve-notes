@@ -44,4 +44,9 @@
     <input name="note_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.note or '' }}"
            class="field w-full px-2 py-1 text-[12px] text-app-dim" />
   </td>
+  <td class="text-center w-10 border-l hairline-2 pl-3">
+    {% with release_id=r.release_id, position=r.position, spotify_track_id=r.spotify_track_id %}
+      {% include "_listen_glyph.html" %}
+    {% endwith %}
+  </td>
 </tr>

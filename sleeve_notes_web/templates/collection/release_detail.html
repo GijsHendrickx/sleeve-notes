@@ -24,16 +24,17 @@
     <table class="dense w-full text-[12px]">
       <thead class="text-[10px] uppercase tracking-[0.06em] text-app-mute">
         <tr class="border-b hairline">
-          <th class="text-left">Position</th>
+          <th class="text-left w-10">Pos</th>
           <th class="text-left">Title</th>
-          <th class="text-right">Duration</th>
-          <th class="text-right">BPM</th>
-          <th class="text-left">Key</th>
+          <th class="text-right w-12">Dur</th>
+          <th class="text-right w-10">BPM</th>
+          <th class="text-left w-10">Key</th>
+          <th class="w-8"></th>
         </tr>
       </thead>
       <tbody>
         {% for t in release.tracks %}
-        <tr class="border-t hairline align-top">
+        <tr class="border-t hairline align-middle">
           <td class="font-mono text-app-mute">{{ t.position }}</td>
           <td>
             {% if release.compilation and t.artist and t.artist != release.artist %}
@@ -51,6 +52,11 @@
             {{ t.bpm or '·' }}
           </td>
           <td class="font-mono {% if t.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">{{ t.key_camelot or '·' }}</td>
+          <td class="text-center">
+            {% with release_id=t.release_id, position=t.position, spotify_track_id=t.spotify_track_id %}
+              {% include "_listen_glyph.html" %}
+            {% endwith %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

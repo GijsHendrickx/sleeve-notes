@@ -193,7 +193,7 @@ def detail(request: Request, release_id: int):
         tracks_out: list[dict] = []
         by_rp, by_tk, _ = load_overrides(conn)
         track_rows = conn.execute(
-            "SELECT position, artist, title, duration, duration_s "
+            "SELECT position, artist, title, duration, duration_s, spotify_track_id "
             "FROM tracks WHERE release_id = ? ORDER BY position",
             (release_id,),
         ).fetchall()
@@ -214,6 +214,8 @@ def detail(request: Request, release_id: int):
                 "bpm_sources": tr.get("bpm_sources"),
                 "key_camelot": tr.get("key_camelot"),
                 "reason": tr.get("reason"),
+                "spotify_track_id": t["spotify_track_id"],
+                "release_id": release_id,
             })
 
         release = {

@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   title TEXT,
   duration TEXT,
   duration_s INTEGER,
+  spotify_track_id TEXT,
+  youtube_video_id TEXT,
   PRIMARY KEY (release_id, position)
 );
 
@@ -238,6 +240,20 @@ def _ensure_release_columns(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_format ON releases(format)")
 
 
+def _ensure_track_columns(conn: sqlite3.Connection) -> None:
+    """Add per-track external-player IDs to existing DBs.
+
+    spotify_track_id is opportunistically backfilled by the BPM cascade
+    (ReccoBeats path already matches against Spotify). youtube_video_id
+    is lazily resolved on first click of the per-track listen icon.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(tracks)").fetchall()}
+    if "spotify_track_id" not in existing:
+        conn.execute("ALTER TABLE tracks ADD COLUMN spotify_track_id TEXT")
+    if "youtube_video_id" not in existing:
+        conn.execute("ALTER TABLE tracks ADD COLUMN youtube_video_id TEXT")
+
+
 def _ensure_overrides_columns(conn: sqlite3.Connection) -> None:
     """Drop retired override columns from older DBs. SQLite 3.35+ (shipped
     with Python 3.11+) supports ALTER TABLE DROP COLUMN."""
@@ -289,6 +305,7 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
     _ensure_release_columns(conn)
+    _ensure_track_columns(conn)
     _ensure_overrides_columns(conn)
     _backfill_normalized_releases(conn)
     if fresh:

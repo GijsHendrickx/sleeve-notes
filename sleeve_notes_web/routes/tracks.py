@@ -16,12 +16,14 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.datastructures import FormData
 
 from sleeve_notes import db as dbmod
+from sleeve_notes import youtube as ytmod
 from sleeve_notes.fetch_bpm import (
     BPM_MAX,
     BPM_MIN,
@@ -93,6 +95,7 @@ def _build_row(
         "key_camelot": tr.get("key_camelot"),
         "reason": tr.get("reason"),
         "override": override_display,
+        "spotify_track_id": track_row["spotify_track_id"] if "spotify_track_id" in track_row.keys() else None,
     }
 
 
@@ -113,6 +116,7 @@ def index(
 
         sql = (
             "SELECT t.release_id, t.position, t.artist, t.title, "
+            "t.spotify_track_id, "
             "r.artist AS r_artist, r.title AS r_title "
             "FROM tracks t JOIN releases r ON r.id = t.release_id"
         )
@@ -266,6 +270,7 @@ async def sync(request: Request) -> HTMLResponse:
     with dbmod.session() as conn:
         track = conn.execute(
             "SELECT t.release_id, t.position, t.artist, t.title, "
+            "t.spotify_track_id, "
             "r.artist AS r_artist, r.title AS r_title "
             "FROM tracks t JOIN releases r ON r.id = t.release_id "
             "WHERE t.release_id = ? AND t.position = ?",
@@ -286,6 +291,22 @@ async def sync(request: Request) -> HTMLResponse:
         rl = RateLimiter()
         entry = cascade_all(track_artist, title, prev=None, rl=rl)
         save_cache_entry(conn, ck, track_artist, title, entry)
+        spot_id = entry.get("spotify_track_id")
+        if spot_id:
+            conn.execute(
+                "UPDATE tracks SET spotify_track_id = COALESCE(spotify_track_id, ?) "
+                "WHERE release_id = ? AND position = ?",
+                (spot_id, rid, pos),
+            )
+            # Re-read so _build_row sees the freshly-written ID.
+            track = conn.execute(
+                "SELECT t.release_id, t.position, t.artist, t.title, "
+                "t.spotify_track_id, "
+                "r.artist AS r_artist, r.title AS r_title "
+                "FROM tracks t JOIN releases r ON r.id = t.release_id "
+                "WHERE t.release_id = ? AND t.position = ?",
+                (rid, pos),
+            ).fetchone()
 
         precise = _load_precise_overrides(conn)
         by_rp, by_tk, _ = load_overrides(conn)
@@ -306,4 +327,60 @@ async def sync(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         "tracks/_row.html",
         {"request": request, "r": row, "just_synced": True},
+    )
+
+
+@router.get("/track/listen")
+def listen(release_id: int, position: str) -> RedirectResponse:
+    """Resolve a track to an external player URL and 302 to it.
+
+    Spotify wins when we have the ID (opportunistically captured by the
+    BPM cascade). Otherwise lazily resolves the top YouTube search hit
+    on first click, caches the video ID, then redirects. If the YouTube
+    API is unavailable or returns nothing, soft-falls-back to a search
+    URL so the user always lands on something useful.
+    """
+    with dbmod.session() as conn:
+        row = conn.execute(
+            "SELECT t.artist, t.title, t.spotify_track_id, t.youtube_video_id, "
+            "r.artist AS r_artist "
+            "FROM tracks t JOIN releases r ON r.id = t.release_id "
+            "WHERE t.release_id = ? AND t.position = ?",
+            (release_id, position),
+        ).fetchone()
+        if row is None:
+            return RedirectResponse(
+                url=f"https://www.youtube.com/results?search_query={quote_plus(position)}",
+                status_code=302,
+            )
+
+        if row["spotify_track_id"]:
+            return RedirectResponse(
+                url=f"https://open.spotify.com/track/{row['spotify_track_id']}",
+                status_code=302,
+            )
+        if row["youtube_video_id"]:
+            return RedirectResponse(
+                url=f"https://www.youtube.com/watch?v={row['youtube_video_id']}",
+                status_code=302,
+            )
+
+        artist = row["artist"] or row["r_artist"] or ""
+        title = row["title"] or ""
+        video_id = ytmod.resolve_video_id(artist, title)
+        if video_id:
+            conn.execute(
+                "UPDATE tracks SET youtube_video_id = ? "
+                "WHERE release_id = ? AND position = ?",
+                (video_id, release_id, position),
+            )
+            return RedirectResponse(
+                url=f"https://www.youtube.com/watch?v={video_id}",
+                status_code=302,
+            )
+
+    q = f"{artist} {title}".strip() or title or position
+    return RedirectResponse(
+        url=f"https://www.youtube.com/results?search_query={quote_plus(q)}",
+        status_code=302,
     )

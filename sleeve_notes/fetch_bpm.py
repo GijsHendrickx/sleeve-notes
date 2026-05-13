@@ -632,6 +632,7 @@ def reccobeats_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
         "key_camelot": key_cam,
         "score": round(score, 1),
         "url": track.get("href") or f"https://open.spotify.com/track/{spot_id}",
+        "spotify_track_id": spot_id,
     }
 
 
@@ -940,12 +941,16 @@ def cascade_all(
             if hit:
                 sources[src] = hit
 
-    return {
+    out = {
         "sources": sources,
         "sources_tried": sorted(tried),
         "sources_unavailable": sorted(new_unavailable),
         "sources_errored": sorted(new_errored),
     }
+    spot_id = (sources.get("reccobeats") or {}).get("spotify_track_id")
+    if spot_id:
+        out["spotify_track_id"] = spot_id
+    return out
 
 
 def consense(entry: dict) -> dict:
@@ -1339,6 +1344,13 @@ def main(argv: list[str] | None = None) -> int:
                         )
                         continue
                     save_cache_entry(conn, w["cache_key"], w["artist"], w["title"], entry)
+                    spot_id = entry.get("spotify_track_id")
+                    if spot_id:
+                        conn.execute(
+                            "UPDATE tracks SET spotify_track_id = COALESCE(spotify_track_id, ?) "
+                            "WHERE release_id = ? AND position = ?",
+                            (spot_id, w["rid"], w["position"]),
+                        )
                     done_cascade += 1
                     cached_src = (w["cached"] or {}).get("sources") or {}
                     for src in entry.get("sources") or {}:
