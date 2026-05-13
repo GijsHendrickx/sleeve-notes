@@ -59,6 +59,22 @@
   </div>
   {% endif %}
 
+  {% if svgs %}
+  <div>
+    <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium mb-2">Sticker preview</div>
+    <div class="flex flex-wrap gap-3">
+      {% for svg in svgs %}
+        <div class="sticker-preview">{{ svg|safe }}</div>
+      {% endfor %}
+    </div>
+    {% if svgs|length > 1 %}
+      <div class="text-[11px] text-app-mute mt-2">Splits into {{ svgs|length }} stickers ({{ release.tracks|length }} tracks).</div>
+    {% endif %}
+  </div>
+  {% elif svg_error %}
+  <div class="text-amber-400 text-[12px]">Preview unavailable: {{ svg_error }}</div>
+  {% endif %}
+
   {% if release.tracks %}
     <div class="flex gap-2 pt-1">
       <a href="/preview?release_id={{ release.id }}" class="btn btn-primary">Preview sticker →</a>

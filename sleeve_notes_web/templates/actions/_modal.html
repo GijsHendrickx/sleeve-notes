@@ -1,0 +1,17 @@
+{# Shared modal shell. Usage:
+     {% extends "actions/_modal.html" %}
+     {% block heading %}…{% endblock %}
+     {% block subhead %}…{% endblock %}
+     {% block body   %}…{% endblock %}
+   The dialog wires Escape, backdrop click, and Cancel to clear #modal-root. #}
+<div class="modal-backdrop"
+     onclick="if (event.target === this) htmx.ajax('GET', '/actions/close', '#modal-root')">
+  <div class="modal-card"
+       hx-on:keydown.escape="htmx.ajax('GET', '/actions/close', '#modal-root')">
+    <div class="px-5 pt-5 pb-3 border-b hairline">
+      <div class="text-[15px] font-semibold text-app-ink tracking-tight">{% block heading %}{% endblock %}</div>
+      {% block subhead %}{% endblock %}
+    </div>
+    <div class="px-5 py-5">{% block body %}{% endblock %}</div>
+  </div>
+</div>

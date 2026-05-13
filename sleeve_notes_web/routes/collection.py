@@ -8,8 +8,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 
 from sleeve_notes import db as dbmod
+from sleeve_notes import sticker_layout as L
 from sleeve_notes.fetch_bpm import derive_track_result, load_overrides
+from sleeve_notes.generate_sticker_pdf import build_bpm_lookup
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.preview import render_release_stickers_svg
 
 
 router = APIRouter()
@@ -26,6 +29,44 @@ def _basic_info(raw: str | None) -> dict:
 
 def _cover_url(basic: dict) -> str | None:
     return basic.get("thumb") or basic.get("cover_image") or None
+
+
+def _release_for_render(conn, release_id: int) -> dict | None:
+    """Build a release dict in the shape ``render_release_stickers_svg`` expects.
+
+    Mirrors ``generate_sticker_pdf.load_releases_for_render`` but for a single ID.
+    """
+    r = conn.execute(
+        "SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
+        "FROM releases WHERE id = ?",
+        (release_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    tracks = conn.execute(
+        "SELECT position, side, artist, title, duration, duration_s "
+        "FROM tracks WHERE release_id = ? ORDER BY position",
+        (release_id,),
+    ).fetchall()
+    def _jl(raw, default):
+        if not raw:
+            return default
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return default
+    return {
+        "id": r["id"],
+        "artist": r["artist"],
+        "title": r["title"],
+        "year": r["year"],
+        "compilation": bool(r["compilation"]),
+        "labels": _jl(r["labels"], []),
+        "genres": _jl(r["genres"], []),
+        "styles": _jl(r["styles"], []),
+        "rpm": _jl(r["rpm"], []),
+        "tracks": [dict(t) for t in tracks],
+    }
 
 
 def _format_short(basic: dict) -> str:
@@ -187,7 +228,21 @@ def detail(request: Request, release_id: int):
             "format_short": _format_short(basic),
             "tracks": tracks_out,
         }
+
+        svgs: list[str] = []
+        svg_error: str | None = None
+        render_rel = _release_for_render(conn, release_id)
+        if render_rel and render_rel["tracks"]:
+            try:
+                layout = L.derive_layout(L.DEFAULT_STICKER_W_MM, L.DEFAULT_STICKER_H_MM)
+                bpm_lookup = build_bpm_lookup(conn, [render_rel])
+                svgs = render_release_stickers_svg(
+                    render_rel, bpm_lookup[render_rel["id"]], layout
+                )
+            except (ValueError, KeyError) as e:
+                svg_error = str(e)
+
     return templates.TemplateResponse(
         "collection/release_detail.html",
-        {"request": request, "release": release},
+        {"request": request, "release": release, "svgs": svgs, "svg_error": svg_error},
     )

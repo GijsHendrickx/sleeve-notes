@@ -7,25 +7,25 @@
   <div class="flex-1 min-w-0 flex flex-col">
     <form method="get" action="/collection" class="flex flex-wrap gap-2 items-center mb-4 text-sm">
       <input name="q" value="{{ q or '' }}" placeholder="Search artist or title…"
-             class="field px-3 py-1.5 w-72 text-[13px]" />
-      <select name="type" class="field px-2.5 py-1.5 text-[13px]">
+             class="field h-8 px-3 w-72 text-[13px]" />
+      <select name="type" class="field h-8 px-2.5 text-[13px]">
         <option value="">Type · any</option>
         {% for t in type_options %}
         <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
         {% endfor %}
       </select>
-      <select name="format" class="field px-2.5 py-1.5 text-[13px]">
+      <select name="format" class="field h-8 px-2.5 text-[13px]">
         <option value="">Format · any</option>
         {% for f in format_options %}
         <option value="{{ f }}" {% if format_filter == f %}selected{% endif %}>{{ f }}</option>
         {% endfor %}
       </select>
-      <select name="bpm" class="field px-2.5 py-1.5 text-[13px]">
+      <select name="bpm" class="field h-8 px-2.5 text-[13px]">
         <option value="">BPM · any</option>
         <option value="missing" {% if bpm_filter == 'missing' %}selected{% endif %}>Has missing</option>
         <option value="complete" {% if bpm_filter == 'complete' %}selected{% endif %}>Fully covered</option>
       </select>
-      <button type="submit" class="btn btn-ghost">Filter</button>
+      <button type="submit" class="btn btn-ghost h-8">Filter</button>
       <span class="text-app-mute ml-auto text-[12px] tracking-tight">{{ rows|length }} of {{ total }} releases</span>
     </form>
 

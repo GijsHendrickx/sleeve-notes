@@ -279,19 +279,21 @@ shell out to the `sleeve-notes` CLI subcommands you already know, so the
 behaviour, caches, overrides and print history are identical whether you
 drive things from the terminal or the browser.
 
-What you get:
+The sidebar splits into three sections — **Collection** (data views), **Actions** (one-shot jobs that shell out to the CLI), and **Custom settings** (overrides). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
 
-| Page | What it's for |
+| Surface | What it's for |
 |---|---|
-| **Dashboard** | At-a-glance BPM coverage (high / single / disputed / mix / missing), count of releases new since the last print, quick-action buttons. |
-| **Collection** | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer. |
-| **Overrides** | The bulk editor for manual BPM / key / continuous-mix entries. Presets surface tracks that need attention or already have an override; one Save commits everything. |
-| **Preview** | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
-| **Run pipeline** (slide-out) | Kick off `run` / `fetch` / `bpm` / `render` with optional `--limit` / `--folder` etc. flags; live-tails the log. |
+| **Dashboard** (`/`) | At-a-glance BPM coverage (high / single / disputed / mix / missing), count of releases new since the last print, quick-action buttons. |
+| **Releases** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
+| **Overrides** (`/overrides`) | Bulk editor for manual BPM / key / continuous-mix entries. Presets surface tracks that need attention or already have an override; one Save commits everything. |
+| **Generate stickers** (`/preview`) | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
+| **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
+| **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
+| **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
 
-State still lives where it always did — `data/sleeve_notes.db` and `.tmp/`.
-The web app is purely an alternative front-end; you can mix and match it
-with CLI invocations freely.
+**Job feedback.** Sidebar actions kick a CLI subprocess in the background; status appears as a small fixed toast in the bottom-right with a real progress bar (parsed from the CLI's `[done/total]` counters) and a friendly summary line. The toast persists across page navigation, can be cancelled (SIGTERM → SIGKILL escalation after a brief grace period), and on success it triggers an in-place refresh of the current page's table so new releases / updated BPMs show up without a full reload.
+
+State still lives where it always did — `data/sleeve_notes.db` and `.tmp/`. The web app is purely an alternative front-end; you can mix and match it with CLI invocations freely.
 
 ---
 

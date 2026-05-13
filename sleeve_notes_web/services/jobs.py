@@ -121,10 +121,24 @@ class JobRunner:
                 return False
             if self._proc is None:
                 return False
+            proc = self._proc
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return False
+        # SIGTERM-only is not enough — sleeve-notes bpm has non-daemon worker
+        # threads that can block subprocess exit when stuck in network I/O.
+        # Escalate to SIGKILL after a short grace period via a background
+        # watchdog so cancel() returns immediately to the request handler.
+        def _watchdog():
             try:
-                self._proc.terminate()
-            except ProcessLookupError:
-                return False
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        threading.Thread(target=_watchdog, daemon=True).start()
         return True
 
     def _run(self, job: Job) -> None:
@@ -149,7 +163,9 @@ class JobRunner:
                 job.exit_code = proc.returncode
                 if proc.returncode == 0:
                     job.status = "done"
-                elif proc.returncode in (-15, 143):
+                elif proc.returncode in (-15, -9, 143, 137):
+                    # SIGTERM=-15/143, SIGKILL=-9/137. Both mean user-cancel
+                    # (the watchdog in cancel() escalates if SIGTERM stalls).
                     job.status = "cancelled"
                 else:
                     job.status = "failed"

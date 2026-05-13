@@ -32,7 +32,7 @@
     };
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=7" defer></script>
   <style>
     :root {
       --app-bg: #0c0c0e;
@@ -129,11 +129,87 @@
       padding: 6px 10px;
       border-radius: 7px;
       font-size: 13px;
-      color: var(--dim);
+      color: var(--ink);
       transition: background-color 120ms ease, color 120ms ease;
     }
     .nav-item:hover { background: var(--s2); color: var(--ink); }
     .nav-item.active { background: var(--s3); color: var(--ink); }
+    .nav-section {
+      margin: 0 16px;
+      padding: 6px 0 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--mute);
+    }
+    .nav-action { display: flex; align-items: center; gap: 8px; }
+    .nav-glyph {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; color: var(--dim); font-size: 13px;
+    }
+    .nav-action:hover .nav-glyph { color: var(--ink); }
+
+    /* Modal — centered dialog with frosted backdrop. Used by sidebar actions. */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 40;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: saturate(140%) blur(4px);
+      -webkit-backdrop-filter: saturate(140%) blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 1.5rem;
+    }
+    .modal-card {
+      width: 100%; max-width: 28rem;
+      background: var(--s1); border: 1px solid var(--line2); border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    /* Run toast — fixed bottom-right notification with indeterminate progress */
+    .run-toast {
+      position: fixed; right: 20px; bottom: 20px; z-index: 50;
+      width: 360px; max-width: calc(100vw - 40px);
+      background: rgba(22,22,24,0.92);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border: 1px solid var(--line2);
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+      overflow: hidden;
+      animation: toast-in 200ms ease-out;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .progress-track {
+      position: relative; height: 3px; background: var(--s3); overflow: hidden;
+    }
+    .progress-bar {
+      position: absolute; top: 0; bottom: 0; width: 40%;
+      background: linear-gradient(90deg, transparent, #0a84ff 50%, transparent);
+      animation: progress-slide 1.4s ease-in-out infinite;
+    }
+    /* Determinate mode — bar fills left to right based on --progress (0-100%). */
+    .progress-track.determinate .progress-bar {
+      left: 0; width: var(--progress, 0%);
+      background: #0a84ff;
+      animation: none;
+      transition: width 300ms ease-out;
+    }
+    .progress-track.done .progress-bar {
+      width: 100%; left: 0; background: #30d158; animation: none;
+    }
+    .progress-track.failed .progress-bar {
+      width: 100%; left: 0; background: #ff453a; animation: none;
+    }
+    .progress-track.cancelled .progress-bar {
+      width: 100%; left: 0; background: #ff9f0a; animation: none;
+    }
+    @keyframes progress-slide {
+      0%   { left: -45%; }
+      100% { left: 100%; }
+    }
 
     /* Sticker preview canvas — borrow paper colour */
     .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
@@ -155,16 +231,30 @@
         </a>
         <div class="text-[11px] text-app-mute mt-0.5 tracking-wide">v0.3</div>
       </div>
-      <div class="flex-1 py-1">
-        {% set nav = [
-          ('/collection', 'Collection', 'collection'),
-          ('/preview', 'Preview', 'preview'),
-        ] %}
-        {% for href, label, key in nav %}
-          <a href="{{ href }}" class="nav-item{% if active == key %} active{% endif %}">{{ label }}</a>
-        {% endfor %}
+      <div class="flex-1 py-1 overflow-y-auto">
+        <div class="nav-section">Collection</div>
+        <a href="/collection" class="nav-item{% if active == 'collection' %} active{% endif %}">Releases</a>
+
+        <div class="nav-section mt-4">Actions</div>
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="/actions/discogs-sync" hx-target="#modal-root" hx-swap="innerHTML">
+          <span class="nav-glyph">⟳</span> Discogs sync
+        </button>
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="/actions/discogs-import" hx-target="#modal-root" hx-swap="innerHTML">
+          <span class="nav-glyph">⬇</span> Import Discogs csv
+        </button>
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="/actions/bpm" hx-target="#modal-root" hx-swap="innerHTML">
+          <span class="nav-glyph">♪</span> BPM lookup
+        </button>
+        <a href="/preview" class="nav-item nav-action{% if active == 'preview' %} active{% endif %}">
+          <span class="nav-glyph">▦</span> Generate stickers
+        </a>
+
+        <div class="nav-section mt-4">Custom settings</div>
+        <a href="/overrides" class="nav-item{% if active == 'overrides' %} active{% endif %}">Overrides</a>
       </div>
-      <a href="/overrides" class="nav-item mb-2{% if active == 'overrides' %} active{% endif %}">Overrides</a>
       <div class="px-4 py-3 border-t hairline text-[11px] text-app-mute flex items-center justify-between">
         <span>engine · <span class="text-app-dim">sleeve_notes</span></span>
         <button type="button" id="density-toggle" title="Toggle density"
@@ -179,14 +269,6 @@
     <div class="flex-1 flex flex-col min-w-0">
       <header class="h-14 shrink-0 flex items-center justify-between px-7 border-b hairline vibrancy-strong sticky top-0 z-20">
         <div class="text-[19px] text-app-ink font-semibold tracking-tight">{% block breadcrumb %}{% endblock %}</div>
-        <div class="flex items-center gap-3">
-          <div id="run-pill" hx-get="/run/status" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
-          <button type="button" onclick="document.getElementById('run-panel').classList.toggle('hidden')"
-                  class="btn btn-ghost">
-            <span class="inline-block w-1.5 h-1.5 rounded-full bg-app-dim"></span>
-            Run
-          </button>
-        </div>
       </header>
       <main class="flex-1 px-7 py-6 overflow-x-hidden">
         {% block content %}{% endblock %}
@@ -194,15 +276,11 @@
     </div>
   </div>
 
-  <!-- Slide-out Run panel -->
-  <aside id="run-panel" class="hidden fixed top-0 right-0 bottom-0 w-[460px] vibrancy border-l hairline-2 flex flex-col z-30 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
-    <div class="flex items-center justify-between px-5 h-14 border-b hairline">
-      <div class="text-[13px] font-semibold text-app-ink tracking-tight">Run pipeline</div>
-      <button type="button" onclick="document.getElementById('run-panel').classList.add('hidden')"
-              class="w-7 h-7 rounded-full flex items-center justify-center text-app-mute hover:text-app-ink hover:bg-app-s2 transition">✕</button>
-    </div>
-    <div id="run-panel-body" class="flex-1 overflow-y-auto" hx-get="/run/panel" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
-  </aside>
+  <!-- Modal mount: sidebar action buttons htmx-load into this slot. -->
+  <div id="modal-root"></div>
+
+  <!-- Run-status toast: fixed bottom-right; htmx-fills on job start/transition. -->
+  <div id="run-banner" hx-get="/run/banner" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
 
 </body>
 </html>
