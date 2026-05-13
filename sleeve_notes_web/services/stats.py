@@ -19,7 +19,6 @@ class CoverageStats:
     high_confidence: int
     single_source: int
     disputed: int
-    continuous_mix: int
     missing: int
 
 
@@ -27,20 +26,17 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
     """Per-track BPM coverage across every track in the collection."""
     by_rp, by_tk, _ = load_overrides(conn)
     rows = conn.execute(
-        "SELECT t.release_id, t.position, t.artist, t.title, t.duration_s, r.artist AS r_artist "
+        "SELECT t.release_id, t.position, t.artist, t.title, r.artist AS r_artist "
         "FROM tracks t JOIN releases r ON r.id = t.release_id"
     ).fetchall()
     total = len(rows)
-    with_bpm = high = single = disputed = mix = 0
+    with_bpm = high = single = disputed = 0
     for r in rows:
         artist = r["artist"] or r["r_artist"] or "V/A"
         result = derive_track_result(
             conn, r["release_id"], r["position"] or "",
-            artist, r["title"] or "", r["duration_s"], by_rp, by_tk,
+            artist, r["title"] or "", by_rp, by_tk,
         )
-        if result.get("reason") == "continuous_mix":
-            mix += 1
-            continue
         if result.get("bpm"):
             with_bpm += 1
             conf = result.get("bpm_confidence")
@@ -56,8 +52,7 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
         high_confidence=high,
         single_source=single,
         disputed=disputed,
-        continuous_mix=mix,
-        missing=total - with_bpm - mix,
+        missing=total - with_bpm,
     )
 
 

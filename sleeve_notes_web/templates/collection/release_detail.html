@@ -46,10 +46,9 @@
             {% if t.bpm_confidence in ('high','manual') %}text-emerald-400
             {% elif t.bpm_confidence == 'disputed' %}text-amber-400
             {% elif t.bpm %}text-app-ink
-            {% elif t.reason == 'continuous_mix' %}text-app-dim
             {% else %}text-app-mute{% endif %}"
             {% if t.bpm_sources %}title="sources: {{ t.bpm_sources|join(', ') }}"{% endif %}>
-            {{ t.bpm or (t.reason == 'continuous_mix' and 'mix' or '·') }}
+            {{ t.bpm or '·' }}
           </td>
           <td class="font-mono {% if t.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">{{ t.key_camelot or '·' }}</td>
         </tr>
@@ -78,7 +77,7 @@
   {% if release.tracks %}
     <div class="flex gap-2 pt-1">
       <a href="/preview?release_id={{ release.id }}" class="btn btn-primary">Preview sticker →</a>
-      <a href="/overrides?release_id={{ release.id }}" class="btn btn-quiet">Edit overrides</a>
+      <a href="/tracks?release_id={{ release.id }}" class="btn btn-quiet">Edit tracks</a>
     </div>
   {% endif %}
 </div>

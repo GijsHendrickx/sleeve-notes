@@ -433,7 +433,6 @@ def draw_sticker(
             bpm_info = bpm_tracks_by_pos.get(pos, {}) or {}
             bpm = bpm_info.get("bpm")
             key_cam = bpm_info.get("key_camelot")
-            reason = bpm_info.get("reason")
             bpm_conf = bpm_info.get("bpm_confidence")
 
             baseline = cursor_y - track_font
@@ -468,11 +467,6 @@ def draw_sticker(
                     dot_cx = bpm_right - digits_w - dot_r - 2
                     dot_cy = baseline + bpm_size * 0.35
                     drawer.circle(dot_cx, dot_cy, dot_r, fill=BLACK)
-            elif reason == "continuous_mix":
-                drawer.text(
-                    bpm_right, baseline, "mix",
-                    font="Helvetica-Bold", size=bpm_size, color=GREY, anchor="end",
-                )
             else:
                 box_top = baseline + 0.72 * bpm_size
                 box_bottom = baseline - 0.10 * bpm_size

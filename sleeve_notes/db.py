@@ -120,7 +120,6 @@ CREATE TABLE IF NOT EXISTS overrides (
   title TEXT,
   bpm INTEGER,
   key_camelot TEXT,
-  continuous_mix INTEGER NOT NULL DEFAULT 0,
   note TEXT,
   created_at TEXT
 );
@@ -239,6 +238,14 @@ def _ensure_release_columns(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_format ON releases(format)")
 
 
+def _ensure_overrides_columns(conn: sqlite3.Connection) -> None:
+    """Drop retired override columns from older DBs. SQLite 3.35+ (shipped
+    with Python 3.11+) supports ALTER TABLE DROP COLUMN."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(overrides)").fetchall()}
+    if "continuous_mix" in existing:
+        conn.execute("ALTER TABLE overrides DROP COLUMN continuous_mix")
+
+
 def _backfill_normalized_releases(conn: sqlite3.Connection) -> None:
     """Re-normalize legacy releases that pre-date fetch's normalize-in-place.
 
@@ -282,6 +289,7 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
     _ensure_release_columns(conn)
+    _ensure_overrides_columns(conn)
     _backfill_normalized_releases(conn)
     if fresh:
         try:
@@ -684,8 +692,8 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                     """
                     INSERT INTO overrides (
                         release_id, position, artist, title, bpm, key_camelot,
-                        continuous_mix, note, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        note, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         e.get("release_id"),
@@ -694,7 +702,6 @@ def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
                         e.get("title"),
                         e.get("bpm"),
                         e.get("key_camelot"),
-                        1 if e.get("continuous_mix") else 0,
                         e.get("note"),
                         now,
                     ),

@@ -32,7 +32,7 @@
     };
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-  <script src="/static/app.js?v=7" defer></script>
+  <script src="/static/app.js?v=14" defer></script>
   <style>
     :root {
       --app-bg: #0c0c0e;
@@ -214,6 +214,29 @@
     /* Sticker preview canvas — borrow paper colour */
     .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
 
+    /* Per-row sync button on /tracks — spins while htmx request is in flight. */
+    .sync-btn.htmx-request {
+      color: #0a84ff;
+      pointer-events: none;
+      animation: sync-spin 0.9s linear infinite;
+      transform-origin: 50% 50%;
+      display: inline-block;
+    }
+    @keyframes sync-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* Flash applied to BPM/Key cells after a successful per-row sync, so the
+       user gets visual confirmation that those values were refreshed (even
+       when the numeric value didn't change). */
+    .flash-sync { animation: cell-flash 1.6s ease-out; }
+    @keyframes cell-flash {
+      0%   { background-color: rgba(10,132,255,0.45); }
+      30%  { background-color: rgba(10,132,255,0.30); }
+      100% { background-color: transparent; }
+    }
+
     /* Scrollbar — slim, themed */
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -233,7 +256,8 @@
       </div>
       <div class="flex-1 py-1 overflow-y-auto">
         <div class="nav-section">Collection</div>
-        <a href="/collection" class="nav-item{% if active == 'collection' %} active{% endif %}">Releases</a>
+        <a href="/collection" class="nav-item{% if active == 'collection' %} active{% endif %}">Records</a>
+        <a href="/tracks" class="nav-item{% if active == 'tracks' %} active{% endif %}">Tracks</a>
 
         <div class="nav-section mt-4">Actions</div>
         <button type="button" class="nav-item nav-action w-full text-left"
@@ -252,8 +276,6 @@
           <span class="nav-glyph">▦</span> Generate stickers
         </a>
 
-        <div class="nav-section mt-4">Custom settings</div>
-        <a href="/overrides" class="nav-item{% if active == 'overrides' %} active{% endif %}">Overrides</a>
       </div>
       <div class="px-4 py-3 border-t hairline text-[11px] text-app-mute flex items-center justify-between">
         <span>engine · <span class="text-app-dim">sleeve_notes</span></span>

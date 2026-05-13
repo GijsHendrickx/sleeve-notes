@@ -10,14 +10,11 @@ Two ways to address a track:
 Values:
   --bpm INT           manual BPM (50..250 enforced by the cascade)
   --key STR           musical key in any form ('8A', 'Am', 'C# major', …)
-  --continuous-mix    flag the track as a continuous DJ-mix
-                      (skips BPM lookup, shows "mix" on the sticker)
   --note STR          free-form note (just for your own reference)
 
 Examples:
   sleeve-notes overrides add --release-id 123 --position A1 --bpm 128 --key 8A
   sleeve-notes overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
-  sleeve-notes overrides add --release-id 789 --position A --continuous-mix --note "DJ mix"
   sleeve-notes overrides list
   sleeve-notes overrides remove 3
 """
@@ -46,7 +43,7 @@ def _cmd_list(args) -> int:
     with dbmod.session() as conn:
         rows = conn.execute(
             "SELECT id, release_id, position, artist, title, bpm, key_camelot, "
-            "continuous_mix, note, created_at FROM overrides ORDER BY id"
+            "note, created_at FROM overrides ORDER BY id"
         ).fetchall()
     if not rows:
         print("(no overrides)")
@@ -58,8 +55,6 @@ def _cmd_list(args) -> int:
             bits.append(f"release_id={r['release_id']} position={r['position']!r}")
         else:
             bits.append(f"artist={r['artist']!r} title={r['title']!r}")
-        if r["continuous_mix"]:
-            bits.append("continuous_mix=true")
         if r["bpm"] is not None:
             bits.append(f"bpm={r['bpm']}")
         if r["key_camelot"]:
@@ -88,13 +83,9 @@ def _cmd_add(args) -> int:
         )
         return 2
 
-    if (
-        args.bpm is None
-        and not args.key
-        and not args.continuous_mix
-    ):
+    if args.bpm is None and not args.key:
         print(
-            "ERROR: overrides add: pass at least one of --bpm, --key, --continuous-mix.",
+            "ERROR: overrides add: pass at least one of --bpm, --key.",
             file=sys.stderr,
         )
         return 2
@@ -104,8 +95,8 @@ def _cmd_add(args) -> int:
             """
             INSERT INTO overrides (
                 release_id, position, artist, title, bpm, key_camelot,
-                continuous_mix, note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                note, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 args.release_id,
@@ -114,7 +105,6 @@ def _cmd_add(args) -> int:
                 args.title,
                 args.bpm,
                 args.key,
-                1 if args.continuous_mix else 0,
                 args.note,
                 _now_iso(),
             ),
@@ -171,8 +161,6 @@ def main(argv: list[str] | None = None) -> int:
     p_add.add_argument("--bpm", type=int, default=None, help="Manual BPM (integer).")
     p_add.add_argument("--key", type=str, default=None,
                        help="Musical key ('8A', 'Am', 'C# major', 'F♯/G♭ Major', …).")
-    p_add.add_argument("--continuous-mix", action="store_true",
-                       help="Flag track as a continuous DJ-mix (no BPM lookup).")
     p_add.add_argument("--note", type=str, default=None, help="Free-form note.")
 
     p_rm = sub.add_parser("remove", help="Remove an override by id.")

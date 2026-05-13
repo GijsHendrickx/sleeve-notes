@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from sleeve_notes_web._deps import STATIC_DIR
-from sleeve_notes_web.routes import actions, collection, dashboard, overrides, preview, run
+from sleeve_notes_web.routes import actions, collection, dashboard, preview, run, tracks
 from sleeve_notes_web.services.jobs import runner
 
 
@@ -39,7 +39,7 @@ def create_app() -> FastAPI:
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(dashboard.router)
     app.include_router(collection.router)
-    app.include_router(overrides.router)
+    app.include_router(tracks.router)
     app.include_router(preview.router)
     app.include_router(run.router)
     app.include_router(actions.router)

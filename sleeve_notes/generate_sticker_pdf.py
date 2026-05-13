@@ -166,7 +166,6 @@ def build_bpm_lookup(conn, releases: list[dict]) -> dict[int, dict[str, dict]]:
                 t.get("position", ""),
                 t.get("artist") or release_artist,
                 t.get("title") or "",
-                t.get("duration_s"),
                 by_rp,
                 by_tk,
             )
@@ -289,7 +288,6 @@ def main(argv: list[str] | None = None) -> int:
             for r in releases
             for t in r["tracks"]
             if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
-            and bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("reason") != "continuous_mix"
         )
         layout_note = " edge-to-edge (tile mode)" if layout.tile_mode else ""
         print(

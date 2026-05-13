@@ -99,13 +99,12 @@
           // the third arg as both source and target which is fragile.
           if (window.htmx) {
             window.htmx.ajax("GET", "/run/banner", { target: "#run-banner", swap: "innerHTML" });
-            // On successful completion, refresh the current page's main content
-            // in place so any data the action just changed (releases, BPMs,
-            // overrides, dashboard counts) reflects without a full reload.
-            if (data.status === "done") {
-              const url = window.location.pathname + window.location.search;
-              window.htmx.ajax("GET", url, { target: "main", select: "main > *", swap: "innerHTML" });
-            }
+            // Refresh the current page's main content for any terminal status —
+            // cancelled and failed jobs can still have written partial data
+            // (e.g. some releases imported, some BPMs cached) that the user
+            // needs to see reflected without a full reload.
+            const url = window.location.pathname + window.location.search;
+            window.htmx.ajax("GET", url, { target: "main", select: "main > *", swap: "innerHTML" });
           } else {
             dispatchStatus();
           }

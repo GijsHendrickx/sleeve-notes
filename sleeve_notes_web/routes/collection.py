@@ -129,7 +129,7 @@ def index(
         for r in rows_raw:
             basic = _basic_info(r["basic_information"])
             track_rows = conn.execute(
-                "SELECT position, artist, title, duration_s FROM tracks WHERE release_id = ?",
+                "SELECT position, artist, title FROM tracks WHERE release_id = ?",
                 (r["id"],),
             ).fetchall()
             tracks_total = len(track_rows)
@@ -139,9 +139,9 @@ def index(
                 tr = derive_track_result(
                     conn, r["id"], t["position"] or "",
                     t["artist"] or rel_artist, t["title"] or "",
-                    t["duration_s"], by_rp, by_tk,
+                    by_rp, by_tk,
                 )
-                if tr.get("bpm") or tr.get("reason") == "continuous_mix":
+                if tr.get("bpm"):
                     tracks_with_bpm += 1
             if bpm == "missing" and (tracks_total == 0 or tracks_with_bpm == tracks_total):
                 continue
@@ -202,7 +202,7 @@ def detail(request: Request, release_id: int):
             tr = derive_track_result(
                 conn, release_id, t["position"] or "",
                 t["artist"] or rel_artist, t["title"] or "",
-                t["duration_s"], by_rp, by_tk,
+                by_rp, by_tk,
             )
             tracks_out.append({
                 "position": t["position"],

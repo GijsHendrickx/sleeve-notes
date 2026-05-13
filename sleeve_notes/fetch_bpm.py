@@ -102,7 +102,6 @@ BEATPORT_RATE_S = 0.5
 # --- Validation thresholds ----------------------------------------------------
 ARTIST_TITLE_MIN_FUZZ = 70.0
 BPM_MIN, BPM_MAX = 50, 250
-CONTINUOUS_MIX_SECONDS = 12 * 60
 
 TITLE_RE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
 BPM_RE = re.compile(r"\b(\d{2,3})\s*BPM\b", re.IGNORECASE)
@@ -1013,23 +1012,6 @@ def _consense_categorical(
 # Continuous-mix filter, cache I/O, and overrides
 # ============================================================================
 
-def is_continuous_mix(position: str, duration_s: int | None) -> bool:
-    """Flag a track as a continuous DJ-mix only on positive evidence.
-
-    Requires a known duration: bare-side position (e.g. "A", "B") with
-    duration > 12 min, OR any position with duration > 24 min. When the
-    duration is unknown we fall back to "regular track".
-    """
-    if not position or duration_s is None:
-        return False
-    bare_side = re.fullmatch(r"[A-Z]+", position.strip())
-    if bare_side and duration_s > CONTINUOUS_MIX_SECONDS:
-        return True
-    if duration_s > CONTINUOUS_MIX_SECONDS * 2:
-        return True
-    return False
-
-
 def load_overrides(conn) -> tuple[dict, dict, list[str]]:
     """Load overrides from the DB into two lookup tables.
 
@@ -1042,8 +1024,8 @@ def load_overrides(conn) -> tuple[dict, dict, list[str]]:
     warnings: list[str] = []
 
     rows = conn.execute(
-        "SELECT id, release_id, position, artist, title, bpm, key_camelot, "
-        "continuous_mix, note FROM overrides"
+        "SELECT id, release_id, position, artist, title, bpm, key_camelot, note "
+        "FROM overrides"
     ).fetchall()
 
     for row in rows:
@@ -1055,7 +1037,6 @@ def load_overrides(conn) -> tuple[dict, dict, list[str]]:
             "title": row["title"],
             "bpm": row["bpm"],
             "key_camelot": row["key_camelot"],
-            "continuous_mix": bool(row["continuous_mix"]),
             "note": row["note"],
         }
 
@@ -1104,8 +1085,6 @@ def override_to_result(entry: dict) -> dict:
         "key_sources": ["manual"] if entry.get("key_camelot") else [],
         "source_url": None,
     }
-    if entry.get("continuous_mix"):
-        return {**base, "bpm": None, "key_camelot": None, "reason": "continuous_mix"}
     bpm = entry.get("bpm")
     key_cam = parse_key_to_camelot(entry.get("key_camelot")) if entry.get("key_camelot") else None
     if bpm is None and key_cam is None:
@@ -1221,7 +1200,6 @@ def derive_track_result(
     position: str,
     artist: str,
     title: str,
-    duration_s: int | None,
     overrides_rp: dict,
     overrides_tk: dict,
 ) -> dict:
@@ -1229,7 +1207,7 @@ def derive_track_result(
 
     Used by the PDF renderer to pull final values out of the cache + overrides
     without re-querying the network. Returns the same shape as
-    ``build_track_result`` would, plus a manual/continuous_mix short-circuit.
+    ``build_track_result`` would, plus a manual-override short-circuit.
     """
     base = {"position": position, "artist": artist, "title": title}
     override = overrides_rp.get((release_id, position))
@@ -1239,16 +1217,6 @@ def derive_track_result(
             override = overrides_tk[ck]
     if override is not None:
         return {**base, **override_to_result(override)}
-
-    if is_continuous_mix(position, duration_s):
-        return {
-            **base,
-            "bpm": None, "key_camelot": None,
-            "bpm_confidence": None, "key_confidence": None,
-            "bpm_sources": [], "key_sources": [],
-            "source": None, "source_url": None,
-            "reason": "continuous_mix",
-        }
 
     entry = load_cache_entry(conn, cache_key(artist, title))
     if entry is None:
@@ -1298,8 +1266,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # Pass 1: classify every track without doing any network I/O.
         # Anything that needs the cascade lands in `worklist`; everything
-        # else (override / continuous-mix / fully-cached) is accounted for
-        # straight away.
+        # else (override / fully-cached) is accounted for straight away.
         cached_hits = 0
         override_hits = 0
         worklist: list[dict] = []
@@ -1307,7 +1274,7 @@ def main(argv: list[str] | None = None) -> int:
             rid = release["id"]
             release_artist = release["artist"] or "V/A"
             tracks = conn.execute(
-                "SELECT position, artist, title, duration_s "
+                "SELECT position, artist, title "
                 "FROM tracks WHERE release_id = ? ORDER BY position",
                 (rid,),
             ).fetchall()
@@ -1315,7 +1282,6 @@ def main(argv: list[str] | None = None) -> int:
                 artist = track["artist"] or release_artist
                 title = track["title"] or ""
                 position = track["position"] or ""
-                duration_s = track["duration_s"]
 
                 override = by_rp.get((rid, position))
                 override_id: tuple | None = None
@@ -1329,9 +1295,6 @@ def main(argv: list[str] | None = None) -> int:
                 if override is not None:
                     used_overrides.add(override_id)
                     override_hits += 1
-                    continue
-
-                if is_continuous_mix(position, duration_s):
                     continue
 
                 ck = cache_key(artist, title)
@@ -1419,7 +1382,7 @@ def main(argv: list[str] | None = None) -> int:
             rid = release["id"]
             release_artist = release["artist"] or "V/A"
             tracks = conn.execute(
-                "SELECT position, artist, title, duration_s "
+                "SELECT position, artist, title "
                 "FROM tracks WHERE release_id = ?",
                 (rid,),
             ).fetchall()
@@ -1428,7 +1391,7 @@ def main(argv: list[str] | None = None) -> int:
                     conn, rid, track["position"],
                     track["artist"] or release_artist,
                     track["title"] or "",
-                    track["duration_s"], by_rp, by_tk,
+                    by_rp, by_tk,
                 )
                 if tr.get("bpm"):
                     found_bpm += 1
