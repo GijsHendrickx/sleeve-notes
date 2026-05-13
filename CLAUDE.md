@@ -1,71 +1,22 @@
 # Agent Instructions
 
-You're working inside the **WAT framework** (Workflows, Agents, Tools). This architecture separates concerns so that probabilistic AI handles reasoning while deterministic code handles execution. That separation is what makes this system reliable.
+You're working on **Sleeve Notes** — a personal Discogs → printable-stickers app. It's a fully-fledged application: a Python engine (`sleeve_notes/`) exposed both as a CLI (`sleeve-notes`) and a FastAPI + HTMX web UI (`sleeve_notes_web/`), with all state in a single SQLite file (`data/sleeve_notes.db`).
 
-## The WAT Architecture
+The README is the authoritative user-facing doc. CLAUDE.md is for *you* — codebase conventions that aren't obvious from reading the code, and traps to avoid that have already cost time once.
 
-**Layer 1: Workflows (The Instructions)**
-- Markdown SOPs stored in `workflows/`
-- Each workflow defines the objective, required inputs, which tools to use, expected outputs, and how to handle edge cases
-- Written in plain language, the same way you'd brief someone on your team
+## Architecture in one paragraph
 
-**Layer 2: Agents (The Decision-Maker)**
-- This is your role. You're responsible for intelligent coordination.
-- Read the relevant workflow, run tools in the correct sequence, handle failures gracefully, and ask clarifying questions when needed
-- You connect intent to execution without trying to do everything yourself
-- Example: If you need to pull data from a website, don't attempt it directly. Read `workflows/scrape_website.md`, figure out the required inputs, then execute `sleeve_notes/scrape_single_site.py`
+The engine in `sleeve_notes/` is the source of truth: deterministic Python that talks to Discogs, runs the 5-source BPM cascade, manages overrides, and renders the PDF. The CLI (`sleeve_notes/cli.py`) is a thin dispatcher over those modules. The web UI is a thin presentation layer on top of the same engine — for any data the CLI computes, the web UI calls the same functions in-process; for long-running jobs, it shells out to a `sleeve-notes <subcommand>` subprocess. **Never fork engine logic into web-only helpers.**
 
-**Layer 3: Tools (The Execution)**
-- Python scripts in `sleeve_notes/` (the project's Python package) that do the actual work
-- API calls, data transformations, file operations, database queries
-- Credentials and API keys are stored in `.env`
-- These scripts are consistent, testable, and fast
+## Directory layout
 
-**Why this matters:** When AI tries to handle every step directly, accuracy drops fast. If each step is 90% accurate, you're down to 59% success after just five steps. By offloading execution to deterministic scripts, you stay focused on orchestration and decision-making where you excel.
-
-## How to Operate
-
-**1. Look for existing tools first**
-Before building anything new, check `sleeve_notes/` based on what your workflow requires. Only create new scripts when nothing exists for that task.
-
-**2. Learn and adapt when things fail**
-When you hit an error:
-- Read the full error message and trace
-- Fix the script and retest (if it uses paid API calls or credits, check with me before running again)
-- Document what you learned in the workflow (rate limits, timing quirks, unexpected behavior)
-- Example: You get rate-limited on an API, so you dig into the docs, discover a batch endpoint, refactor the tool to use it, verify it works, then update the workflow so this never happens again
-
-**3. Keep workflows current**
-Workflows should evolve as you learn. When you find better methods, discover constraints, or encounter recurring issues, update the workflow. That said, don't create or overwrite workflows without asking unless I explicitly tell you to. These are your instructions and need to be preserved and refined, not tossed after one use.
-
-## The Self-Improvement Loop
-
-Every failure is a chance to make the system stronger:
-1. Identify what broke
-2. Fix the tool
-3. Verify the fix works
-4. Update the workflow with the new approach
-5. Move on with a more robust system
-
-This loop is how the framework improves over time.
-
-## File Structure
-
-**What goes where:**
-- **Deliverables**: Final outputs go to cloud services (Google Sheets, Slides, etc.) where I can access them directly
-- **Intermediates**: Temporary processing files that can be regenerated
-
-**Directory layout:**
 ```
-.tmp/             # Temporary files (scraped data, intermediate exports). Regenerated as needed.
-sleeve_notes/     # Python scripts for deterministic execution (Layer 3: Tools)
-sleeve_notes_web/ # Localhost web UI (FastAPI + HTMX + Jinja) — see "Web UI conventions"
-workflows/        # Markdown SOPs defining what to do and how
-.env              # API keys and environment variables (NEVER store secrets anywhere else)
-credentials.json, token.json  # Google OAuth (gitignored)
+.tmp/             # Disposable: stickers.pdf output, debug HTML dumps. Wipe freely.
+data/             # NOT disposable: sleeve_notes.db (collection, BPM cache, overrides, print history).
+sleeve_notes/     # Engine (Python package). CLI subcommands dispatch into these modules.
+sleeve_notes_web/ # FastAPI + HTMX + Jinja web UI. See "Web UI conventions" below.
+.env              # API keys (Discogs, Spotify, Beatport). NEVER commit. NEVER store secrets elsewhere.
 ```
-
-**Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
 
 ## Web UI conventions
 
@@ -103,8 +54,23 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 - Table rows that mix multi-line text (e.g. release-artist + release-title stacked) with single-line inputs use `align-middle`, NOT `align-top`. Top-align makes the inputs in adjacent cells look misaligned next to the multi-line text.
 - Confirm async-feeling actions visually, even when the result is a no-op. The `/tracks` per-row sync button takes 5–10 s to refetch from all 5 sources, and the displayed BPM rarely changes — without the `.flash-sync` cell animation on the response render, the action looks broken when the value is unchanged. Apply the same principle to any new per-row mutation.
 
-## Bottom Line
+## Engine conventions
 
-You sit between what I want (workflows) and what actually gets done (tools). Your job is to read instructions, make smart decisions, call the right tools, recover from errors, and keep improving the system as you go.
+**Engine modules in `sleeve_notes/` are reusable.** They're imported by both the CLI dispatcher (`cli.py`) and the web routes (`sleeve_notes_web/routes/*`). Avoid `print(...)` in library functions — return values, use `logging`, or accept a `progress_callback`. The job toast parses CLI stdout, but in-process callers shouldn't have to.
 
-Stay pragmatic. Stay reliable. Keep learning.
+**State migrations live in `db.py`.** When you change a schema, add a migration (idempotent `ALTER TABLE` / `CREATE` guarded by an introspection check) — never assume a clean DB. Existing users have years of cache. See `db.py` for the established pattern (`if "<column>" not in existing: …`).
+
+**`SLEEVE_NOTES_ROOT` is the root-resolution hook.** All paths (`data/`, `.tmp/`, `.env`) are resolved relative to `project_root()` in `sleeve_notes/__init__.py`, which respects the `SLEEVE_NOTES_ROOT` env var. Don't hardcode `Path.cwd()` or `__file__`-relative paths in engine code — break this and every test/install path gets weird.
+
+**Every long-running step must be idempotent and resumable.** The DB caches (`releases.raw_tracklist IS NOT NULL`, `bpm_cache.sources_tried`, `print_runs`) exist so a `Ctrl-C` mid-run loses at most a handful of seconds. Commit to the DB at coarse intervals (fetch: every 25 releases; bpm: every 5 cascade runs) — never per row (too slow) and never only at the end (loses everything on interrupt).
+
+## Before pushing to GitHub
+
+Whenever I ask you to push (`push`, `push to <branch>`, `ship it`, etc.) — do NOT just `git push` the pending diff. First do a thorough sweep of the repo to confirm everything still matches reality, then commit any fixes alongside the push:
+
+- **README.md** especially — feature labels, sidebar/page names, screenshot text, CLI flags, command examples. UI renames are the #1 source of stale docs.
+- **CLAUDE.md (this file)** — conventions you've added or invalidated this session.
+- **CLI `--help` strings + the corresponding README snippets** — they should agree.
+- **In-code comments and docstrings** referencing renamed/removed concepts.
+
+If anything is out of date, fix it in the same push (separate commit is fine). If you're unsure whether a doc update is needed, ask before pushing — it's cheaper than a follow-up "you forgot to update X" cycle.

@@ -295,6 +295,12 @@ The sidebar splits into two sections — **Collection** (data views) and **Actio
 
 State still lives where it always did — `data/sleeve_notes.db` and `.tmp/`. The web app is purely an alternative front-end; you can mix and match it with CLI invocations freely.
 
+**CLI-only commands.** A few subcommands are not surfaced in the web UI and have to be run from the terminal:
+
+- `sleeve-notes auth-beatport` — one-time Beatport OAuth (see [Beatport: one-time auth](#beatport-one-time-auth)).
+- `sleeve-notes query …` — ad-hoc SQL / table inspection (see [Inspecting the data](#inspecting-the-data-query--overrides)).
+- `sleeve-notes overrides clear --yes` — batch-clear every manual override. Single-row add/remove/edit lives in `/tracks`.
+
 ---
 
 ## Inspecting the data: `query` + `overrides`
@@ -397,6 +403,7 @@ Every cache lives in `data/sleeve_notes.db` so you can interrupt and resume safe
 - **Legacy JSON migration:** on first DB creation, any old `.tmp/*.json` files (incl. `release_cache/`) and the root `overrides.json` are imported into the DB in a single transaction; originals are renamed to `*.bak`. The pre-v2 `bpm_cache.json` shape (flat `cache_key → single_source_hit`) is mapped onto v2 by inferring the source from the `source_url`; entries with an unrecognised URL or no BPM/key are dropped (they'll be re-queried on the next `bpm` run).
 - **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
 - **Re-running steps:** `fetch` is cache-aware (rows with a stored `raw_tracklist` skip the network call but still re-normalize). `bpm` and `render` are cache-aware too.
+- **Commit granularity:** `fetch` commits to the DB every 25 releases; `bpm` commits cache rows every 5 cascade runs. So `Ctrl-C` mid-run loses at most a handful of seconds' worth of work.
 
 To start a step clean, drop the relevant table — e.g. for a fresh BPM
 lookup:
@@ -419,11 +426,13 @@ Your overrides go too — back up with `sleeve-notes query overrides --limit 0 -
 |---|:---:|:---:|---|
 | **songbpm.com** | ✓ | ✓ | HTML scrape of canonical detail pages. No auth, 1 req/s. Strong general coverage. |
 | **Deezer** | ✓ | — | Public `api.deezer.com/track` endpoint. No auth, ~4 req/s. `bpm: 0` = "known but not analysed" — counted as a miss. |
-| **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). |
+| **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). Coverage = "everything on Spotify" — limited for pre-Spotify vinyl-only releases. |
 | **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
+
+**Retry behaviour:** HTTP calls use a tight `tenacity` retry (`wait_exponential(1, 5)` × 2 attempts). A flaky source costs at most ~5 s — the cascade then falls through to the other four, so one slow API can't stall the run.
 
 **Consensus** (per track):
 - **BPM** — cluster all returned values within ±1 BPM. The largest cluster with **≥2 members** wins, value = median, confidence = `high` (gets the ● dot on the sticker). Only one source returned → confidence = `single` (digits only). Multiple sources, none agreeing → priority-pick (`beatport > songbpm > reccobeats > deezer > acousticbrainz`), confidence = `disputed` (digits only).
@@ -531,7 +540,6 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 |---|---|
 | Various Artists / compilation | Release header reads `V/A — <title>`; per-track artists come from the tracklist. |
 | Position `A` / `B` with no subnumber | Treated as one track on that side, position preserved literally. |
-| Continuous mix (single-letter position + duration > 12:00) | BPM lookup skipped; sticker shows `(mix)`. |
 | Non-ASCII characters (Björk, é, ø, …) | Matching uses NFKD normalisation; the PDF preserves the originals. |
 | Multiple SongBPM remix hits | The variant whose title matches the mix suffix wins; otherwise the shortest title (the original mix). |
 | Missing tracklist on Discogs | Release row gets stored without any `tracks` entries — it's still in your collection but won't appear on the sticker sheet (renderer skips releases with no tracks). |
@@ -547,7 +555,8 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 | `Folder 'X' not found` | Pass an existing folder name (case-insensitive). In CSV mode the tool prints the folders present in the CSV; in API mode it prints the folders on your Discogs account. |
 | `401 Unauthorized` from Discogs/Spotify | Token expired or wrong. Re-issue it and update `.env`. |
 | `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `sleeve-notes bpm` retries automatically with a fresh password grant; if that fails, re-run `sleeve-notes auth-beatport`. |
-| HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute and try again. |
+| HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute, or lower concurrency with `sleeve-notes bpm --workers 4` and try again. |
+| Release shows in `/collection` but is skipped by the renderer | Discogs returned no tracklist for it. List the affected releases with: `sleeve-notes query releases --cols "id,artist,title,type,format" --where "NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)"`. Usually a Discogs submission gap — adding the tracklist on discogs.com and re-running `sleeve-notes fetch` for that release fixes it. |
 | SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `sleeve_notes/fetch_bpm.py`, drop the affected rows with `sqlite3 data/sleeve_notes.db "DELETE FROM bpm_source_hits WHERE source='songbpm'; DELETE FROM bpm_cache WHERE cache_key NOT IN (SELECT cache_key FROM bpm_source_hits);"` (or just wipe both tables), and re-run `sleeve-notes bpm`. |
 | Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Inspect via `sleeve-notes query tracks --where "release_id = X"` and confirm the data is correct first; the PDF is a faithful render of that data. If you chose very small stickers via `--sticker-w/--sticker-h`, try a larger size — vertical space is the limiting factor for >6-track sides. |
 | `Sticker WxH mm doesn't fit on A4` | The requested `--sticker-w` / `--sticker-h` leaves no room for the 4 mm page edge on A4. Pick a smaller size, or stick to the default 96 × 50.8 mm. |
@@ -559,7 +568,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 ```
 .
 ├── README.md                              ← you are here
-├── CLAUDE.md                              ← agent instructions (WAT framework)
+├── CLAUDE.md                              ← codebase conventions for AI agents working on the repo
 ├── pyproject.toml                         ← packaging + `sleeve-notes` entry point
 ├── requirements.txt                       ← Python deps (for `pip install -r` mode)
 ├── .env                                   ← your secrets (gitignored)
@@ -584,8 +593,6 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   ├── services/                          ← thin wrappers that call into sleeve_notes/* engine code
 │   ├── templates/                         ← Jinja templates (base.html + per-page partials)
 │   └── static/                            ← app.js + assets served at /static
-├── workflows/
-│   └── sleeve_notes.md             ← internal SOP; this README mirrors and extends it
 └── .tmp/                                  ← disposable cache + final PDF (gitignored)
     ├── stickers.pdf                       ← the only file you actually need to print
     └── debug/                             ← (only on songbpm parser failure) raw HTML
