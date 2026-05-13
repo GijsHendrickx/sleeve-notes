@@ -133,6 +133,16 @@ def render_release_stickers_svg(
     release: dict,
     bpm_lookup_for_release: dict[str, dict],
     layout: L.LayoutConfig,
+    *,
+    qr: bool = True,
+    show_artist: bool = True,
+    show_title: bool = True,
+    show_rpm: bool = True,
+    show_key: bool = True,
+    show_bpm: bool = True,
+    show_duration: bool = True,
+    show_track_title: bool = True,
+    show_sides: bool = True,
 ) -> list[str]:
     """Render every sticker for one release as a list of inline SVG strings.
 
@@ -143,6 +153,17 @@ def render_release_stickers_svg(
     svgs: list[str] = []
     for sides_map in stickers:
         drawer = SvgDrawer(width=layout.sticker_w, height=layout.sticker_h)
-        L.draw_sticker(drawer, 0.0, 0.0, release, sides_map, bpm_lookup_for_release, layout, len(stickers))
+        L.draw_sticker(
+            drawer, 0.0, 0.0, release, sides_map, bpm_lookup_for_release, layout, len(stickers),
+            qr=qr,
+            show_artist=show_artist,
+            show_title=show_title,
+            show_rpm=show_rpm,
+            show_key=show_key,
+            show_bpm=show_bpm,
+            show_duration=show_duration,
+            show_track_title=show_track_title,
+            show_sides=show_sides,
+        )
         svgs.append(drawer.to_svg())
     return svgs

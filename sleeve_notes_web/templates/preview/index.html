@@ -2,48 +2,104 @@
 {% block title %}Preview · sleeve-notes{% endblock %}
 {% block breadcrumb %}Preview{% endblock %}
 {% block content %}
-<div class="grid grid-cols-[300px_1fr] gap-5 h-[calc(100vh-7.5rem)]">
+<div class="grid grid-cols-[360px_1fr] gap-5 h-[calc(100vh-7.5rem)]">
   <!-- Left: controls -->
-  <form id="preview-controls" class="card p-5 space-y-5 overflow-y-auto"
+  <form id="preview-controls" class="space-y-3 overflow-y-auto pr-1"
         hx-get="/preview/svg" hx-target="#svg-pane" hx-swap="innerHTML"
         hx-trigger="change, input delay:300ms from:input[type=number]"
         hx-include="this">
     <input type="hidden" name="release_id" value="{{ release_id }}" id="release-id-input" />
 
-    <fieldset class="space-y-2.5">
-      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Sticker size · mm</legend>
+    <fieldset class="card p-4 space-y-2.5">
+      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium px-1">Sticker size · mm</legend>
       <label class="flex items-center justify-between text-[13px]">
         <span class="text-app-dim">Width</span>
-        <input type="number" name="sticker_w" value="{{ sticker_w }}" step="0.1" min="20" max="200"
+        <input id="sticker-w" type="number" name="sticker_w" value="{{ sticker_w }}" step="0.1" min="20" max="210"
                class="field w-24 px-2 py-1 font-mono text-right text-[13px]" />
       </label>
       <label class="flex items-center justify-between text-[13px]">
         <span class="text-app-dim">Height</span>
-        <input type="number" name="sticker_h" value="{{ sticker_h }}" step="0.1" min="20" max="280"
+        <input id="sticker-h" type="number" name="sticker_h" value="{{ sticker_h }}" step="0.1" min="20" max="297"
                class="field w-24 px-2 py-1 font-mono text-right text-[13px]" />
       </label>
     </fieldset>
 
-    <fieldset class="space-y-2.5">
-      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Tile mode · PDF only</legend>
-      <label class="flex items-center gap-2 text-[13px] text-app-dim">
-        <input type="checkbox" name="tile" value="1" {% if tile %}checked{% endif %} class="accent-emerald-500 w-4 h-4" />
-        Edge-to-edge tiling
-      </label>
+    <fieldset class="card p-4 space-y-2.5">
+      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium px-1">Cols × rows on A4</legend>
       <label class="flex items-center justify-between text-[13px]">
         <span class="text-app-dim">Cols × rows</span>
         <span class="flex gap-1">
-          <input type="number" name="tile_cols" value="{{ tile_cols }}" min="1" max="10"
+          <input id="tile-cols" type="number" name="tile_cols" value="{{ tile_cols }}" min="1" max="14"
                  class="field w-12 px-1.5 py-1 font-mono text-right text-[13px]" />
-          <input type="number" name="tile_rows" value="{{ tile_rows }}" min="1" max="14"
+          <input id="tile-rows" type="number" name="tile_rows" value="{{ tile_rows }}" min="1" max="14"
                  class="field w-12 px-1.5 py-1 font-mono text-right text-[13px]" />
         </span>
       </label>
-      <p class="text-[11px] text-app-mute leading-relaxed">Live preview ignores tile mode — it shows the requested sticker size at actual mm.</p>
+      <p class="text-[11px] text-app-mute leading-relaxed">Auto-updates from width × height; edit to override.</p>
     </fieldset>
 
-    <fieldset class="space-y-2.5">
-      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">PDF options</legend>
+    <fieldset class="card p-4 space-y-2.5">
+      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium px-1">Tile mode</legend>
+      <label class="flex items-center gap-2 text-[13px] text-app-dim">
+        <input id="tile-toggle" type="checkbox" name="tile" value="1" {% if tile %}checked{% endif %} class="accent-emerald-500 w-4 h-4" />
+        Edge-to-edge tiling
+      </label>
+      <p class="text-[11px] text-app-mute leading-relaxed">Fills A4 with no gutters or page margin so the print can be sliced with straight cuts.</p>
+    </fieldset>
+
+    <fieldset class="card p-4 space-y-2.5">
+      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium px-1">Sticker contents</legend>
+      <div class="grid grid-cols-2 gap-x-3 gap-y-2.5">
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_artist" value="0" />
+          <input type="checkbox" name="show_artist" value="1" {% if show_artist %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Artist
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_title" value="0" />
+          <input type="checkbox" name="show_title" value="1" {% if show_title %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Title
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_rpm" value="0" />
+          <input type="checkbox" name="show_rpm" value="1" {% if show_rpm %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          RPM
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim leading-snug">
+          <input type="hidden" name="qr" value="0" />
+          <input type="checkbox" name="qr" value="1" {% if qr %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Discogs QR
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_track_title" value="0" />
+          <input type="checkbox" name="show_track_title" value="1" {% if show_track_title %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Track title
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_duration" value="0" />
+          <input type="checkbox" name="show_duration" value="1" {% if show_duration %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Duration
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_key" value="0" />
+          <input type="checkbox" name="show_key" value="1" {% if show_key %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Camelot key
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_bpm" value="0" />
+          <input type="checkbox" name="show_bpm" value="1" {% if show_bpm %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          BPM
+        </label>
+        <label class="flex items-center gap-2 text-[13px] text-app-dim">
+          <input type="hidden" name="show_sides" value="0" />
+          <input type="checkbox" name="show_sides" value="1" {% if show_sides %}checked{% endif %} class="accent-emerald-500 w-4 h-4 shrink-0" />
+          Side labels
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card p-4 space-y-2.5">
+      <legend class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium px-1">PDF options</legend>
       <label class="flex items-center gap-2 text-[13px] text-app-dim">
         <input type="checkbox" name="new_only" value="1" {% if new_only %}checked{% endif %} class="accent-emerald-500 w-4 h-4" />
         Only new since last print
@@ -53,6 +109,8 @@
         Mark printed after download
       </label>
     </fieldset>
+
+    <div id="snap-msg" class="text-[11px] text-amber-400 leading-relaxed min-h-[1rem]" aria-live="polite"></div>
 
     <div class="pt-1">
       <a id="generate-pdf" href="/preview/pdf?{{ pdf_query }}" target="_blank"
@@ -66,16 +124,16 @@
   <!-- Right: release picker + SVG preview -->
   <div class="flex flex-col min-h-0">
     <div class="flex items-center gap-2 mb-4 text-sm">
-      <button type="button" onclick="step(-1)" class="btn btn-quiet px-2.5">←</button>
+      <button type="button" onclick="step(-1)" class="btn btn-quiet h-8 px-2.5">←</button>
       <select id="release-picker" onchange="pickRelease(this.value)"
-              class="field px-2.5 py-1.5 max-w-[28rem] truncate text-[13px]">
+              class="field h-8 px-2.5 max-w-[28rem] truncate text-[13px]">
         {% for rel in releases %}
           <option value="{{ rel.id }}" {% if rel.id == release_id %}selected{% endif %}>
             {{ rel.artist or 'V/A' }} – {{ rel.title }}{% if rel.year %} ({{ rel.year }}){% endif %}
           </option>
         {% endfor %}
       </select>
-      <button type="button" onclick="step(1)" class="btn btn-quiet px-2.5">→</button>
+      <button type="button" onclick="step(1)" class="btn btn-quiet h-8 px-2.5">→</button>
       <span class="ml-auto text-[12px] text-app-mute">{{ releases|length }} releases</span>
     </div>
     <div id="svg-pane" class="flex-1 overflow-auto p-6 flex flex-wrap content-start gap-4 card">
@@ -97,6 +155,133 @@
     sel.selectedIndex = idx;
     pickRelease(sel.value);
   }
+
+  // Mirror the engine's layout math in sleeve_notes/sticker_layout.py
+  // (A4 = 210×297 mm, 4 mm page edge, 4 mm gutter). Tile mode fills
+  // edge-to-edge so we use floor(page / size) directly.
+  const PAGE_W = 210, PAGE_H = 297, MIN_EDGE = 4, GUTTER = 4;
+  const W_MIN = 20, W_MAX = 210, H_MIN = 20, H_MAX = 297;
+  const COLS_MIN = 1, COLS_MAX = 14, ROWS_MIN = 1, ROWS_MAX = 14;
+
+  const wEl = document.getElementById('sticker-w');
+  const hEl = document.getElementById('sticker-h');
+  const cEl = document.getElementById('tile-cols');
+  const rEl = document.getElementById('tile-rows');
+  const tEl = document.getElementById('tile-toggle');
+  const snapEl = document.getElementById('snap-msg');
+
+  let snapTimer = null;
+  function snapMsg(msg) {
+    snapEl.textContent = msg;
+    if (snapTimer) clearTimeout(snapTimer);
+    snapTimer = setTimeout(() => { snapEl.textContent = ''; }, 3500);
+  }
+
+  function snapFloat(el, min, max, label) {
+    const raw = (el.value || '').trim();
+    let v = parseFloat(raw);
+    let note = null;
+    if (raw === '' || isNaN(v)) { v = min; note = `${label} needs a number — set to ${min} mm.`; }
+    else if (v < min) { note = `${label} min is ${min} mm — snapped to ${min}.`; v = min; }
+    else if (v > max) { note = `${label} max is ${max} mm — snapped to ${max}.`; v = max; }
+    v = Math.round(v * 10) / 10;
+    const final = v.toFixed(1);
+    const changed = el.value !== final;
+    el.value = final;
+    if (note) snapMsg(note);
+    return changed;
+  }
+
+  function snapInt(el, min, max, label) {
+    const raw = (el.value || '').trim();
+    let v = parseInt(raw, 10);
+    let note = null;
+    if (raw === '' || isNaN(v)) { v = min; note = `${label} needs a whole number — set to ${min}.`; }
+    else if (v < min) { note = `${label} min is ${min} — snapped to ${min}.`; v = min; }
+    else if (v > max) { note = `${label} max is ${max} — snapped to ${max}.`; v = max; }
+    const final = String(v);
+    const changed = el.value !== final;
+    el.value = final;
+    if (note) snapMsg(note);
+    return changed;
+  }
+
+  function deriveColsRows(w, h, tileOn) {
+    if (!w || !h || w <= 0 || h <= 0) return null;
+    if (tileOn) {
+      return [Math.max(1, Math.floor(PAGE_W / w)), Math.max(1, Math.floor(PAGE_H / h))];
+    }
+    const usableW = PAGE_W - 2 * MIN_EDGE;
+    const usableH = PAGE_H - 2 * MIN_EDGE;
+    if (w > usableW || h > usableH) return null;
+    return [
+      Math.max(1, Math.floor((usableW + GUTTER) / (w + GUTTER))),
+      Math.max(1, Math.floor((usableH + GUTTER) / (h + GUTTER))),
+    ];
+  }
+
+  // Reverse: cols × rows → exact w/h that fills A4 at that grid. Floors to
+  // 0.1 mm so deriveColsRows on the result returns the same cols × rows.
+  function deriveSizeFromColsRows(cols, rows, tileOn) {
+    if (!cols || !rows || cols < 1 || rows < 1) return null;
+    if (tileOn) {
+      return [Math.floor(PAGE_W * 10 / cols) / 10, Math.floor(PAGE_H * 10 / rows) / 10];
+    }
+    const usableW = PAGE_W - 2 * MIN_EDGE;
+    const usableH = PAGE_H - 2 * MIN_EDGE;
+    const w = (usableW + GUTTER) / cols - GUTTER;
+    const h = (usableH + GUTTER) / rows - GUTTER;
+    return [Math.floor(w * 10) / 10, Math.floor(h * 10) / 10];
+  }
+
+  function syncColsRowsFromSize() {
+    const w = parseFloat(wEl.value);
+    const h = parseFloat(hEl.value);
+    const cr = deriveColsRows(w, h, tEl.checked);
+    if (!cr) return;
+    cEl.value = Math.min(COLS_MAX, Math.max(COLS_MIN, cr[0]));
+    rEl.value = Math.min(ROWS_MAX, Math.max(ROWS_MIN, cr[1]));
+  }
+
+  function syncSizeFromColsRows() {
+    const cols = parseInt(cEl.value, 10);
+    const rows = parseInt(rEl.value, 10);
+    const sz = deriveSizeFromColsRows(cols, rows, tEl.checked);
+    if (!sz) return;
+    let [w, h] = sz;
+    w = Math.max(W_MIN, Math.min(W_MAX, w));
+    h = Math.max(H_MIN, Math.min(H_MAX, h));
+    wEl.value = w.toFixed(1);
+    hEl.value = h.toFixed(1);
+  }
+
+  // Capture-phase listeners run before HTMX's bubble-phase listener on the
+  // same node, so the form HTMX serializes already has the snapped values.
+  wEl.addEventListener('change', () => {
+    snapFloat(wEl, W_MIN, W_MAX, 'Width');
+    syncColsRowsFromSize();
+  }, true);
+  hEl.addEventListener('change', () => {
+    snapFloat(hEl, H_MIN, H_MAX, 'Height');
+    syncColsRowsFromSize();
+  }, true);
+  cEl.addEventListener('change', () => {
+    snapInt(cEl, COLS_MIN, COLS_MAX, 'Cols');
+    syncSizeFromColsRows();
+  }, true);
+  rEl.addEventListener('change', () => {
+    snapInt(rEl, ROWS_MIN, ROWS_MAX, 'Rows');
+    syncSizeFromColsRows();
+  }, true);
+  tEl.addEventListener('change', () => {
+    // Toggling tile mode keeps cols × rows fixed and rebuilds w/h to match,
+    // so the displayed mm always reflects what will actually print.
+    syncSizeFromColsRows();
+  }, true);
+
+  // Initial reconcile so cols × rows reflects the server-rendered size.
+  syncColsRowsFromSize();
+
   // Update PDF link's query string when the controls change.
   document.getElementById('preview-controls').addEventListener('input', () => {
     const form = document.getElementById('preview-controls');

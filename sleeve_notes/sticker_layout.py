@@ -238,8 +238,9 @@ def fit_track_font(
     release_artist: str,
     inner_w: float,
     inner_h: float,
+    show_sides: bool = True,
 ) -> tuple[float, bool]:
-    side_count = len(sides_map)
+    side_count = len(sides_map) if show_sides else 0
     total = sum(len(v) for v in sides_map.values())
     if total == 0:
         return TRACK_FONT_CANDIDATES[0], False
@@ -261,7 +262,9 @@ def fit_track_font(
         if content_h > inner_h:
             continue
         last_fit_vertically = size
-        _, middle_w, _, _, _ = column_widths(size, inner_w)
+        pos_col_w, middle_w, _, _, _ = column_widths(size, inner_w)
+        if not show_sides:
+            middle_w += pos_col_w
         max_w = max((stringWidth(lbl, "Helvetica", size) for lbl in labels), default=0)
         if max_w <= middle_w:
             return size, False
@@ -337,6 +340,14 @@ def draw_sticker(
     layout: LayoutConfig,
     sticker_count: int = 1,
     qr: bool = True,
+    show_artist: bool = True,
+    show_title: bool = True,
+    show_rpm: bool = True,
+    show_key: bool = True,
+    show_bpm: bool = True,
+    show_duration: bool = True,
+    show_track_title: bool = True,
+    show_sides: bool = True,
 ) -> None:
     draw_sticker_border(drawer, x, y, layout)
 
@@ -371,14 +382,14 @@ def draw_sticker(
 
     artist_text_w = header_inner_w
     title_text_w = header_inner_w
-    if rpm_top:
+    if show_rpm and rpm_top:
         rpm_top_w = stringWidth(rpm_top, "Helvetica", HEADER_TITLE_PT)
         drawer.text(
             inner_x + header_inner_w, artist_baseline, rpm_top,
             font="Helvetica", size=HEADER_TITLE_PT, color=GREY, anchor="end",
         )
         artist_text_w = header_inner_w - rpm_top_w - 4
-    if rpm_bot:
+    if show_rpm and rpm_bot:
         rpm_bot_w = stringWidth(rpm_bot, "Helvetica", HEADER_TITLE_PT)
         drawer.text(
             inner_x + header_inner_w, title_baseline, rpm_bot,
@@ -389,24 +400,31 @@ def draw_sticker(
     artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
     title_line = ellipsize(title_text, title_text_w, "Helvetica-Oblique", HEADER_TITLE_PT)
 
-    drawer.text(
-        inner_x, artist_baseline, artist_line,
-        font="Helvetica-Bold", size=HEADER_ARTIST_PT, color=BLACK,
-    )
-    drawer.text(
-        inner_x, title_baseline, title_line,
-        font="Helvetica-Oblique", size=HEADER_TITLE_PT, color=BLACK,
-    )
+    if show_artist:
+        drawer.text(
+            inner_x, artist_baseline, artist_line,
+            font="Helvetica-Bold", size=HEADER_ARTIST_PT, color=BLACK,
+        )
+    if show_title:
+        drawer.text(
+            inner_x, title_baseline, title_line,
+            font="Helvetica-Oblique", size=HEADER_TITLE_PT, color=BLACK,
+        )
 
     if not side_labels:
         return
 
     compilation = bool(release.get("compilation"))
     release_artist = release.get("artist") or ""
-    track_font, must_ellipsize = fit_track_font(sides_map, compilation, release_artist, inner_w, inner_h)
+    track_font, must_ellipsize = fit_track_font(
+        sides_map, compilation, release_artist, inner_w, inner_h, show_sides=show_sides
+    )
     bpm_size = bpm_font_for(track_font)
     line_h = track_font * LINE_GAP
     pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w = column_widths(track_font, inner_w)
+    if not show_sides:
+        middle_w += pos_col_w
+        pos_col_w = 0
 
     bpm_right = inner_x + inner_w
     key_right = bpm_right - bpm_col_w
@@ -417,11 +435,12 @@ def draw_sticker(
     for idx, side in enumerate(side_labels):
         tracks = sides_map[side]
 
-        drawer.text(
-            inner_x, cursor_y - SIDE_LABEL_PT, f"{side}-SIDE",
-            font="Helvetica-Bold", size=SIDE_LABEL_PT, color=GREY,
-        )
-        cursor_y -= SIDE_LABEL_PT + 3
+        if show_sides:
+            drawer.text(
+                inner_x, cursor_y - SIDE_LABEL_PT, f"{side}-SIDE",
+                font="Helvetica-Bold", size=SIDE_LABEL_PT, color=GREY,
+            )
+            cursor_y -= SIDE_LABEL_PT + 3
 
         for t in tracks:
             pos = t.get("position", "")
@@ -437,48 +456,52 @@ def draw_sticker(
 
             baseline = cursor_y - track_font
 
-            drawer.text(
-                inner_x, baseline, pos,
-                font="Courier-Bold", size=track_font, color=BLACK,
-            )
-            drawer.text(
-                inner_x + pos_col_w, baseline, label,
-                font="Helvetica", size=track_font, color=BLACK,
-            )
-            drawer.text(
-                dur_right - 4, baseline, duration,
-                font="Helvetica", size=track_font, color=GREY, anchor="end",
-            )
+            if show_sides:
+                drawer.text(
+                    inner_x, baseline, pos,
+                    font="Courier-Bold", size=track_font, color=BLACK,
+                )
+            if show_track_title:
+                drawer.text(
+                    inner_x + pos_col_w, baseline, label,
+                    font="Helvetica", size=track_font, color=BLACK,
+                )
+            if show_duration:
+                drawer.text(
+                    dur_right - 4, baseline, duration,
+                    font="Helvetica", size=track_font, color=GREY, anchor="end",
+                )
 
-            if key_cam:
+            if show_key and key_cam:
                 drawer.text(
                     key_right - 2, baseline, key_cam,
                     font="Helvetica-Bold", size=track_font, color=BLACK, anchor="end",
                 )
 
-            if bpm:
-                drawer.text(
-                    bpm_right, baseline, str(bpm),
-                    font="Helvetica-Bold", size=bpm_size, color=BLACK, anchor="end",
-                )
-                if bpm_conf in ("high", "manual"):
-                    dot_r = bpm_size * 0.18
-                    digits_w = stringWidth(str(bpm), "Helvetica-Bold", bpm_size)
-                    dot_cx = bpm_right - digits_w - dot_r - 2
-                    dot_cy = baseline + bpm_size * 0.35
-                    drawer.circle(dot_cx, dot_cy, dot_r, fill=BLACK)
-            else:
-                box_top = baseline + 0.72 * bpm_size
-                box_bottom = baseline - 0.10 * bpm_size
-                box_left = bpm_right - bpm_col_w
-                drawer.rect(
-                    box_left, box_bottom, bpm_col_w, box_top - box_bottom,
-                    stroke=GREY, stroke_width=0.4,
-                )
+            if show_bpm:
+                if bpm:
+                    drawer.text(
+                        bpm_right, baseline, str(bpm),
+                        font="Helvetica-Bold", size=bpm_size, color=BLACK, anchor="end",
+                    )
+                    if bpm_conf in ("high", "manual"):
+                        dot_r = bpm_size * 0.18
+                        digits_w = stringWidth(str(bpm), "Helvetica-Bold", bpm_size)
+                        dot_cx = bpm_right - digits_w - dot_r - 2
+                        dot_cy = baseline + bpm_size * 0.35
+                        drawer.circle(dot_cx, dot_cy, dot_r, fill=BLACK)
+                else:
+                    box_top = baseline + 0.72 * bpm_size
+                    box_bottom = baseline - 0.10 * bpm_size
+                    box_left = bpm_right - bpm_col_w
+                    drawer.rect(
+                        box_left, box_bottom, bpm_col_w, box_top - box_bottom,
+                        stroke=GREY, stroke_width=0.4,
+                    )
 
             cursor_y -= line_h
 
-        if idx != len(side_labels) - 1:
+        if show_sides and idx != len(side_labels) - 1:
             cursor_y -= SECTION_GAP
 
 
@@ -489,6 +512,14 @@ def draw_sticker_pages(
     layout: LayoutConfig,
     on_page_break,
     qr: bool = True,
+    show_artist: bool = True,
+    show_title: bool = True,
+    show_rpm: bool = True,
+    show_key: bool = True,
+    show_bpm: bool = True,
+    show_duration: bool = True,
+    show_track_title: bool = True,
+    show_sides: bool = True,
 ) -> int:
     """Draw all releases across as many pages as needed.
 
@@ -507,7 +538,18 @@ def draw_sticker_pages(
             x, y = origins[slot]
             if not layout.tile_mode:
                 draw_crop_marks(drawer, x, y, layout)
-            draw_sticker(drawer, x, y, release, sides_map, bpm_tracks, layout, len(stickers), qr=qr)
+            draw_sticker(
+                drawer, x, y, release, sides_map, bpm_tracks, layout, len(stickers),
+                qr=qr,
+                show_artist=show_artist,
+                show_title=show_title,
+                show_rpm=show_rpm,
+                show_key=show_key,
+                show_bpm=show_bpm,
+                show_duration=show_duration,
+                show_track_title=show_track_title,
+                show_sides=show_sides,
+            )
             slot += 1
             total_stickers += 1
             if slot >= len(origins):

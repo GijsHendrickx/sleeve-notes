@@ -212,7 +212,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Don't render the Discogs-release QR code in the top-right of each "
         "sticker. The header expands to use the full sticker width.",
     )
-    parser.set_defaults(qr=True)
+    parser.add_argument("--no-artist", dest="show_artist", action="store_false", help="Don't render the release artist line.")
+    parser.add_argument("--no-title", dest="show_title", action="store_false", help="Don't render the release title line.")
+    parser.add_argument("--no-rpm", dest="show_rpm", action="store_false", help="Don't render the RPM markers in the header.")
+    parser.add_argument("--no-key", dest="show_key", action="store_false", help="Don't render the per-track Camelot key.")
+    parser.add_argument("--no-bpm", dest="show_bpm", action="store_false", help="Don't render BPM values, the empty BPM box, or the BPM-certainty dot.")
+    parser.add_argument("--no-duration", dest="show_duration", action="store_false", help="Don't render per-track durations.")
+    parser.add_argument("--no-track-title", dest="show_track_title", action="store_false", help="Don't render per-track titles in the middle column.")
+    parser.add_argument("--no-sides", dest="show_sides", action="store_false", help="Don't render A-SIDE / B-SIDE group labels; list tracks sequentially.")
+    parser.set_defaults(
+        qr=True, show_artist=True, show_title=True, show_rpm=True,
+        show_key=True, show_bpm=True, show_duration=True, show_track_title=True,
+        show_sides=True,
+    )
     parser.add_argument(
         "-o", "--output", type=Path, default=DEFAULT_PDF_OUT,
         help=f"Output PDF path (default: {DEFAULT_PDF_OUT.relative_to(ROOT)}). "
@@ -273,6 +285,14 @@ def main(argv: list[str] | None = None) -> int:
             drawer, releases, bpm_lookup, layout,
             on_page_break=lambda _page: c.showPage(),
             qr=args.qr,
+            show_artist=args.show_artist,
+            show_title=args.show_title,
+            show_rpm=args.show_rpm,
+            show_key=args.show_key,
+            show_bpm=args.show_bpm,
+            show_duration=args.show_duration,
+            show_track_title=args.show_track_title,
+            show_sides=args.show_sides,
         )
         c.save()
 

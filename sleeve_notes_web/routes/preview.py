@@ -51,6 +51,36 @@ def _pick_release(releases, requested_id: Optional[int]):
     return releases[0]
 
 
+def _bool_flag(request: Request, name: str, default: bool = True) -> bool:
+    """Read a checkbox-style toggle from query params.
+
+    The form sends a hidden ``<name>=0`` followed by the ``<name>=1`` checkbox
+    value (when checked), so the last value wins. When no entry is present at
+    all (e.g. a fresh ``/preview`` load) we fall back to ``default``.
+    """
+    vals = request.query_params.getlist(name)
+    if not vals:
+        return default
+    return vals[-1] == "1"
+
+
+# Names paired with their CLI flag and template-context key.
+_SHOW_TOGGLES = (
+    ("show_artist", "--no-artist"),
+    ("show_title", "--no-title"),
+    ("show_rpm", "--no-rpm"),
+    ("show_key", "--no-key"),
+    ("show_bpm", "--no-bpm"),
+    ("show_duration", "--no-duration"),
+    ("show_track_title", "--no-track-title"),
+    ("show_sides", "--no-sides"),
+)
+
+
+def _read_show_flags(request: Request) -> dict[str, bool]:
+    return {name: _bool_flag(request, name, default=True) for name, _ in _SHOW_TOGGLES}
+
+
 @router.get("/preview")
 def index(
     request: Request,
@@ -66,6 +96,8 @@ def index(
     tile_b = bool(tile)
     new_only_b = bool(new_only)
     mark_printed_b = bool(mark_printed)
+    qr_b = _bool_flag(request, "qr", default=True)
+    show_flags = _read_show_flags(request)
 
     with dbmod.session() as conn:
         all_releases = _load_releases(conn, new_only=new_only_b)
@@ -76,10 +108,13 @@ def index(
         else:
             error = None
             try:
-                layout = L.derive_layout(sticker_w, sticker_h)
+                layout = L.derive_layout(
+                    sticker_w, sticker_h,
+                    tile=tile_b, tile_cols=tile_cols, tile_rows=tile_rows,
+                )
                 bpm_lookup = build_bpm_lookup(conn, [chosen])
                 svgs = render_release_stickers_svg(
-                    chosen, bpm_lookup[chosen["id"]], layout
+                    chosen, bpm_lookup[chosen["id"]], layout, qr=qr_b, **show_flags,
                 )
             except ValueError as e:
                 svgs = []
@@ -98,6 +133,8 @@ def index(
         "tile_rows": tile_rows,
         **({"new_only": "1"} if new_only_b else {}),
         **({"mark_printed": "1"} if mark_printed_b else {}),
+        "qr": "1" if qr_b else "0",
+        **{name: ("1" if show_flags[name] else "0") for name, _ in _SHOW_TOGGLES},
     })
 
     return templates.TemplateResponse(
@@ -117,6 +154,8 @@ def index(
             "tile_rows": tile_rows,
             "new_only": new_only_b,
             "mark_printed": mark_printed_b,
+            "qr": qr_b,
+            **show_flags,
             "pdf_query": pdf_q,
         },
     )
@@ -135,6 +174,9 @@ def svg_fragment(
     tile_rows: Optional[int] = None,
     mark_printed: Optional[str] = None,
 ):
+    qr_b = _bool_flag(request, "qr", default=True)
+    tile_b = bool(tile)
+    show_flags = _read_show_flags(request)
     with dbmod.session() as conn:
         releases = _load_releases(conn, new_only=bool(new_only))
         chosen = _pick_release(releases, release_id)
@@ -144,14 +186,19 @@ def svg_fragment(
                 {"request": request, "svgs": [], "error": "No matching release.", "release": None},
             )
         try:
-            layout = L.derive_layout(sticker_w, sticker_h)
+            layout = L.derive_layout(
+                sticker_w, sticker_h,
+                tile=tile_b,
+                tile_cols=tile_cols or 2,
+                tile_rows=tile_rows or 5,
+            )
         except ValueError as e:
             return templates.TemplateResponse(
                 "preview/_svg.html",
                 {"request": request, "svgs": [], "error": str(e), "release": chosen},
             )
         bpm_lookup = build_bpm_lookup(conn, [chosen])
-        svgs = render_release_stickers_svg(chosen, bpm_lookup[chosen["id"]], layout)
+        svgs = render_release_stickers_svg(chosen, bpm_lookup[chosen["id"]], layout, qr=qr_b, **show_flags)
     return templates.TemplateResponse(
         "preview/_svg.html",
         {"request": request, "svgs": svgs, "error": None, "release": chosen},
@@ -160,6 +207,7 @@ def svg_fragment(
 
 @router.get("/preview/pdf")
 def generate_pdf(
+    request: Request,
     sticker_w: float = L.DEFAULT_STICKER_W_MM,
     sticker_h: float = L.DEFAULT_STICKER_H_MM,
     tile: Optional[str] = None,
@@ -169,6 +217,8 @@ def generate_pdf(
     mark_printed: Optional[str] = None,
     release_id: Optional[int] = None,  # accepted but unused at the PDF layer
 ):
+    qr_b = _bool_flag(request, "qr", default=True)
+    show_flags = _read_show_flags(request)
     out = Path(tempfile.mkstemp(suffix=".pdf", prefix="sleeve-notes-")[1])
     argv = [
         sys.executable, "-m", "sleeve_notes.cli", "render",
@@ -184,6 +234,11 @@ def generate_pdf(
         argv.append("--new-only")
     if mark_printed:
         argv.append("--mark-printed")
+    if not qr_b:
+        argv.append("--no-qr")
+    for name, cli_flag in _SHOW_TOGGLES:
+        if not show_flags[name]:
+            argv.append(cli_flag)
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
