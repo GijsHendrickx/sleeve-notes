@@ -2,18 +2,18 @@
 {% block title %}Dashboard · sleeve-notes{% endblock %}
 {% block breadcrumb %}Dashboard{% endblock %}
 {% block content %}
-<div class="space-y-6">
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<div class="space-y-6 max-w-6xl">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
 
     <!-- BPM coverage card -->
-    <a href="/overrides?filter=needs_attention" class="block bg-neutral-900 border border-neutral-800 rounded-md p-5 hover:border-neutral-700">
-      <div class="text-xs uppercase tracking-wide text-neutral-500">BPM coverage</div>
-      <div class="mt-2 flex items-baseline gap-2">
-        <div class="text-3xl font-semibold text-neutral-100">{{ coverage.with_bpm }}</div>
-        <div class="text-neutral-500 text-sm">of {{ coverage.total }} tracks</div>
+    <a href="/overrides?filter=needs_attention" class="card card-hover block p-6">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">BPM coverage</div>
+      <div class="mt-3 flex items-baseline gap-2">
+        <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ coverage.with_bpm }}</div>
+        <div class="text-app-dim text-sm">of {{ coverage.total }} tracks</div>
       </div>
       <!-- segmented bar -->
-      <div class="mt-4 h-2 bg-neutral-800 rounded overflow-hidden flex">
+      <div class="mt-5 h-1.5 surface-2 rounded-full overflow-hidden flex">
         {% set h = coverage.high_confidence %}
         {% set s = coverage.single_source %}
         {% set d = coverage.disputed %}
@@ -23,51 +23,49 @@
         <div title="High consensus: {{ h }}" style="width: {{ (100 * h / t)|round(2) }}%" class="bg-emerald-500"></div>
         <div title="Single source: {{ s }}"  style="width: {{ (100 * s / t)|round(2) }}%" class="bg-sky-500"></div>
         <div title="Disputed: {{ d }}"       style="width: {{ (100 * d / t)|round(2) }}%" class="bg-amber-500"></div>
-        <div title="Continuous mix: {{ m }}" style="width: {{ (100 * m / t)|round(2) }}%" class="bg-neutral-500"></div>
-        <div title="Missing: {{ miss }}"     style="width: {{ (100 * miss / t)|round(2) }}%" class="bg-neutral-800"></div>
+        <div title="Continuous mix: {{ m }}" style="width: {{ (100 * m / t)|round(2) }}%" class="bg-app-mute"></div>
+        <div title="Missing: {{ miss }}"     style="width: {{ (100 * miss / t)|round(2) }}%" class="bg-app-s3"></div>
       </div>
-      <dl class="mt-3 grid grid-cols-5 gap-1 text-xs text-neutral-400">
-        <div><dt class="text-emerald-500">●</dt><dd>{{ coverage.high_confidence }} high</dd></div>
-        <div><dt class="text-sky-500">●</dt><dd>{{ coverage.single_source }} single</dd></div>
-        <div><dt class="text-amber-500">●</dt><dd>{{ coverage.disputed }} disp.</dd></div>
-        <div><dt class="text-neutral-500">●</dt><dd>{{ coverage.continuous_mix }} mix</dd></div>
-        <div><dt class="text-neutral-700">●</dt><dd>{{ coverage.missing }} miss</dd></div>
+      <dl class="mt-4 grid grid-cols-5 gap-1 text-[11px] text-app-dim">
+        <div><span class="text-emerald-500">●</span> {{ coverage.high_confidence }} high</div>
+        <div><span class="text-sky-500">●</span> {{ coverage.single_source }} single</div>
+        <div><span class="text-amber-500">●</span> {{ coverage.disputed }} disp.</div>
+        <div><span class="text-app-dim">●</span> {{ coverage.continuous_mix }} mix</div>
+        <div><span class="text-app-s3">●</span> {{ coverage.missing }} miss</div>
       </dl>
-      <div class="mt-3 text-xs text-neutral-500">Click → open Overrides filtered to tracks needing attention.</div>
+      <div class="mt-4 text-[11px] text-app-mute">Open Overrides → tracks needing attention</div>
     </a>
 
     <!-- New since last print card -->
-    <a href="/preview?new_only=1" class="block bg-neutral-900 border border-neutral-800 rounded-md p-5 hover:border-neutral-700">
-      <div class="text-xs uppercase tracking-wide text-neutral-500">New since last print</div>
-      <div class="mt-2 flex items-baseline gap-2">
-        <div class="text-3xl font-semibold text-neutral-100">{{ new_count }}</div>
-        <div class="text-neutral-500 text-sm">releases unprinted</div>
+    <a href="/preview?new_only=1" class="card card-hover block p-6">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">New since last print</div>
+      <div class="mt-3 flex items-baseline gap-2">
+        <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ new_count }}</div>
+        <div class="text-app-dim text-sm">releases unprinted</div>
       </div>
-      <div class="mt-3 text-xs text-neutral-500">
+      <div class="mt-5 text-[11px] text-app-mute">
         {% if last_print_ts %}
-          Last print: <span class="font-mono">{{ last_print_ts }}</span>
+          Last print · <span class="font-mono text-app-dim">{{ last_print_ts }}</span>
         {% else %}
           No print runs recorded yet.
         {% endif %}
       </div>
-      <div class="mt-4 inline-block text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-300">Open in Preview →</div>
+      <div class="mt-5 inline-flex items-center gap-1 text-[12px] text-sky-400">Open in Preview →</div>
     </a>
 
     <!-- Quick actions card -->
-    <div class="bg-neutral-900 border border-neutral-800 rounded-md p-5">
-      <div class="text-xs uppercase tracking-wide text-neutral-500">Quick actions</div>
-      <div class="mt-3 flex flex-col gap-2">
+    <div class="card p-6">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Quick actions</div>
+      <div class="mt-4 flex flex-col gap-2">
         <button type="button" onclick="document.getElementById('run-panel').classList.remove('hidden')"
-                class="text-left text-sm px-3 py-2 rounded border border-neutral-700 hover:bg-neutral-800 text-neutral-100">
-          ▶ Run pipeline
+                class="btn btn-primary justify-start w-full">
+          <span>▶</span> Run pipeline
         </button>
-        <a href="/overrides"
-           class="text-sm px-3 py-2 rounded border border-neutral-800 hover:bg-neutral-800 text-neutral-300">
-          ✎ Edit overrides
+        <a href="/overrides" class="btn btn-ghost justify-start w-full">
+          <span class="text-app-dim">✎</span> Edit overrides
         </a>
-        <a href="/preview"
-           class="text-sm px-3 py-2 rounded border border-neutral-800 hover:bg-neutral-800 text-neutral-300">
-          ◐ Open Preview
+        <a href="/preview" class="btn btn-ghost justify-start w-full">
+          <span class="text-app-dim">◐</span> Open Preview
         </a>
       </div>
     </div>
@@ -75,21 +73,23 @@
   </div>
 
   <!-- Collection totals strip -->
-  <div class="bg-neutral-900 border border-neutral-800 rounded-md p-5">
-    <div class="text-xs uppercase tracking-wide text-neutral-500 mb-3">Collection</div>
-    <div class="grid grid-cols-2 sm:grid-cols-{{ 1 + totals.by_type|length }} gap-4">
+  <div class="card p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Collection</div>
+      <a href="/collection" class="text-[12px] text-sky-400 hover:text-sky-300">Browse →</a>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-{{ 1 + totals.by_type|length }} gap-6">
       <div>
-        <div class="text-2xl font-medium text-neutral-100">{{ totals.total }}</div>
-        <div class="text-xs text-neutral-500">total releases</div>
+        <div class="text-[26px] font-semibold text-app-ink tracking-tight leading-none">{{ totals.total }}</div>
+        <div class="text-[11px] text-app-mute mt-1.5 uppercase tracking-wide">total releases</div>
       </div>
       {% for type_name, count in totals.by_type %}
-      <a href="/collection?type={{ type_name }}" class="block hover:opacity-80">
-        <div class="text-2xl font-medium text-neutral-100">{{ count }}</div>
-        <div class="text-xs text-neutral-500">{{ type_name|lower }}</div>
+      <a href="/collection?type={{ type_name }}" class="block group">
+        <div class="text-[26px] font-semibold text-app-ink tracking-tight leading-none group-hover:text-sky-400 transition-colors">{{ count }}</div>
+        <div class="text-[11px] text-app-mute mt-1.5 uppercase tracking-wide">{{ type_name|lower }}</div>
       </a>
       {% endfor %}
     </div>
-    <a href="/collection" class="mt-4 inline-block text-xs text-neutral-400 hover:text-neutral-200">Browse collection →</a>
   </div>
 </div>
 {% endblock %}

@@ -2,75 +2,75 @@
 {% block title %}Collection · sleeve-notes{% endblock %}
 {% block breadcrumb %}Collection{% endblock %}
 {% block content %}
-<div class="flex h-[calc(100vh-7rem)] gap-4">
+<div class="flex h-[calc(100vh-7.5rem)] gap-5">
   <!-- Left: filters + table -->
   <div class="flex-1 min-w-0 flex flex-col">
-    <form method="get" action="/collection" class="flex flex-wrap gap-3 items-center mb-3 text-sm">
-      <input name="q" value="{{ q or '' }}" placeholder="search artist / title…"
-             class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 w-64 focus:outline-none focus:border-neutral-600" />
-      <select name="type" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
-        <option value="">type: any</option>
+    <form method="get" action="/collection" class="flex flex-wrap gap-2 items-center mb-4 text-sm">
+      <input name="q" value="{{ q or '' }}" placeholder="Search artist or title…"
+             class="field px-3 py-1.5 w-72 text-[13px]" />
+      <select name="type" class="field px-2.5 py-1.5 text-[13px]">
+        <option value="">Type · any</option>
         {% for t in type_options %}
         <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
         {% endfor %}
       </select>
-      <select name="format" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
-        <option value="">format: any</option>
+      <select name="format" class="field px-2.5 py-1.5 text-[13px]">
+        <option value="">Format · any</option>
         {% for f in format_options %}
         <option value="{{ f }}" {% if format_filter == f %}selected{% endif %}>{{ f }}</option>
         {% endfor %}
       </select>
-      <select name="bpm" class="bg-neutral-900 border border-neutral-800 rounded px-2 py-1">
-        <option value="">BPM: any</option>
-        <option value="missing" {% if bpm_filter == 'missing' %}selected{% endif %}>has missing</option>
-        <option value="complete" {% if bpm_filter == 'complete' %}selected{% endif %}>fully covered</option>
+      <select name="bpm" class="field px-2.5 py-1.5 text-[13px]">
+        <option value="">BPM · any</option>
+        <option value="missing" {% if bpm_filter == 'missing' %}selected{% endif %}>Has missing</option>
+        <option value="complete" {% if bpm_filter == 'complete' %}selected{% endif %}>Fully covered</option>
       </select>
-      <button type="submit" class="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100">Filter</button>
-      <span class="text-neutral-500 ml-auto">{{ rows|length }} of {{ total }} releases</span>
+      <button type="submit" class="btn btn-ghost">Filter</button>
+      <span class="text-app-mute ml-auto text-[12px] tracking-tight">{{ rows|length }} of {{ total }} releases</span>
     </form>
 
-    <div class="flex-1 overflow-auto border border-neutral-800 rounded">
-      <table class="dense w-full text-sm">
-        <thead class="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500 sticky top-0">
-          <tr>
-            <th class="text-left w-12"></th>
+    <div class="flex-1 overflow-auto card">
+      <table class="dense w-full text-[13px]">
+        <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+          <tr class="border-b hairline">
+            <th class="text-left w-14"></th>
             <th class="text-left">Artist</th>
             <th class="text-left">Title</th>
             <th class="text-right w-16">Year</th>
             <th class="text-left w-20">Type</th>
-            <th class="text-left w-16">Fmt</th>
+            <th class="text-left w-20">Format</th>
             <th class="text-right w-24">BPM</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr class="border-t border-neutral-900 hover:bg-neutral-900 cursor-pointer"
+          <tr class="border-t hairline hover:bg-app-s2 cursor-pointer"
               hx-get="/collection/{{ r.id }}" hx-target="#release-detail" hx-swap="innerHTML">
             <td>
               {% if r.cover %}
                 <img src="{{ r.cover }}" alt="" loading="lazy" referrerpolicy="no-referrer"
-                     class="w-9 h-9 object-cover rounded-sm border border-neutral-800" />
+                     class="w-10 h-10 object-cover rounded-md border hairline" />
               {% else %}
-                <div class="w-9 h-9 rounded-sm border border-neutral-800 bg-neutral-900"></div>
+                <div class="w-10 h-10 rounded-md border hairline surface-2"></div>
               {% endif %}
             </td>
-            <td class="text-neutral-200">{{ r.artist or '—' }}</td>
-            <td class="text-neutral-300 italic">{{ r.title or '—' }}</td>
-            <td class="text-right text-neutral-500 font-mono">{{ r.year or '' }}</td>
-            <td class="text-neutral-400">{{ r.type or '' }}</td>
-            <td class="text-neutral-500 font-mono" title="{{ r.format_short or '' }}">{{ r.format or '' }}</td>
+            <td class="text-app-ink">{{ r.artist or '—' }}</td>
+            <td class="text-app-dim">{{ r.title or '—' }}</td>
+            <td class="text-right text-app-mute font-mono">{{ r.year or '' }}</td>
+            <td class="text-app-dim">{{ r.type or '' }}</td>
+            <td class="text-app-mute font-mono" title="{{ r.format_short or '' }}">{{ r.format or '' }}</td>
             <td class="text-right font-mono">
               {% if r.tracks_total > 0 %}
-                <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-neutral-600{% else %}text-amber-400{% endif %}">
+                <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-app-mute{% else %}text-amber-400{% endif %}">
                   {{ r.tracks_with_bpm }}/{{ r.tracks_total }}
                 </span>
               {% else %}
-                <span class="text-neutral-700">—</span>
+                <span class="text-app-mute">—</span>
               {% endif %}
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="text-center py-10 text-neutral-500">No releases match.</td></tr>
+          <tr><td colspan="7" class="text-center py-12 text-app-mute">No releases match.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -78,8 +78,8 @@
   </div>
 
   <!-- Right: detail drawer -->
-  <aside id="release-detail" class="w-[420px] shrink-0 bg-neutral-900 border border-neutral-800 rounded overflow-y-auto p-5 text-sm">
-    <div class="text-neutral-500">Click a release to inspect.</div>
+  <aside id="release-detail" class="w-[440px] shrink-0 card overflow-y-auto p-5 text-[13px]">
+    <div class="text-app-mute">Click a release to inspect.</div>
   </aside>
 </div>
 {% endblock %}

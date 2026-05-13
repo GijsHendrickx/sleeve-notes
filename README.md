@@ -14,6 +14,7 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
 - [Setup](#setup)
 - [Credentials & `.env`](#credentials--env)
 - [Running the workflow](#running-the-workflow)
+- [Web UI](#web-ui)
 - [Inspecting the data: `query` + `overrides`](#inspecting-the-data-query--overrides)
 - [Outputs](#outputs)
 - [The CSV-export shortcut](#the-csv-export-shortcut)
@@ -259,6 +260,38 @@ The two flags compose cleanly: alone, `--new-only` just filters; alone, `--mark-
 
 Inspect history with `sleeve-notes query print_runs` and
 `sleeve-notes query print_run_releases`.
+
+---
+
+## Web UI
+
+If you'd rather not live in the terminal, every step above is also exposed
+through a small localhost web app. Launch it with:
+
+```bash
+sleeve-notes web                 # http://127.0.0.1:8765, auto-opens your browser
+sleeve-notes web --port 9000     # change port
+sleeve-notes web --no-browser    # bind only, don't pop a tab
+```
+
+The app is a thin FastAPI + HTMX layer over the same engine — long jobs
+shell out to the `sleeve-notes` CLI subcommands you already know, so the
+behaviour, caches, overrides and print history are identical whether you
+drive things from the terminal or the browser.
+
+What you get:
+
+| Page | What it's for |
+|---|---|
+| **Dashboard** | At-a-glance BPM coverage (high / single / disputed / mix / missing), count of releases new since the last print, quick-action buttons. |
+| **Collection** | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer. |
+| **Overrides** | The bulk editor for manual BPM / key / continuous-mix entries. Presets surface tracks that need attention or already have an override; one Save commits everything. |
+| **Preview** | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
+| **Run pipeline** (slide-out) | Kick off `run` / `fetch` / `bpm` / `render` with optional `--limit` / `--folder` etc. flags; live-tails the log. |
+
+State still lives where it always did — `data/sleeve_notes.db` and `.tmp/`.
+The web app is purely an alternative front-end; you can mix and match it
+with CLI invocations freely.
 
 ---
 
@@ -552,6 +585,12 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   ├── query.py                           ← `sleeve-notes query` (browse the DB)
 │   ├── overrides.py                       ← `sleeve-notes overrides` (manage overrides)
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
+├── sleeve_notes_web/                      ← localhost web UI (FastAPI + HTMX)
+│   ├── app.py                             ← `sleeve-notes web` entry point
+│   ├── routes/                            ← collection / overrides / preview / run / dashboard handlers
+│   ├── services/                          ← thin wrappers that call into sleeve_notes/* engine code
+│   ├── templates/                         ← Jinja templates (base.html + per-page partials)
+│   └── static/                            ← app.js + assets served at /static
 ├── workflows/
 │   └── sleeve_notes.md             ← internal SOP; this README mirrors and extends it
 └── .tmp/                                  ← disposable cache + final PDF (gitignored)

@@ -11,8 +11,21 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
-            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"SF Pro Display"', 'ui-sans-serif', 'system-ui', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+            mono: ['"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+          colors: {
+            app: {
+              bg:    '#0c0c0e',
+              s1:    '#161618',
+              s2:    '#1d1d1f',
+              s3:    '#2a2a2c',
+              line:  'rgba(255,255,255,0.07)',
+              line2: 'rgba(255,255,255,0.12)',
+              ink:   '#f5f5f7',
+              dim:   '#98989d',
+              mute:  '#6e6e73',
+            },
           },
         },
       },
@@ -21,65 +34,172 @@
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="/static/app.js" defer></script>
   <style>
-    /* Dense table baseline */
-    table.dense th, table.dense td { padding: 0.35rem 0.65rem; }
+    :root {
+      --app-bg: #0c0c0e;
+      --s1: #161618;
+      --s2: #1d1d1f;
+      --s3: #2a2a2c;
+      --line: rgba(255,255,255,0.07);
+      --line2: rgba(255,255,255,0.12);
+      --ink: #f5f5f7;
+      --dim: #98989d;
+      --mute: #6e6e73;
+    }
+    html, body { font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
+    body { background: var(--app-bg); color: var(--ink); letter-spacing: -0.005em; }
+
+    /* Hairline borders that feel like macOS separators */
+    .hairline   { border-color: var(--line); }
+    .hairline-2 { border-color: var(--line2); }
+
+    /* Surfaces */
+    .surface-1 { background: var(--s1); }
+    .surface-2 { background: var(--s2); }
+    .surface-3 { background: var(--s3); }
+
+    /* Frosted vibrancy — Apple-style blur behind floating panels */
+    .vibrancy {
+      background: rgba(22,22,24,0.78);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+    }
+    .vibrancy-strong {
+      background: rgba(12,12,14,0.72);
+      backdrop-filter: saturate(180%) blur(28px);
+      -webkit-backdrop-filter: saturate(180%) blur(28px);
+    }
+
+    /* Density — body class toggles row padding & body type scale */
+    body.density-comfortable table.dense th,
+    body.density-comfortable table.dense td { padding: 0.55rem 0.85rem; }
+    body.density-compact table.dense th,
+    body.density-compact table.dense td { padding: 0.3rem 0.6rem; }
+    body.density-comfortable { font-size: 14px; }
+    body.density-compact     { font-size: 13px; }
+
+    /* Tables get rounded outer corners cleanly */
+    table.dense thead th { font-weight: 500; }
+    table.dense tbody tr { transition: background-color 120ms ease; }
+
+    /* Inputs — softer, focus ring uses Apple blue */
+    .field {
+      background: var(--s2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+    }
+    .field:focus, .field:focus-visible {
+      outline: none;
+      border-color: rgba(10,132,255,0.6);
+      box-shadow: 0 0 0 3px rgba(10,132,255,0.18);
+      background: var(--s3);
+    }
+    .field::placeholder { color: var(--mute); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.4rem 0.85rem; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+      border: 1px solid transparent;
+    }
+    .btn-primary { background: #0a84ff; color: #fff; }
+    .btn-primary:hover { background: #2393ff; }
+    .btn-success { background: #30d158; color: #042e10; }
+    .btn-success:hover { background: #4be072; }
+    .btn-ghost   { background: transparent; color: var(--ink); border-color: var(--line2); }
+    .btn-ghost:hover { background: var(--s2); }
+    .btn-quiet   { background: transparent; color: var(--ink); border-color: var(--line); }
+    .btn-quiet:hover { background: var(--s2); color: var(--ink); }
+
+    /* Cards */
+    .card {
+      background: var(--s1);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      transition: border-color 160ms ease, transform 160ms ease;
+    }
+    .card-hover:hover { border-color: var(--line2); }
+
+    /* Sidebar nav active indicator — soft pill */
+    .nav-item {
+      display: block;
+      margin: 1px 8px;
+      padding: 6px 10px;
+      border-radius: 7px;
+      font-size: 13px;
+      color: var(--dim);
+      transition: background-color 120ms ease, color 120ms ease;
+    }
+    .nav-item:hover { background: var(--s2); color: var(--ink); }
+    .nav-item.active { background: var(--s3); color: var(--ink); }
+
     /* Sticker preview canvas — borrow paper colour */
-    .sticker-preview { background: #fafaf7; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+    .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
+
+    /* Scrollbar — slim, themed */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); background-clip: padding-box; border: 2px solid transparent; }
   </style>
 </head>
-<body class="bg-neutral-950 text-neutral-200 min-h-screen font-sans antialiased">
+<body class="density-comfortable min-h-screen font-sans antialiased">
   <div class="flex min-h-screen">
     <!-- Sidebar -->
-    <nav class="w-56 border-r border-neutral-800 flex flex-col shrink-0">
-      <div class="px-4 py-4 border-b border-neutral-800">
-        <a href="/" class="font-semibold tracking-tight text-neutral-100">sleeve-notes</a>
-        <div class="text-xs text-neutral-500 mt-0.5">localhost · v0.3</div>
+    <nav class="w-60 border-r hairline flex flex-col shrink-0 surface-1">
+      <div class="px-4 pt-5 pb-4">
+        <a href="/" class="flex items-baseline gap-1.5">
+          <span class="text-[20px] font-semibold tracking-tight text-app-ink">Sleeve Notes</span>
+        </a>
+        <div class="text-[11px] text-app-mute mt-0.5 tracking-wide">v0.3</div>
       </div>
-      <ul class="flex-1 py-2 text-sm">
+      <div class="flex-1 py-1">
         {% set nav = [
-          ('/', 'Dashboard', 'dashboard'),
           ('/collection', 'Collection', 'collection'),
-          ('/overrides', 'Overrides', 'overrides'),
           ('/preview', 'Preview', 'preview'),
         ] %}
         {% for href, label, key in nav %}
-          <li>
-            <a href="{{ href }}"
-               class="block px-4 py-1.5 hover:bg-neutral-900 {% if active == key %}bg-neutral-900 text-neutral-100 border-l-2 border-neutral-300 -ml-px{% else %}text-neutral-400{% endif %}">
-              {{ label }}
-            </a>
-          </li>
+          <a href="{{ href }}" class="nav-item{% if active == key %} active{% endif %}">{{ label }}</a>
         {% endfor %}
-      </ul>
-      <div class="px-4 py-3 border-t border-neutral-800 text-xs text-neutral-500">
-        engine: <span class="text-neutral-400">sleeve_notes CLI</span>
+      </div>
+      <a href="/overrides" class="nav-item mb-2{% if active == 'overrides' %} active{% endif %}">Overrides</a>
+      <div class="px-4 py-3 border-t hairline text-[11px] text-app-mute flex items-center justify-between">
+        <span>engine · <span class="text-app-dim">sleeve_notes</span></span>
+        <button type="button" id="density-toggle" title="Toggle density"
+                class="text-app-mute hover:text-app-ink transition-colors"
+                onclick="window.__sleeveToggleDensity && window.__sleeveToggleDensity()">
+          <span id="density-label">comfy</span>
+        </button>
       </div>
     </nav>
 
     <!-- Main -->
     <div class="flex-1 flex flex-col min-w-0">
-      <header class="border-b border-neutral-800 flex items-center justify-between px-6 h-12 shrink-0">
-        <div class="text-sm text-neutral-400">{% block breadcrumb %}{% endblock %}</div>
+      <header class="h-14 shrink-0 flex items-center justify-between px-7 border-b hairline vibrancy-strong sticky top-0 z-20">
+        <div class="text-[19px] text-app-ink font-semibold tracking-tight">{% block breadcrumb %}{% endblock %}</div>
         <div class="flex items-center gap-3">
           <div id="run-pill" hx-get="/run/status" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
           <button type="button" onclick="document.getElementById('run-panel').classList.toggle('hidden')"
-                  class="text-sm px-3 py-1 rounded border border-neutral-700 hover:bg-neutral-900 text-neutral-200">
+                  class="btn btn-ghost">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-app-dim"></span>
             Run
           </button>
         </div>
       </header>
-      <main class="flex-1 px-6 py-5 overflow-x-hidden">
+      <main class="flex-1 px-7 py-6 overflow-x-hidden">
         {% block content %}{% endblock %}
       </main>
     </div>
   </div>
 
   <!-- Slide-out Run panel -->
-  <aside id="run-panel" class="hidden fixed top-0 right-0 bottom-0 w-[440px] bg-neutral-950 border-l border-neutral-800 flex flex-col z-30 shadow-2xl">
-    <div class="flex items-center justify-between px-5 h-12 border-b border-neutral-800">
-      <div class="text-sm font-medium text-neutral-200">Run pipeline</div>
+  <aside id="run-panel" class="hidden fixed top-0 right-0 bottom-0 w-[460px] vibrancy border-l hairline-2 flex flex-col z-30 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+    <div class="flex items-center justify-between px-5 h-14 border-b hairline">
+      <div class="text-[13px] font-semibold text-app-ink tracking-tight">Run pipeline</div>
       <button type="button" onclick="document.getElementById('run-panel').classList.add('hidden')"
-              class="text-neutral-500 hover:text-neutral-200">✕</button>
+              class="w-7 h-7 rounded-full flex items-center justify-center text-app-mute hover:text-app-ink hover:bg-app-s2 transition">✕</button>
     </div>
     <div id="run-panel-body" class="flex-1 overflow-y-auto" hx-get="/run/panel" hx-trigger="load, runStatus from:body" hx-swap="innerHTML"></div>
   </aside>

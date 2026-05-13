@@ -50,8 +50,28 @@
 
   window.__sleeveAttachRunStream = attach;
 
+  // Density toggle — comfortable (default) ↔ compact, persisted in localStorage.
+  function applyDensity(d) {
+    document.body.classList.remove("density-comfortable", "density-compact");
+    document.body.classList.add(d === "compact" ? "density-compact" : "density-comfortable");
+    const label = document.getElementById("density-label");
+    if (label) label.textContent = d === "compact" ? "compact" : "comfy";
+  }
+  function getDensity() {
+    try { return localStorage.getItem("sleeve.density") || "comfortable"; } catch (_) { return "comfortable"; }
+  }
+  function setDensity(d) {
+    try { localStorage.setItem("sleeve.density", d); } catch (_) { /* noop */ }
+    applyDensity(d);
+  }
+  window.__sleeveToggleDensity = () => setDensity(getDensity() === "compact" ? "comfortable" : "compact");
+
+  // Apply density ASAP to avoid a flash. The body class is the source of truth.
+  applyDensity(getDensity());
+
   // If a fresh page already shows a running job, attach immediately.
   document.addEventListener("DOMContentLoaded", () => {
+    applyDensity(getDensity());
     const statusEl = document.getElementById("run-status-text");
     if (statusEl && statusEl.dataset.status === "running") attach();
   });

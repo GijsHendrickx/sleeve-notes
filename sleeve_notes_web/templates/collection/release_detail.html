@@ -1,57 +1,57 @@
 {# Fragment loaded into #release-detail #}
-<div class="space-y-4">
-  <div class="flex gap-3">
+<div class="space-y-5">
+  <div class="flex gap-4">
     {% if release.cover %}
       <img src="{{ release.cover }}" alt="" referrerpolicy="no-referrer"
-           class="w-20 h-20 object-cover rounded border border-neutral-800" />
+           class="w-24 h-24 object-cover rounded-lg border hairline shadow-[0_4px_12px_rgba(0,0,0,0.35)]" />
     {% endif %}
-    <div class="min-w-0">
-      <div class="text-neutral-100 font-medium truncate">{{ release.artist or 'V/A' }}</div>
-      <div class="text-neutral-400 italic truncate">{{ release.title or '—' }}</div>
-      <div class="text-xs text-neutral-500 mt-1 font-mono">
-        {{ release.year or '????' }} · {{ release.type or '—' }} · {{ release.format or '—' }} · id {{ release.id }}
+    <div class="min-w-0 flex-1">
+      <div class="text-app-ink font-semibold truncate tracking-tight">{{ release.artist or 'V/A' }}</div>
+      <div class="text-app-dim truncate text-[13px]">{{ release.title or '—' }}</div>
+      <div class="text-[11px] text-app-mute mt-2 font-mono tracking-wide">
+        {{ release.year or '????' }} · {{ release.type or '—' }} · {{ release.format or '—' }}
       </div>
       <a href="https://www.discogs.com/release/{{ release.id }}" target="_blank" rel="noopener"
-         class="text-xs text-sky-400 hover:underline">discogs ↗</a>
+         class="inline-flex items-center gap-1 text-[12px] text-sky-400 hover:text-sky-300 mt-2">
+        Discogs ↗
+      </a>
     </div>
   </div>
 
   {% if release.tracks %}
   <div>
-    <div class="text-xs uppercase tracking-wide text-neutral-500 mb-1">Tracks</div>
-    <table class="dense w-full text-xs">
-      <thead class="text-neutral-500">
-        <tr>
-          <th class="text-left">Pos</th>
+    <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium mb-2">Tracks</div>
+    <table class="dense w-full text-[12px]">
+      <thead class="text-[10px] uppercase tracking-[0.06em] text-app-mute">
+        <tr class="border-b hairline">
+          <th class="text-left">Position</th>
           <th class="text-left">Title</th>
-          <th class="text-right">Dur</th>
+          <th class="text-right">Duration</th>
           <th class="text-right">BPM</th>
           <th class="text-left">Key</th>
         </tr>
       </thead>
       <tbody>
         {% for t in release.tracks %}
-        <tr class="border-t border-neutral-900 align-top">
-          <td class="font-mono text-neutral-400">{{ t.position }}</td>
+        <tr class="border-t hairline align-top">
+          <td class="font-mono text-app-mute">{{ t.position }}</td>
           <td>
             {% if release.compilation and t.artist and t.artist != release.artist %}
-              <span class="text-neutral-400">{{ t.artist }} – </span>
+              <span class="text-app-dim">{{ t.artist }} – </span>
             {% endif %}
-            <span class="text-neutral-200">{{ t.title }}</span>
-            {% if t.bpm_sources %}
-              <div class="text-neutral-600 font-mono">{{ t.bpm_sources|join(' · ') }}</div>
-            {% endif %}
+            <span class="text-app-ink">{{ t.title }}</span>
           </td>
-          <td class="text-right text-neutral-500 font-mono">{{ t.duration or '' }}</td>
+          <td class="text-right text-app-mute font-mono">{{ t.duration or '' }}</td>
           <td class="text-right font-mono
             {% if t.bpm_confidence in ('high','manual') %}text-emerald-400
             {% elif t.bpm_confidence == 'disputed' %}text-amber-400
-            {% elif t.bpm %}text-neutral-200
-            {% elif t.reason == 'continuous_mix' %}text-neutral-500
-            {% else %}text-neutral-600{% endif %}">
+            {% elif t.bpm %}text-app-ink
+            {% elif t.reason == 'continuous_mix' %}text-app-dim
+            {% else %}text-app-mute{% endif %}"
+            {% if t.bpm_sources %}title="sources: {{ t.bpm_sources|join(', ') }}"{% endif %}>
             {{ t.bpm or (t.reason == 'continuous_mix' and 'mix' or '·') }}
           </td>
-          <td class="font-mono {% if t.key_camelot %}text-neutral-200{% else %}text-neutral-600{% endif %}">{{ t.key_camelot or '·' }}</td>
+          <td class="font-mono {% if t.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">{{ t.key_camelot or '·' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -60,9 +60,9 @@
   {% endif %}
 
   {% if release.tracks %}
-    <div class="flex gap-2">
-      <a href="/preview?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-700 hover:bg-neutral-800 text-neutral-200">Preview sticker →</a>
-      <a href="/overrides?release_id={{ release.id }}" class="text-xs px-3 py-1 rounded border border-neutral-800 hover:bg-neutral-800 text-neutral-400">Edit overrides →</a>
+    <div class="flex gap-2 pt-1">
+      <a href="/preview?release_id={{ release.id }}" class="btn btn-primary">Preview sticker →</a>
+      <a href="/overrides?release_id={{ release.id }}" class="btn btn-quiet">Edit overrides</a>
     </div>
   {% endif %}
 </div>

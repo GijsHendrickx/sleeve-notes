@@ -1,24 +1,24 @@
 {% if job is none %}
-  <span class="text-xs text-neutral-600">idle</span>
+  <span class="text-[11px] text-app-mute">idle</span>
 {% elif job.status == 'running' %}
   <button type="button" onclick="document.getElementById('run-panel').classList.remove('hidden')"
-          class="text-xs px-2 py-1 rounded-full border border-emerald-700 bg-emerald-900/30 text-emerald-300 flex items-center gap-1.5">
+          class="text-[12px] px-2.5 py-1 rounded-full border border-emerald-700/60 bg-emerald-900/25 text-emerald-300 flex items-center gap-1.5">
     <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-    {{ job.kind }} · running · {{ elapsed }}s
+    {{ job.kind }} · {{ elapsed }}s
   </button>
 {% elif job.status == 'done' %}
   <button type="button" onclick="document.getElementById('run-panel').classList.remove('hidden')"
-          class="text-xs px-2 py-1 rounded-full border border-neutral-700 text-neutral-300">
+          class="text-[12px] px-2.5 py-1 rounded-full border hairline text-app-dim hover:text-app-ink">
     ✓ {{ job.kind }} done
   </button>
 {% elif job.status == 'failed' %}
   <button type="button" onclick="document.getElementById('run-panel').classList.remove('hidden')"
-          class="text-xs px-2 py-1 rounded-full border border-rose-800 bg-rose-950/40 text-rose-300">
+          class="text-[12px] px-2.5 py-1 rounded-full border border-rose-800/60 bg-rose-950/30 text-rose-300">
     ✕ {{ job.kind }} failed
   </button>
 {% elif job.status == 'cancelled' %}
   <button type="button" onclick="document.getElementById('run-panel').classList.remove('hidden')"
-          class="text-xs px-2 py-1 rounded-full border border-amber-800 bg-amber-950/40 text-amber-300">
+          class="text-[12px] px-2.5 py-1 rounded-full border border-amber-800/60 bg-amber-950/30 text-amber-300">
     ⊘ {{ job.kind }} cancelled
   </button>
 {% endif %}
