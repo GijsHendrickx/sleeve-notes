@@ -279,13 +279,13 @@ shell out to the `sleeve-notes` CLI subcommands you already know, so the
 behaviour, caches, overrides and print history are identical whether you
 drive things from the terminal or the browser.
 
-The sidebar splits into three sections — **Collection** (data views), **Actions** (one-shot jobs that shell out to the CLI), and **Custom settings** (overrides). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
+The sidebar splits into two sections — **Collection** (data views) and **Actions** (one-shot jobs that shell out to the CLI). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
 
 | Surface | What it's for |
 |---|---|
-| **Dashboard** (`/`) | At-a-glance BPM coverage (high / single / disputed / mix / missing), count of releases new since the last print, quick-action buttons. |
-| **Releases** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
-| **Overrides** (`/overrides`) | Bulk editor for manual BPM / key / continuous-mix entries. Presets surface tracks that need attention or already have an override; one Save commits everything. |
+| **Dashboard** (`/`) | At-a-glance BPM coverage (high / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
+| **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
+| **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. |
 | **Generate stickers** (`/preview`) | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
@@ -333,9 +333,6 @@ sleeve-notes overrides add --release-id 123 --position A1 --bpm 128 --key 8A
 
 # Broad: every track with this artist+title (matches the BPM cascade's hash)
 sleeve-notes overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
-
-# Continuous-mix flag (skips BPM lookup, shows "mix" on the sticker)
-sleeve-notes overrides add --release-id 789 --position A --continuous-mix --note "DJ mix"
 
 sleeve-notes overrides list
 sleeve-notes overrides remove 3
@@ -443,8 +440,6 @@ sleeve-notes query --sql "
   GROUP BY c.cache_key HAVING COUNT(*) > 1 LIMIT 10"
 ```
 
-**Continuous mixes** — a track with a "side-only" position (e.g. `A`, with no `A1`/`A2` subnumbers) longer than 12 minutes is treated as a continuous mix: no BPM lookup is attempted and the sticker shows `(mix)`.
-
 **Rate limits enforced:**
 | Source | Limit |
 |---|---|
@@ -460,7 +455,7 @@ sleeve-notes query --sql "
 
 ## Manual overrides
 
-When a source returns the wrong BPM (e.g. picked up a remix, picked up a same-titled but unrelated track), or you have a needle-dropped value you trust over any online source, add it via the `overrides` subcommand. Overrides win over the cache, the continuous-mix detector, and the entire cascade — they're checked **before** anything else for a given track.
+When a source returns the wrong BPM (e.g. picked up a remix, picked up a same-titled but unrelated track), or you have a needle-dropped value you trust over any online source, add it via the `overrides` subcommand (or the `/tracks` web UI — same data, point-and-click). Overrides win over the cache and the entire cascade — they're checked **before** anything else for a given track.
 
 ```bash
 # Precise: one specific track on one release
@@ -468,9 +463,6 @@ sleeve-notes overrides add --release-id 123456 --position A1 --bpm 128 --key 8A
 
 # Broader: every track with this artist+title in the collection
 sleeve-notes overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
-
-# Flag a continuous DJ mix
-sleeve-notes overrides add --release-id 789012 --position A --continuous-mix --note "DJ mix"
 
 sleeve-notes overrides list
 sleeve-notes overrides remove 3
@@ -488,7 +480,6 @@ Per-entry fields:
 |---|---|
 | `--bpm <int>` (50–250) | Override the BPM. Sticker shows the digits with a **●** dot (manual values are treated as fully trusted). |
 | `--key <str>` | Override the Camelot key. Accepts Camelot (`8A`, `12B`), musical (`Am`, `C#m`, `F# major`), or slash notation (`F♯/G♭ Major`); all are normalised to Camelot. |
-| `--continuous-mix` | Mark the track as a continuous DJ mix — sticker shows `(mix)` instead of a number. |
 | `--note <str>` | Free-text reminder for yourself. Ignored by the renderer. |
 
 Re-run `sleeve-notes bpm` (or `sleeve-notes render` if the cache is already populated) after editing — overrides are applied on the fly. They never poison the cache, so removing an override later restores the previously-cached value (or sends the track back through the cascade if it was never cached).
@@ -589,7 +580,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
 ├── sleeve_notes_web/                      ← localhost web UI (FastAPI + HTMX)
 │   ├── app.py                             ← `sleeve-notes web` entry point
-│   ├── routes/                            ← collection / overrides / preview / run / dashboard handlers
+│   ├── routes/                            ← collection / tracks / preview / run / dashboard / actions handlers
 │   ├── services/                          ← thin wrappers that call into sleeve_notes/* engine code
 │   ├── templates/                         ← Jinja templates (base.html + per-page partials)
 │   └── static/                            ← app.js + assets served at /static

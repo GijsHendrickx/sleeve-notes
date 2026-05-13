@@ -13,12 +13,6 @@
     "note": "force the empty box even though songbpm returned 174"
   },
   {
-    "release_id": 789012,
-    "position": "A",
-    "continuous_mix": true,
-    "note": "DJ mix side that auto-detection missed because no duration on Discogs"
-  },
-  {
     "artist": "Daft Punk",
     "title": "Around the World",
     "bpm": 121,
