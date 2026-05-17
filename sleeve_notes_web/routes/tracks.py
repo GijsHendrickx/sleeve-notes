@@ -92,6 +92,7 @@ def _build_row(
         "bpm": tr.get("bpm"),
         "bpm_confidence": tr.get("bpm_confidence"),
         "bpm_sources": tr.get("bpm_sources"),
+        "shared_siblings": tr.get("shared_siblings"),
         "key_camelot": tr.get("key_camelot"),
         "reason": tr.get("reason"),
         "override": override_display,

@@ -15,17 +15,23 @@
       <!-- segmented bar -->
       <div class="mt-5 h-1.5 surface-2 rounded-full overflow-hidden flex">
         {% set h = coverage.high_confidence %}
+        {% set o = coverage.octave_matched %}
+        {% set sh = coverage.shared_url %}
         {% set s = coverage.single_source %}
         {% set d = coverage.disputed %}
         {% set miss = coverage.missing %}
         {% set t = coverage.total or 1 %}
-        <div title="High consensus: {{ h }}" style="width: {{ (100 * h / t)|round(2) }}%" class="bg-emerald-500"></div>
-        <div title="Single source: {{ s }}"  style="width: {{ (100 * s / t)|round(2) }}%" class="bg-sky-500"></div>
-        <div title="Disputed: {{ d }}"       style="width: {{ (100 * d / t)|round(2) }}%" class="bg-amber-500"></div>
-        <div title="Missing: {{ miss }}"     style="width: {{ (100 * miss / t)|round(2) }}%" class="bg-app-s3"></div>
+        <div title="High consensus: {{ h }}"          style="width: {{ (100 * h / t)|round(2) }}%" class="bg-emerald-500"></div>
+        <div title="Octave-matched: {{ o }}"          style="width: {{ (100 * o / t)|round(2) }}%" class="bg-cyan-500"></div>
+        <div title="Shared-URL (verify): {{ sh }}"    style="width: {{ (100 * sh / t)|round(2) }}%" class="bg-yellow-500"></div>
+        <div title="Single source: {{ s }}"           style="width: {{ (100 * s / t)|round(2) }}%" class="bg-sky-500"></div>
+        <div title="Disputed: {{ d }}"                style="width: {{ (100 * d / t)|round(2) }}%" class="bg-amber-500"></div>
+        <div title="Missing: {{ miss }}"              style="width: {{ (100 * miss / t)|round(2) }}%" class="bg-app-s3"></div>
       </div>
-      <dl class="mt-4 grid grid-cols-4 gap-1 text-[11px] text-app-dim">
+      <dl class="mt-4 grid grid-cols-6 gap-1 text-[11px] text-app-dim">
         <div><span class="text-emerald-500">●</span> {{ coverage.high_confidence }} high</div>
+        <div><span class="text-cyan-500">●</span> {{ coverage.octave_matched }} oct.</div>
+        <div><span class="text-yellow-500">●</span> {{ coverage.shared_url }} shared</div>
         <div><span class="text-sky-500">●</span> {{ coverage.single_source }} single</div>
         <div><span class="text-amber-500">●</span> {{ coverage.disputed }} disp.</div>
         <div><span class="text-app-s3">●</span> {{ coverage.missing }} miss</div>

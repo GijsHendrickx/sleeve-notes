@@ -248,7 +248,7 @@ sleeve-notes render -o out/                       # custom dir; filename default
 - **Default mode** ships with crop marks and a 4 mm gutter between stickers, sized via `--sticker-w` / `--sticker-h` (mm). Columns and rows per page are auto-derived from the size so as many stickers as possible fit. Sizes that don't fit on A4 are rejected.
 - **Tile mode (`--tile`)** lays stickers edge-to-edge with zero gutters and zero page margin so the print can be sliced with just a few straight ruler cuts (`(cols − 1) + (rows − 1)` total). Sticker size is derived from `--tile-cols` × `--tile-rows` (default 2×5 = 10 per A4 → 105 × 59.4 mm). `--sticker-w` / `--sticker-h` are ignored when `--tile` is set. **Print borderless** or expect ~3 mm clipping on the outer stickers (most home printers have a small unprintable margin).
 - Fonts auto-shrink to keep all text inside the sticker margins. The BPM number is rendered ~50 % larger than the track text and scales together with it, so a sticker that needs to fit 7–8 tracks shrinks the BPM proportionally — never overlapping the line above.
-- **Per-row columns** (left → right): position, artist + title, duration, Camelot key, BPM. The BPM column prepends a small **●** dot when two or more sources agreed (or the value came from a manual override); single-source / disputed hits show just the digits. Tracks without any BPM hit show an **empty rectangle** for a hand-written value.
+- **Per-row columns** (left → right): position, artist + title, duration, Camelot key, BPM. The BPM column prepends a small **●** dot only for `high`-confidence values (≥2 sources agreed within ±1 BPM) and manual overrides. Looser-confidence values (`octave`, `shared`, `single`, `disputed`) show just the digits — see [BPM cascade details](#bpm-cascade-details). Tracks without any BPM hit show an **empty rectangle** for a hand-written value.
 - **Header**: the artist line shows the playback **RPM** (`33⅓` / `45`) in grey when Discogs lists it. Releases where the Discogs `formats[*].descriptions` array doesn't include an RPM string simply have no badge — about 30–40 % of community-submitted releases.
 - **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
@@ -291,7 +291,7 @@ The sidebar splits into two sections — **Collection** (data views) and **Actio
 
 | Surface | What it's for |
 |---|---|
-| **Dashboard** (`/`) | At-a-glance BPM coverage (high / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
+| **Dashboard** (`/`) | At-a-glance BPM coverage (high / octave / shared / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
 | **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
 | **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **▶** listen icon (Spotify-green when we have a Spotify ID, YouTube-red otherwise) that opens the track in a new tab, plus a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. The same listen icon also appears in the per-release drawer's tracklist on `/collection`. |
 | **Generate stickers** (`/preview`) | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
@@ -442,8 +442,13 @@ Your overrides go too — back up with `sleeve-notes query overrides --limit 0 -
 
 **Retry behaviour:** HTTP calls use a tight `tenacity` retry (`wait_exponential(1, 5)` × 2 attempts). A flaky source costs at most ~5 s — the cascade then falls through to the other four, so one slow API can't stall the run.
 
-**Consensus** (per track):
-- **BPM** — cluster all returned values within ±1 BPM. The largest cluster with **≥2 members** wins, value = median, confidence = `high` (gets the ● dot on the sticker). Only one source returned → confidence = `single` (digits only). Multiple sources, none agreeing → priority-pick (`beatport > songbpm > reccobeats > deezer > acousticbrainz`), confidence = `disputed` (digits only).
+**Consensus** (per track, in this order):
+- **Strict cluster** — values within ±1 BPM. ≥3 sources agreeing wins outright (`high` confidence, ● dot on the sticker).
+- **Octave-aware cluster** — fold each value into a canonical [80–160] range (halving/doubling as needed), cluster with ±2 tolerance, pick the cluster with the most distinct sources. Beats a strict pair of 2 when 3+ sources agree once half/double-time is normalised. Catches the dominant failure mode of algorithmic BPM detection. Confidence = `octave`.
+- **Strict pair** — fall back to the ≥2-source strict cluster if octave didn't beat it. Confidence = `high`.
+- **Shared-URL flag** — if all winning sources have a URL shared by ≥3 distinct cache_keys (the "remix collapse" pattern, where the matcher returned the base track for every remix variant), the BPM value is kept but confidence is downgraded to `shared` (yellow in the UI) — verify before trusting.
+- **Priority fallback** — none of the above produced a cluster: pick the highest-priority source (`songbpm > reccobeats > deezer > acousticbrainz > beatport`, ordered by empirical outlier rate against the rest of the cascade). Confidence = `disputed`.
+- **Single** — only one source returned anything. Confidence = `single`.
 - **Key** — exact-Camelot-string majority across sources. All keys are normalised to Camelot before comparison (Beatport's `camelot_number`/`camelot_letter` fields are used directly; Spotify-style pitch class + mode is mapped; AcousticBrainz `tonal.key_key`/`tonal.key_scale` is parsed; songbpm.com is best-effort).
 - **Manual override** — rows in the `overrides` table always win over the consensus (see next section).
 

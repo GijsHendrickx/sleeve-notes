@@ -17,6 +17,8 @@ class CoverageStats:
     total: int
     with_bpm: int
     high_confidence: int
+    octave_matched: int
+    shared_url: int
     single_source: int
     disputed: int
     missing: int
@@ -30,7 +32,7 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
         "FROM tracks t JOIN releases r ON r.id = t.release_id"
     ).fetchall()
     total = len(rows)
-    with_bpm = high = single = disputed = 0
+    with_bpm = high = octave = shared = single = disputed = 0
     for r in rows:
         artist = r["artist"] or r["r_artist"] or "V/A"
         result = derive_track_result(
@@ -42,6 +44,10 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
             conf = result.get("bpm_confidence")
             if conf in ("high", "manual"):
                 high += 1
+            elif conf == "octave":
+                octave += 1
+            elif conf == "shared":
+                shared += 1
             elif conf == "single":
                 single += 1
             elif conf == "disputed":
@@ -50,6 +56,8 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
         total=total,
         with_bpm=with_bpm,
         high_confidence=high,
+        octave_matched=octave,
+        shared_url=shared,
         single_source=single,
         disputed=disputed,
         missing=total - with_bpm,

@@ -65,11 +65,13 @@ ROOT = project_root()
 # them in parallel per track, then `consense()` picks the canonical value.
 ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
 
-# Tie-breaker order when sources disagree (no 2+ consensus). Beatport is
-# editorial — labels supply the BPM themselves — so it wins for the DJ-relevant
-# genres. SongBPM is broad coverage from analysis. AcousticBrainz is last
-# because the dataset is frozen since 2022.
-SOURCE_PRIORITY = ("beatport", "songbpm", "reccobeats", "deezer", "acousticbrainz")
+# Tie-breaker order when sources disagree (no consensus, raw or octave-aware).
+# Order is empirically driven by per-source outlier rates measured against the
+# rest of the cascade: SongBPM disagrees least often when it returns a value;
+# Beatport disagrees most often (frequently a wrong-track match or a halftime
+# reading for older DJ catalog entries). Beatport's "labels supply the BPM"
+# argument didn't hold up in practice on this collection.
+SOURCE_PRIORITY = ("songbpm", "reccobeats", "deezer", "acousticbrainz", "beatport")
 
 # --- songbpm.com scrape -------------------------------------------------------
 SONGBPM_BASE = "https://songbpm.com"
@@ -987,14 +989,95 @@ def _consense_numeric(
         else:
             clusters.append([(name, val)])
     clusters.sort(key=lambda c: -len(c))
-    winning = clusters[0]
-    if len(winning) >= 2:
-        sorted_vals = sorted(v for _, v in winning)
+    strict_winner = clusters[0]
+    strict_size = len(strict_winner)
+
+    # Always compute octave-aware consensus in parallel. Half/double-time
+    # confusion is the dominant failure mode of algorithmic BPM detection: two
+    # sources can strict-cluster on a doubled reading while three other sources
+    # agree on the real tempo. We can't catch that by only running octave after
+    # strict fails.
+    octave = _octave_consensus(hits, tolerance=2)
+    octave_size = len(octave[1]) if octave else 0
+
+    # Trust strict consensus when it's already strong (≥3 sources within ±1
+    # BPM). Don't downgrade those to "octave" confidence just because some
+    # other source happens to fold into the same canonical band.
+    if strict_size >= 3:
+        sorted_vals = sorted(v for _, v in strict_winner)
         median = sorted_vals[len(sorted_vals) // 2]
-        return median, "high", sorted(n for n, _ in winning)
+        return median, "high", sorted(n for n, _ in strict_winner)
+
+    # Strict pair vs octave: octave wins if it gathers strictly more sources
+    # (e.g. Toto – Rosanna: strict {rb,dz}=166 size 2 vs octave {sb=82, rb→83,
+    # dz→83} size 3 — the doubled reading loses).
+    if octave_size > strict_size:
+        bpm, sources = octave
+        return bpm, "octave", sources
+
+    if strict_size >= 2:
+        sorted_vals = sorted(v for _, v in strict_winner)
+        median = sorted_vals[len(sorted_vals) // 2]
+        return median, "high", sorted(n for n, _ in strict_winner)
+
     priority = {s: i for i, s in enumerate(SOURCE_PRIORITY)}
     by_priority = sorted(hits, key=lambda x: priority.get(x[0], 99))
     return by_priority[0][1], "disputed", [by_priority[0][0]]
+
+
+def _canonical_octave(v: int, lo: int = 80, hi: int = 160) -> int:
+    """Halve/double a BPM into a canonical [lo, hi] range.
+
+    Range chosen so that genuinely slow ballads (Toto – Rosanna at ~83, disco
+    cuts at ~85) stay in their own octave instead of being folded up. Tracks
+    above 160 (DnB, hardcore) will be folded to half-time when an octave-twin
+    is present — acceptable trade-off for a house/techno-leaning collection.
+    """
+    while v < lo:
+        v *= 2
+    while v > hi:
+        v //= 2
+    return v
+
+
+def _octave_consensus(
+    hits: list[tuple[str, int]], tolerance: int = 2
+) -> tuple[int, list[str]] | None:
+    """Cluster hits treating half/double-time readings as the same BPM.
+
+    Two hits agree if their canonical-octave forms (folded into [90, 180]) are
+    within ``tolerance`` of each other. Returns the median canonical value of
+    the largest connected component, or ``None`` if no component has ≥2 hits.
+    """
+    n = len(hits)
+    canon = [_canonical_octave(v) for _, v in hits]
+
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if abs(canon[i] - canon[j]) <= tolerance:
+                ra, rb = find(i), find(j)
+                if ra != rb:
+                    parent[ra] = rb
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    best = max(groups.values(), key=len)
+    if len(best) < 2:
+        return None
+    canon_vals = sorted(canon[i] for i in best)
+    median = canon_vals[len(canon_vals) // 2]
+    sources = sorted(hits[i][0] for i in best)
+    return median, sources
 
 
 def _consense_categorical(
@@ -1097,6 +1180,44 @@ def override_to_result(entry: dict) -> dict:
     return {**base, "bpm": bpm, "key_camelot": key_cam, "reason": "manual"}
 
 
+# Threshold above which a Beatport/Deezer/etc. URL shared across distinct
+# cache_keys is read as a "remix collapse" (the matcher returned the base
+# track for every remix variant we queried). 3+ is the sweet spot: it lets
+# legitimate vocal/instrumental pairs (which always share a single recording)
+# pass through, while catching the multi-remix patterns (Salt-N-Pepa "Push It
+# (Again)" → 9 cache_keys, Klubbheads "Kickin' Hard" → 5, etc.).
+URL_SHARE_SUSPECT_THRESHOLD = 3
+
+_URL_SHARE_CACHE: dict[int, dict[tuple[str, str], int]] = {}
+
+
+def url_share_counts(conn) -> dict[tuple[str, str], int]:
+    """How many distinct cache_keys each (source, url) pair appears under.
+
+    Cached per-connection. Call ``invalidate_url_share_counts`` after writing
+    to ``bpm_source_hits`` so the next read reflects the new data.
+    """
+    cid = id(conn)
+    cached = _URL_SHARE_CACHE.get(cid)
+    if cached is not None:
+        return cached
+    rows = conn.execute(
+        "SELECT source, url, COUNT(DISTINCT cache_key) AS n "
+        "FROM bpm_source_hits WHERE url IS NOT NULL AND url != '' "
+        "GROUP BY source, url"
+    ).fetchall()
+    counts: dict[tuple[str, str], int] = {(r[0], r[1]): r[2] for r in rows}
+    _URL_SHARE_CACHE[cid] = counts
+    return counts
+
+
+def invalidate_url_share_counts(conn=None) -> None:
+    if conn is None:
+        _URL_SHARE_CACHE.clear()
+    else:
+        _URL_SHARE_CACHE.pop(id(conn), None)
+
+
 def load_cache_entry(conn, ck: str) -> dict | None:
     """Reconstruct the v2-style cache entry shape from DB rows."""
     row = conn.execute(
@@ -1172,8 +1293,18 @@ def save_cache_entry(conn, ck: str, artist: str, title: str, entry: dict) -> Non
         )
 
 
-def build_track_result(position: str, artist: str, title: str, entry: dict) -> dict:
-    """Combine a cache entry with derived consensus into a per-track result dict."""
+def build_track_result(
+    position: str, artist: str, title: str, entry: dict,
+    *, share_counts: dict[tuple[str, str], int] | None = None,
+) -> dict:
+    """Combine a cache entry with derived consensus into a per-track result dict.
+
+    When ``share_counts`` is provided (mapping ``(source, url) → cache_key
+    count``), tracks where every winning consensus source has a URL shared
+    across ≥``URL_SHARE_SUSPECT_THRESHOLD`` cache_keys are flagged as
+    ``"shared"`` confidence. This catches the remix-collapse pattern where
+    multiple distinct remixes were matched to the same base-track BPM.
+    """
     derived = consense(entry)
     sources = entry.get("sources") or {}
     bpm = derived["bpm"]
@@ -1182,19 +1313,32 @@ def build_track_result(position: str, artist: str, title: str, entry: dict) -> d
         reason = "exhausted" if all_tried else "incomplete"
     else:
         reason = "match"
+
+    bpm_confidence = derived["bpm_confidence"]
+    shared_siblings = 0
+    if share_counts and derived["bpm_sources"] and bpm_confidence != "manual":
+        share_per_src = [
+            share_counts.get((s, (sources.get(s) or {}).get("url") or ""), 1)
+            for s in derived["bpm_sources"]
+        ]
+        if share_per_src and min(share_per_src) >= URL_SHARE_SUSPECT_THRESHOLD:
+            shared_siblings = max(share_per_src)
+            bpm_confidence = "shared"
+
     return {
         "position": position,
         "artist": artist,
         "title": title,
         "bpm": bpm,
         "key_camelot": derived["key_camelot"],
-        "bpm_confidence": derived["bpm_confidence"],
+        "bpm_confidence": bpm_confidence,
         "key_confidence": derived["key_confidence"],
         "bpm_sources": derived["bpm_sources"],
         "key_sources": derived["key_sources"],
         "source": derived["bpm_sources"][0] if derived["bpm_sources"] else None,
         "source_url": (sources.get(derived["bpm_sources"][0]) or {}).get("url")
             if derived["bpm_sources"] else None,
+        "shared_siblings": shared_siblings,
         "reason": reason,
     }
 
@@ -1226,7 +1370,10 @@ def derive_track_result(
     entry = load_cache_entry(conn, cache_key(artist, title))
     if entry is None:
         entry = {"sources": {}, "sources_tried": []}
-    return build_track_result(position, artist, title, entry)
+    return build_track_result(
+        position, artist, title, entry,
+        share_counts=url_share_counts(conn),
+    )
 
 
 # ============================================================================
@@ -1362,9 +1509,11 @@ def main(argv: list[str] | None = None) -> int:
                         w["position"], w["artist"], w["title"], entry
                     )
                     if result["bpm"]:
-                        marker = {"high": "●●", "single": "○", "disputed": "?"}.get(
-                            result["bpm_confidence"], "·"
-                        )
+                        marker = {
+                            "high": "●●", "octave": "●○",
+                            "shared": "●≈",
+                            "single": "○", "disputed": "?",
+                        }.get(result["bpm_confidence"], "·")
                         key_str = (
                             f" key={result['key_camelot']}"
                             if result["key_camelot"] else ""
@@ -1389,6 +1538,8 @@ def main(argv: list[str] | None = None) -> int:
         found_bpm = 0
         found_key = 0
         high_conf = 0
+        octave_conf = 0
+        shared_conf = 0
         disputed = 0
         for release in releases:
             rid = release["id"]
@@ -1409,15 +1560,22 @@ def main(argv: list[str] | None = None) -> int:
                     found_bpm += 1
                 if tr.get("key_camelot"):
                     found_key += 1
-                if tr.get("bpm_confidence") == "high":
+                conf = tr.get("bpm_confidence")
+                if conf == "high":
                     high_conf += 1
-                elif tr.get("bpm_confidence") == "disputed":
+                elif conf == "octave":
+                    octave_conf += 1
+                elif conf == "shared":
+                    shared_conf += 1
+                elif conf == "disputed":
                     disputed += 1
 
         hits_str = ", ".join(f"{s}={hits_by_source[s]}" for s in ALL_SOURCES)
         print(
-            f"Cache populated: {found_bpm}/{total_tracks} BPMs ({high_conf} multi-source consensus, "
-            f"{disputed} disputed), {found_key}/{total_tracks} keys."
+            f"Cache populated: {found_bpm}/{total_tracks} BPMs "
+            f"({high_conf} multi-source consensus, {octave_conf} octave-matched, "
+            f"{shared_conf} shared-URL, {disputed} disputed), "
+            f"{found_key}/{total_tracks} keys."
         )
         print(
             f"  new this run by source: {hits_str}   "
