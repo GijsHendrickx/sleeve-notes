@@ -1,8 +1,8 @@
 # Sleeve Notes
 
-Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Stickers are 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12" so you can read everything at a glance while DJing.
+Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Sticker size, the grid on A4, edge-to-edge tile vs gutters + crop marks, and which fields appear on each sticker (artist / title / RPM / BPM / key / duration / Discogs QR / side labels) are all configurable per print run — defaults give you 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12".
 
-Every release in your Discogs collection gets a sticker. The web UI lets you filter the collection by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other) — both are auto-classified from Discogs metadata at fetch time.
+The web UI manages **print runs** — each run is a saved "which releases + which layout settings" recipe you can re-download, Duplicate as the starting point for the next print, or delete. Collection views filter by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other), both auto-classified from Discogs metadata at fetch time.
 
 BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciling them by consensus. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
@@ -48,7 +48,8 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
         └────────────┬─────────────┘
              │  sleeve-notes fetch   →  ingests releases + tracks in one pass
              │  sleeve-notes bpm     →  cascade fills bpm_cache + bpm_source_hits
-             │  sleeve-notes render  →  derives per-track BPM/key on the fly
+             │  sleeve-notes render  →  ad-hoc PDF, or replay a saved print run
+             │                          via `--print-run-id N`
              ▼
    .tmp/stickers.pdf          ← print this on A4, 100% scale
 ```
@@ -298,7 +299,7 @@ The sidebar splits into two sections — **Collection** (data views) and **Actio
 | **Dashboard** (`/`) | At-a-glance BPM coverage (high / octave / shared / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
 | **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
 | **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **▶** listen icon (Spotify-green when we have a Spotify ID, YouTube-red otherwise) that opens the track in a new tab, plus a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. The same listen icon also appears in the per-release drawer's tracklist on `/collection`. |
-| **Print runs** (`/print-runs`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with its size, tile mode and content toggles at a glance. The editor (`/print-runs/new`) opens with the **Never printed** chip selected (toggle to **All records** for the full collection), per-row checkboxes to fine-tune, search-within-list, and a live SVG sticker preview that updates as you change settings. **Save & generate** stores the run and takes you to its detail page, where you can re-download the PDF, **Duplicate** it as a starting point for the next print, or delete it. |
+| **Print runs** (`/print-runs`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with its size, tile mode and content toggles at a glance. The editor (`/print-runs/new`) is a two-step wizard with a clickable indicator: **step 1 · Settings** is the run name plus all layout/content options (sticker size, A4 grid, tile mode, what's on each sticker) with a live sample preview that updates as you change settings; **step 2 · Records** is the full-width release table with **Never printed** (default) and **All records** chips, search-within-list, per-row checkboxes, and a per-row **Preview** button that opens a modal rendering that release at the current settings. **Save & generate** stores the run and takes you to its detail page, where you can re-download the PDF, **Duplicate** it as a starting point for the next print, or delete it. |
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
 | **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
@@ -606,7 +607,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
 ├── sleeve_notes_web/                      ← localhost web UI (FastAPI + HTMX)
 │   ├── app.py                             ← `sleeve-notes web` entry point
-│   ├── routes/                            ← collection / tracks / preview / run / dashboard / actions handlers
+│   ├── routes/                            ← collection / tracks / print_runs / run / dashboard / actions handlers
 │   ├── services/                          ← thin wrappers that call into sleeve_notes/* engine code
 │   ├── templates/                         ← Jinja templates (base.html + per-page partials)
 │   └── static/                            ← app.js + assets served at /static
