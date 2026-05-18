@@ -1,6 +1,6 @@
 # Agent Instructions
 
-You're working on **Sleeve Notes** — a personal Discogs → printable-stickers app. It's a fully-fledged application: a Python engine (`sleeve_notes/`) exposed both as a CLI (`sleeve-notes`) and a FastAPI + HTMX web UI (`sleeve_notes_web/`), with all state in a single SQLite file (`data/sleeve_notes.db`).
+You're working on **Sleeve Notes** — a Discogs → printable-stickers app, now multi-tenant. It's a fully-fledged application: a Python engine (`sleeve_notes/`) exposed both as a CLI (`sleeve-notes`) and a FastAPI + HTMX web UI (`sleeve_notes_web/`), with all state in a single SQLite file (`data/sleeve_notes.db`). Users sign in via Discogs OAuth 1.0a; per-user data is keyed by `user_id` everywhere.
 
 The README is the authoritative user-facing doc. CLAUDE.md is for *you* — codebase conventions that aren't obvious from reading the code, and traps to avoid that have already cost time once.
 
@@ -15,8 +15,27 @@ The engine in `sleeve_notes/` is the source of truth: deterministic Python that 
 data/             # NOT disposable: sleeve_notes.db (collection, BPM cache, overrides, print history).
 sleeve_notes/     # Engine (Python package). CLI subcommands dispatch into these modules.
 sleeve_notes_web/ # FastAPI + HTMX + Jinja web UI. See "Web UI conventions" below.
-.env              # API keys (Discogs, Spotify, Beatport). NEVER commit. NEVER store secrets elsewhere.
+.env              # Discogs consumer creds, SESSION_SECRET, Spotify/Beatport/YT keys. NEVER commit.
+.env.example      # Documents every required + optional key; safe to commit.
 ```
+
+## Auth & multi-tenancy
+
+**Discogs OAuth 1.0a is the only login system.** No passwords, no separate user accounts. The flow lives in `sleeve_notes_web/services/auth.py` (helpers that wrap `requests_oauthlib.OAuth1Session`) + `sleeve_notes_web/routes/auth.py` (three routes: `/auth/login` → `/auth/callback` → eventual `/auth/logout`).
+
+**Two credential pairs to keep distinct.** *Consumer* key+secret identify the **app** to Discogs (lives in `.env`, one pair total). *Access* token+secret identify a specific user (lives in the session cookie, one pair per logged-in user). Every Discogs API call is HMAC-SHA1 signed with both pairs combined. See README's "Credentials & .env" section.
+
+**Tokens live in cookies, NOT in the DB.** The session cookie (signed via `SESSION_SECRET`) stores `user_id`, `username`, `discogs_token`, `discogs_token_secret`. The DB has a `users` table with just `id`, `username`, `created_at`, `last_seen_at` — no token columns. If the DB leaks, no Discogs credentials leak.
+
+**Every data route needs `Depends(current_user)`.** The `User` dataclass (in `services/deps.py`) is the canonical per-request identity. Routes that don't gate on `current_user` will leak data across tenants. `optional_user` is for the single landing-page route (`/`).
+
+**Every engine helper that touches user data takes `user_id` as its first parameter** (after `conn` if it accepts one). Examples: `load_overrides(conn, user_id)`, `derive_track_result(conn, user_id, …)`, `build_bpm_lookup(conn, user_id, releases)`, `list_print_runs(conn, user_id)`. Adding a new helper? Follow the pattern; otherwise the rest of the code can't call it safely from a per-user route.
+
+**JobRunner injects per-user env into the subprocess.** `runner.start(kind, argv, *, user_id, username, discogs_token, discogs_token_secret)` sets `DISCOGS_USER_ID`, `DISCOGS_USERNAME`, `DISCOGS_OAUTH_TOKEN`, `DISCOGS_OAUTH_TOKEN_SECRET` on `subprocess.Popen`'s env. CLI subcommands read those four env vars at startup. Tokens are NOT stored on the `Job` dataclass — only held on the worker thread's stack so they GC when the subprocess exits.
+
+**One job at a time is global, not per-user.** The runner's queue is single-slot for the whole app. Cross-user job-output visibility is filtered at the route layer (`_job_for_user(user)` in `routes/run.py`): a second user starting a job while another's is running silently returns the existing job; their banner stays empty. Per-user queue is a later improvement when usage demands it.
+
+**The `kv` table is app-wide, not per-user.** Beatport tokens, `schema_version` and similar live there. The BPM cascade infrastructure (Spotify / Beatport / YouTube creds) is intentionally app-wide for now; per-user OAuth for those is a deferred design choice.
 
 ## Web UI conventions
 
@@ -24,7 +43,7 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 
 **Action-oriented, not pipeline-oriented.** The CLI thinks in pipeline steps (fetch → bpm → render). The web UI does NOT expose that abstraction. Each long-running task is a discrete sidebar action with a tailored modal — "Discogs sync", "Import Discogs csv", "BPM lookup", "Print runs" — never a generic "step picker + freeform args" panel. If a new long-running CLI subcommand lands, add it as a named action, not as an option in a dropdown.
 
-**Sidebar shape.** Two labelled sections in this order: **Collection** (Records `/collection`, Tracks `/tracks`) and **Actions** (the named jobs, including Print runs `/print-runs`). The Dashboard is the homepage (`/`) reached via the "Sleeve Notes" wordmark click; it is NOT a sidebar item. The wordmark is title-cased ("Sleeve Notes", not "sleeve-notes"), larger than nav items, with only the app version underneath — no host name.
+**Sidebar shape.** Two labelled sections in this order: **Collection** (Records `/collection`, Tracks `/tracks`) and **Actions** (the named jobs, including Print runs `/print-runs`). The Dashboard is the homepage (`/`) reached via the "Sleeve Notes" wordmark click; it is NOT a sidebar item. The wordmark is title-cased ("Sleeve Notes", not "sleeve-notes"), larger than nav items, with only the app version underneath — no host name. The sidebar footer shows the signed-in **username** with a **Sign out** link beneath it; the density toggle sits inline on the same row as the username. The whole sidebar is rendered only when `request.session.user_id` is set; logged-out users see the `/` landing page with no sidebar or chrome.
 
 **Background jobs go through `JobRunner`.** Web routes that trigger work shell out to a `sleeve-notes <subcommand>` subprocess via `services.jobs.runner` — they do NOT call engine code in-process. One job runs at a time; the start endpoint refuses a new job while one is in flight. `runner.cancel()` MUST escalate SIGTERM → SIGKILL via a background watchdog (~3s grace), because the BPM cascade has non-daemon worker threads that block subprocess exit when stuck in network I/O.
 
@@ -40,6 +59,8 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 **Engine reuse, not duplication.** Web routes that need data the CLI also computes — sticker layout, BPM lookup, render — call the same modules in `sleeve_notes/`. Examples: the sticker preview in the collection-detail drawer and the live preview in the Print runs editor both use the same `render_release_stickers_svg`, and the editor's "Save & generate" stores a run that the PDF endpoint replays via `sleeve-notes render --print-run-id N` — same code path as ad-hoc CLI rendering. Never fork engine logic into web-only helpers.
 
 **Restart `sleeve-notes web` after Python changes.** The server is launched without `--reload` — anything you touch under `sleeve_notes_web/routes/`, `sleeve_notes_web/services/`, or `sleeve_notes/` is invisible to the running process until restart. Jinja templates (`templates/**/*.html`) DO live-reload because FastAPI re-reads them per request, so template-only tweaks land in place. After a Python edit, kill the existing process (`kill $(lsof -i :8765 -t)`) and relaunch — otherwise the next request 404s/500s for stale-code reasons that look like bugs.
+
+**Starlette 1.0+ TemplateResponse signature is `(request, name, context, ...)`.** The old Starlette 0.x signature `templates.TemplateResponse(name, {"request": request, ...})` raises a confusing `TypeError: unhashable type: 'dict'` from inside Jinja's template cache because the dict gets interpreted as the template name. Always use the new positional order; keeping `"request": request` inside the context is harmless and helps templates that reference `request` directly.
 
 **Rename a feature → update every surface in one pass.** A label change is never just the sidebar. Also update the page title (`{% block title %}`), breadcrumb (`{% block breadcrumb %}`), dashboard cards, cross-page links, and README references. Partial renames produce confusing UIs where the sidebar says "Records" but the page header still says "Collection". Grep the repo for the old name before declaring done.
 
@@ -58,7 +79,7 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 
 **Engine modules in `sleeve_notes/` are reusable.** They're imported by both the CLI dispatcher (`cli.py`) and the web routes (`sleeve_notes_web/routes/*`). Avoid `print(...)` in library functions — return values, use `logging`, or accept a `progress_callback`. The job toast parses CLI stdout, but in-process callers shouldn't have to.
 
-**State migrations live in `db.py`.** When you change a schema, add a migration (idempotent `ALTER TABLE` / `CREATE` guarded by an introspection check) — never assume a clean DB. Existing users have years of cache. See `db.py` for the established pattern (`if "<column>" not in existing: …`).
+**`db.py` is lean and SCHEMA-driven, not migration-heavy.** The previous "preserve user data at all costs" stance was dropped during the multi-tenancy refactor: legacy `_ensure_*_columns` ALTERs and JSON-import helpers were deleted. The current pattern is: `SCHEMA` (declarative `CREATE TABLE IF NOT EXISTS`) defines reality; `connect()` runs it and stamps `schema_version` in `kv`. If you need to change the schema in a breaking way, **ask the user whether backwards compatibility matters** before reaching for ALTER-and-migrate. For personal-state apps like this one, "delete `data/sleeve_notes.db` and start fresh" is often the right answer and saves ~hundreds of lines of one-shot migration code.
 
 **`SLEEVE_NOTES_ROOT` is the root-resolution hook.** All paths (`data/`, `.tmp/`, `.env`) are resolved relative to `project_root()` in `sleeve_notes/__init__.py`, which respects the `SLEEVE_NOTES_ROOT` env var. Don't hardcode `Path.cwd()` or `__file__`-relative paths in engine code — break this and every test/install path gets weird.
 

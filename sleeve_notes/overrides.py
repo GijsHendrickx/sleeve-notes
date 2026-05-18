@@ -22,6 +22,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,11 +40,29 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _require_user_id() -> int:
+    raw = os.environ.get("DISCOGS_USER_ID")
+    if not raw:
+        print(
+            "ERROR: DISCOGS_USER_ID must be set in env. Log in via the web UI "
+            "to populate it, or paste it into .env for standalone CLI use.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"ERROR: DISCOGS_USER_ID must be an integer, got {raw!r}", file=sys.stderr)
+        raise SystemExit(2)
+
+
 def _cmd_list(args) -> int:
+    user_id = _require_user_id()
     with dbmod.session() as conn:
         rows = conn.execute(
             "SELECT id, release_id, position, artist, title, bpm, key_camelot, "
-            "note, created_at FROM overrides ORDER BY id"
+            "note, created_at FROM overrides WHERE user_id = ? ORDER BY id",
+            (user_id,),
         ).fetchall()
     if not rows:
         print("(no overrides)")
@@ -90,15 +109,17 @@ def _cmd_add(args) -> int:
         )
         return 2
 
+    user_id = _require_user_id()
     with dbmod.session() as conn:
         cur = conn.execute(
             """
             INSERT INTO overrides (
-                release_id, position, artist, title, bpm, key_camelot,
+                user_id, release_id, position, artist, title, bpm, key_camelot,
                 note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 args.release_id,
                 args.position,
                 args.artist,
@@ -116,8 +137,12 @@ def _cmd_add(args) -> int:
 
 
 def _cmd_remove(args) -> int:
+    user_id = _require_user_id()
     with dbmod.session() as conn:
-        cur = conn.execute("DELETE FROM overrides WHERE id = ?", (args.id,))
+        cur = conn.execute(
+            "DELETE FROM overrides WHERE id = ? AND user_id = ?",
+            (args.id, user_id),
+        )
         if cur.rowcount == 0:
             print(f"No override with id={args.id}.", file=sys.stderr)
             return 1
@@ -133,8 +158,12 @@ def _cmd_clear(args) -> int:
             file=sys.stderr,
         )
         return 2
+    user_id = _require_user_id()
     with dbmod.session() as conn:
-        cur = conn.execute("DELETE FROM overrides")
+        cur = conn.execute(
+            "DELETE FROM overrides WHERE user_id = ?",
+            (user_id,),
+        )
         n = cur.rowcount
     print(f"Removed {n} override(s).")
     return 0

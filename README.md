@@ -94,74 +94,78 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .               # editable install; sleeve-notes + sleeve_notes/ both work
 
-# 3. Create your .env (see next section)
-cp .env.example .env   # or create it from scratch — see below
+# 3. Create your .env
+cp .env.example .env   # then fill in the values — see next section
 ```
 
 After install, the CLI is available as `sleeve-notes`. All commands resolve state files (`data/sleeve_notes.db`, `.tmp/`, `.env`) against the current working directory by default — so always run `sleeve-notes` from the directory you want those files to live in. Override with `SLEEVE_NOTES_ROOT=/path/to/project sleeve-notes …` if needed.
 
-**First run** auto-creates `data/sleeve_notes.db` and, if it finds any
-legacy JSON files (`collection.json`, `bpm_cache.json`, `release_cache/`,
-`overrides.json`, etc.), imports them in a single transaction and renames
-the originals to `*.bak`. If you previously had `sleeve_notes.db` at the
-project root (from before the `data/` move), it's relocated automatically
-on first run. Nothing manual to do — just run the pipeline.
-
-If a `.env.example` is not present, just create `.env` from scratch using the template in the next section.
+**First run** auto-creates `data/sleeve_notes.db` with an empty schema. Sign in via the web UI to seed your `users` row; the per-user tables (collection, BPM cache, print runs) fill up as you sync.
 
 ---
 
 ## Credentials & `.env`
 
-All secrets live in `.env` in the repo root. **Never commit this file** — it is already gitignored.
+All secrets live in `.env` in the repo root. **Never commit this file** — it is already gitignored. A `.env.example` ships with every required key documented.
 
-The minimal-but-functional `.env`:
+Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: there's no separate account, no password. Per user, the Discogs access token lives in a signed session cookie on the browser — **never in the server's database**. The server only needs two app-level things in `.env`: the Discogs *consumer* credentials (identifying the app to Discogs) and a session-cookie signing secret. Everything else in `.env` is optional infrastructure for the BPM cascade.
+
+### Minimal `.env`
 
 ```dotenv
-# Discogs — required UNLESS you use --csv with everything in cache
-DISCOGS_TOKEN=your_personal_access_token
-DISCOGS_USERNAME=your_public_discogs_username
+# --- Discogs OAuth (required) -----------------------------------------
+# Register a developer app and paste its consumer credentials below.
+DISCOGS_CONSUMER_KEY=...
+DISCOGS_CONSUMER_SECRET=...
+
+# --- Session cookie signing (required) --------------------------------
+# Long random string. Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(64))"
+SESSION_SECRET=...
 ```
 
-The full `.env`, unlocking every BPM source:
+That's enough to start the web app, sign in with your Discogs account and sync your collection. The BPM cascade still works at reduced coverage without the optional creds below — only sources whose creds are present will be queried.
+
+### Full `.env`, every BPM source enabled
 
 ```dotenv
-# --- Discogs ----------------------------------------------------------
-# Required for API mode. In --csv mode: only used for cache misses
-# (per-release tracklist fetches). DISCOGS_USERNAME is NEVER needed in --csv mode.
-# Token: https://www.discogs.com/settings/developers → "Generate new token"
-DISCOGS_TOKEN=...
-DISCOGS_USERNAME=...
+# (Discogs OAuth + session — see above)
 
-# --- Spotify (for ReccoBeats source) ----------------------------------
+# --- Spotify (for the ReccoBeats source) ------------------------------
 # Free app: https://developer.spotify.com/dashboard → "Create app".
 # Redirect URI can be anything (we use Client Credentials, no user OAuth).
+# App-wide: one set of creds serves every Sleeve Notes user.
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 
-# --- Beatport (for Beatport v4 source) --------------------------------
-# Same email + password you use to log in at beatport.com.
-# Used once by sleeve_notes/beatport_auth.py to mint tokens in .tmp/beatport_tokens.json.
+# --- Beatport (for the Beatport v4 source) ----------------------------
+# Same email + password you use to log in at beatport.com. App-wide.
 BEATPORT_USERNAME=...
 BEATPORT_PASSWORD=...
 
-# --- YouTube (for the per-track "listen" icon, YouTube fallback) ------
-# Powers the per-track listen icon on /tracks and the collection drawer
-# when we don't have a Spotify track ID. Free key, ~100 first-clicks per
-# day before quota runs out. Skip if you don't care about the YouTube
-# fallback — the icon then opens youtube.com/results instead of a video.
-# https://console.cloud.google.com/apis/credentials — enable "YouTube Data API v3".
+# --- YouTube (per-track "listen" icon, YouTube fallback) --------------
+# Free key, ~100 first-clicks per day before quota runs out. Skip if you
+# don't care about the YouTube fallback — the icon then opens
+# youtube.com/results instead of resolving to a specific video.
 YOUTUBE_API_KEY=...
+
+# --- Production-only ----------------------------------------------------
+# Refuse the session cookie over plain HTTP. Default false for localhost dev.
+# SESSION_HTTPS_ONLY=true
 ```
 
 **What happens if a source is missing creds?** The tool prints a notice and skips that source for affected tracks. The cascade simply tries the next source. You can add creds later and re-run — only the previously-skipped source will be retried (see [Resumability](#resumability-caches-and-re-runs)).
 
-### Where to get the Discogs token
+### Where to get the Discogs OAuth credentials
 
 1. Log in at https://www.discogs.com
-2. Visit **Settings → Developers**
-3. Click **Generate new token**
-4. Paste the token into `DISCOGS_TOKEN`. Set `DISCOGS_USERNAME` to your public Discogs username (the one in the URL of your profile).
+2. Visit **Settings → Developers → Create an Application**
+3. Set the **Callback URL** to:
+   - `http://localhost:8765/auth/callback` for local dev
+   - `https://<your-host>/auth/callback` for a production deploy
+4. Copy the **Consumer Key** and **Consumer Secret** into `DISCOGS_CONSUMER_KEY` / `DISCOGS_CONSUMER_SECRET`.
+
+Each end-user who signs in goes through the standard Discogs OAuth authorize flow in their browser — no extra developer accounts on their side.
 
 ### Where to get Spotify creds
 
@@ -172,6 +176,10 @@ YOUTUBE_API_KEY=...
 ### Where to get Beatport creds
 
 Just the email + password you normally use to log in at beatport.com. No developer account or app registration needed — this project uses Beatport's public Swagger client_id and a fully-scripted OAuth flow (no browser). See [Beatport: one-time auth](#beatport-one-time-auth).
+
+### Standalone CLI use (advanced)
+
+The web UI is the normal entry point: it runs the OAuth dance and shells out to `sleeve-notes <subcommand>` with the per-user vars (`DISCOGS_USER_ID`, `DISCOGS_USERNAME`, `DISCOGS_OAUTH_TOKEN`, `DISCOGS_OAUTH_TOKEN_SECRET`) injected into the subprocess env. If you want to run CLI commands directly without the web UI, sign in once via the web UI, then paste those four values into `.env` from your session cookie. The CLI subcommands will refuse to run without all four set.
 
 ---
 
@@ -209,7 +217,7 @@ python sleeve_notes/fetch_discogs_collection.py --csv path/to/your-discogs-expor
 python sleeve_notes/fetch_discogs_collection.py --limit 10
 ```
 
-- **Runtime:** roughly **1.1 s per release** (Discogs allows 60 authenticated req/min). 500 releases ≈ 10 minutes. Unauthenticated CSV mode runs at 2.5 s per release (25 req/min).
+- **Runtime:** roughly **1.1 s per release** (Discogs allows 60 authenticated req/min). 500 releases ≈ 10 minutes. Every request is OAuth-signed with the signed-in user's token.
 - **Output:** rows in `releases` (`basic_information`, `raw_tracklist`, `notes` JSON columns plus the normalized `artist`/`title`/`year`/`rpm`/`type`/`format` columns) and rows in `tracks`. The fetch step now owns both — normalization happens inline. Inspect via `sleeve-notes query releases`.
 - **Resumable:** rows with `raw_tracklist IS NOT NULL` are served from the DB, so re-runs after an interruption finish quickly.
 
@@ -292,7 +300,9 @@ shell out to the `sleeve-notes` CLI subcommands you already know, so the
 behaviour, caches, overrides and print history are identical whether you
 drive things from the terminal or the browser.
 
-The sidebar splits into two sections — **Collection** (data views) and **Actions** (one-shot jobs that shell out to the CLI). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
+Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance, and on return Discogs's `user_id` + `username` are written into the session cookie alongside the access token. The session cookie expires 30 days after issue; before then, refreshes are silent. Sign out via the **Sign out** link in the sidebar footer.
+
+Once signed in, the sidebar splits into two sections — **Collection** (data views) and **Actions** (one-shot jobs that shell out to the CLI). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
 
 | Surface | What it's for |
 |---|---|
@@ -381,13 +391,14 @@ The DB tables in summary:
 
 | Table | What's in it |
 |-------|--------------|
-| `releases` | One row per Discogs release. `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm`, `type`, `format` are the normalized columns populated by `fetch` via `sleeve_notes.ingest.normalize_release`. |
+| `users` | One row per Discogs user that has signed in. `id` is the Discogs user_id; every other per-user table foreign-keys back to it via `user_id`. No tokens stored here — those live in the session cookie. |
+| `releases` | One row per (user, Discogs release). `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm`, `type`, `format` are the normalized columns populated by `fetch` via `sleeve_notes.ingest.normalize_release`. |
 | `tracks` | Normalized track rows. Populated by `fetch` alongside the parent release. |
-| `bpm_cache` | One row per (artist, title) hash. Tracks which sources have been queried. |
-| `bpm_source_hits` | One row per (cache_key, source) — the raw BPM/key/url returned by each source. |
-| `overrides` | Manual BPM/key overrides. Managed via `sleeve-notes overrides`. |
-| `print_runs` + `print_run_releases` | First-class print runs: each row holds a timestamp, optional name and `settings_json` blob, with the join table linking it to the release IDs that were on it. Backs both the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the web Print runs page. |
-| `kv` | Tiny key/value table — Beatport tokens, schema version. |
+| `bpm_cache` | One row per (user, artist, title) hash. Tracks which sources have been queried. |
+| `bpm_source_hits` | One row per (user, cache_key, source) — the raw BPM/key/url returned by each source. |
+| `overrides` | Manual BPM/key overrides. Managed via `sleeve-notes overrides`. Per-user. |
+| `print_runs` + `print_run_releases` | First-class print runs: each row holds a timestamp, optional name and `settings_json` blob, with the join table linking it to the release IDs that were on it. Backs both the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the web Print runs page. Per-user. |
+| `kv` | Tiny key/value table — Beatport tokens, schema version. **App-wide**, not per-user. |
 
 ---
 
@@ -396,10 +407,9 @@ The DB tables in summary:
 Discogs lets you export your collection as a CSV: **Collection → Export → "CSV" (without recommendations)**. The file looks like `yourname-collection-YYYYMMDD-HHMM.csv` and contains one row per release with columns including `release_id` and `CollectionFolder`.
 
 **Why use `--csv` over the API?**
-- Works **without** `DISCOGS_USERNAME`.
-- Works **without `DISCOGS_TOKEN`** if every release is already in your local cache, or if you accept the slower public rate-limit (25 req/min instead of 60). The tool auto-detects which mode you're in and prints the chosen gap and ETA.
 - Deterministic snapshot of your collection at export time (handy when running on a machine that does not have your Discogs creds).
 - Lets you hand the export and the repo to a friend so they can print their own stickers without sharing tokens.
+- The collection-listing API call is skipped (the CSV provides the release_ids directly), so first-time syncs of large collections start their tracklist fetch immediately.
 
 **Why the per-release API is still hit:** the CSV does not contain tracklists, and tracklists are essential for the sticker rows. So Step 1 always fetches `/releases/{id}` per release (unless cached) — only the *collection listing* is bypassed.
 
@@ -412,8 +422,7 @@ Folder filtering in `--csv` mode matches `--folder "NAME"` case-insensitively ag
 Every cache lives in `data/sleeve_notes.db` so you can interrupt and resume safely.
 
 - **`releases.raw_tracklist`** — the per-release Discogs detail. Rows where this is non-NULL are served from the DB and never re-fetched. This is the equivalent of the old `release_cache/<id>.json` files.
-- **`bpm_cache` + `bpm_source_hits`** — one `bpm_cache` row per (artist, title) hash, with `sources_tried` listing which sources have been queried. Each source that returned something gets one `bpm_source_hits` row with the raw `bpm`/`key_camelot`/`url`. Re-runs only call sources that have not yet been queried for that track; consensus is recomputed on the fly so you never re-fetch.
-- **Legacy JSON migration:** on first DB creation, any old `.tmp/*.json` files (incl. `release_cache/`) and the root `overrides.json` are imported into the DB in a single transaction; originals are renamed to `*.bak`. The pre-v2 `bpm_cache.json` shape (flat `cache_key → single_source_hit`) is mapped onto v2 by inferring the source from the `source_url`; entries with an unrecognised URL or no BPM/key are dropped (they'll be re-queried on the next `bpm` run).
+- **`bpm_cache` + `bpm_source_hits`** — one `bpm_cache` row per (user, artist, title) hash, with `sources_tried` listing which sources have been queried. Each source that returned something gets one `bpm_source_hits` row with the raw `bpm`/`key_camelot`/`url`. Re-runs only call sources that have not yet been queried for that track; consensus is recomputed on the fly so you never re-fetch. Every cache table is scoped to the signed-in user — two users querying the same track each maintain their own lookup history.
 - **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
 - **Re-running steps:** `fetch` is cache-aware (rows with a stored `raw_tracklist` skip the network call but still re-normalize). `bpm` and `render` are cache-aware too.
 - **Commit granularity:** `fetch` commits to the DB every 25 releases; `bpm` commits cache rows every 5 cascade runs. So `Ctrl-C` mid-run loses at most a handful of seconds' worth of work.
@@ -568,10 +577,12 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 
 | Symptom | What to do |
 |---|---|
-| `ERROR: set DISCOGS_TOKEN and DISCOGS_USERNAME in .env` | You're in API mode without creds. Add them to `.env`, or use `--csv path/to/export.csv` to bypass the listing API. |
-| `ERROR: <N> releases not cached and DISCOGS_TOKEN missing` (CSV mode) | You don't have a token AND the CSV references releases you've never fetched. Either add `DISCOGS_TOKEN` to `.env`, or be patient — without a token the script falls back to the public endpoint at 25 req/min (2.5 s per release). |
+| `ERROR: DISCOGS_USER_ID, DISCOGS_USERNAME, DISCOGS_OAUTH_TOKEN and DISCOGS_OAUTH_TOKEN_SECRET must all be set` | You're running a CLI subcommand without the per-user OAuth env vars. The web UI injects these automatically — sign in via the browser and trigger the job from there. For standalone CLI use, paste the four values from your session cookie into `.env`. |
+| `ERROR: set DISCOGS_CONSUMER_KEY and DISCOGS_CONSUMER_SECRET in .env` | Your Discogs **app** isn't registered or its consumer credentials aren't in `.env`. Register an application at https://www.discogs.com/settings/developers, set its Callback URL to `<host>/auth/callback`, and paste the consumer key/secret. |
+| `SESSION_SECRET must be set in .env` | The web app refuses to start without a session-cookie signing secret. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. |
 | `Folder 'X' not found` | Pass an existing folder name (case-insensitive). In CSV mode the tool prints the folders present in the CSV; in API mode it prints the folders on your Discogs account. |
-| `401 Unauthorized` from Discogs/Spotify | Token expired or wrong. Re-issue it and update `.env`. |
+| `401 Unauthorized` from Discogs | Your OAuth access token was revoked on the Discogs side. Sign out and back in to refresh. |
+| `401 Unauthorized` from Spotify | Spotify app credentials wrong or expired. Re-issue and update `.env`. |
 | `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `sleeve-notes bpm` retries automatically with a fresh password grant; if that fails, re-run `sleeve-notes auth-beatport`. |
 | HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute, or lower concurrency with `sleeve-notes bpm --workers 4` and try again. |
 | Release shows in `/collection` but is skipped by the renderer | Discogs returned no tracklist for it. List the affected releases with: `sleeve-notes query releases --cols "id,artist,title,type,format" --where "NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)"`. Usually a Discogs submission gap — adding the tracklist on discogs.com and re-running `sleeve-notes fetch` for that release fixes it. |
@@ -596,8 +607,8 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 ├── sleeve_notes/
 │   ├── __init__.py                        ← package marker + project_root() helper
 │   ├── cli.py                             ← `sleeve-notes` subcommand dispatcher
-│   ├── db.py                              ← SQLite schema + connection + JSON migration
-│   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV)
+│   ├── db.py                              ← SQLite schema + connection (declarative, SCHEMA-driven)
+│   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV), OAuth1-signed
 │   ├── ingest.py                          ← per-release normalize: extract fields + tracks
 │   ├── classify.py                        ← derive `type` and `format` from Discogs metadata
 │   ├── fetch_bpm.py                       ← Step 2: 5-source BPM cascade
@@ -606,10 +617,11 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   ├── overrides.py                       ← `sleeve-notes overrides` (manage overrides)
 │   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
 ├── sleeve_notes_web/                      ← localhost web UI (FastAPI + HTMX)
-│   ├── app.py                             ← `sleeve-notes web` entry point
-│   ├── routes/                            ← collection / tracks / print_runs / run / dashboard / actions handlers
-│   ├── services/                          ← thin wrappers that call into sleeve_notes/* engine code
-│   ├── templates/                         ← Jinja templates (base.html + per-page partials)
+│   ├── app.py                             ← `sleeve-notes web` entry point, SessionMiddleware + auth handlers
+│   ├── routes/                            ← auth / collection / tracks / print_runs / run / dashboard / actions handlers
+│   ├── services/                          ← OAuth helpers (auth.py), Depends shims (deps.py),
+│   │                                        JobRunner (jobs.py), stats, sticker preview
+│   ├── templates/                         ← Jinja templates (base.html + landing + per-page partials)
 │   └── static/                            ← app.js + assets served at /static
 └── .tmp/                                  ← disposable cache + final PDF (gitignored)
     ├── stickers.pdf                       ← the only file you actually need to print

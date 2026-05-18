@@ -14,10 +14,11 @@ import re
 import shlex
 import time
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import StreamingResponse
 
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.deps import User, current_user
 from sleeve_notes_web.services.jobs import Job, JobEvent, runner
 
 
@@ -25,7 +26,19 @@ router = APIRouter()
 
 # Banner dismissal — once the user closes a finished job's banner, we hide it
 # until a new job is started. Tracked by job id to avoid race conditions.
+# Single-tenant scope: there is one job at a time globally, so the dismissed
+# state is global too. A per-user queue would need per-user dismiss state.
 _dismissed_job_id: str | None = None
+
+
+def _job_for_user(user: User) -> Job | None:
+    """Return runner.current only if it belongs to this user. Cross-user
+    visibility of job output is hidden — the runner is a global one-job-at-a-
+    time queue today; a per-user queue is a later improvement."""
+    job = runner.current
+    if job is None or job.user_id != user.id:
+        return None
+    return job
 
 
 def _job_title(job: Job) -> str:
@@ -155,16 +168,22 @@ def _banner_context(request: Request, job: Job | None, *, dismissed: bool = Fals
 
 
 @router.get("/run/banner")
-def banner(request: Request):
-    job = runner.current
+def banner(request: Request, user: User = Depends(current_user)):
+    job = _job_for_user(user)
     dismissed = job is not None and job.id == _dismissed_job_id
     return templates.TemplateResponse(
+        request,
         "run/banner.html", _banner_context(request, job, dismissed=dismissed)
     )
 
 
 @router.post("/run/start")
-def start(request: Request, kind: str = Form(...), extra: str = Form("")):
+def start(
+    request: Request,
+    kind: str = Form(...),
+    extra: str = Form(""),
+    user: User = Depends(current_user),
+):
     valid = {"fetch", "bpm", "render", "run"}
     if kind not in valid:
         kind = "run"
@@ -176,44 +195,69 @@ def start(request: Request, kind: str = Form(...), extra: str = Form("")):
             extra_argv = []
     global _dismissed_job_id
     _dismissed_job_id = None
-    runner.start(kind, extra_argv)
+    runner.start(
+        kind, extra_argv,
+        user_id=user.id,
+        username=user.username,
+        discogs_token=user.discogs_token,
+        discogs_token_secret=user.discogs_token_secret,
+    )
     return templates.TemplateResponse(
+        request,
         "run/banner.html",
-        _banner_context(request, runner.current),
+        _banner_context(request, _job_for_user(user)),
         headers={"HX-Trigger": "runStatus"},
     )
 
 
 @router.post("/run/cancel")
-def cancel(request: Request):
-    runner.cancel()
-    job = runner.current
+def cancel(request: Request, user: User = Depends(current_user)):
+    # Only cancel if it's the caller's job; another user can't interrupt yours.
+    if _job_for_user(user) is not None:
+        runner.cancel()
     return templates.TemplateResponse(
+        request,
         "run/banner.html",
-        _banner_context(request, job),
+        _banner_context(request, _job_for_user(user)),
         headers={"HX-Trigger": "runStatus"},
     )
 
 
 @router.post("/run/dismiss")
-def dismiss(request: Request):
+def dismiss(request: Request, user: User = Depends(current_user)):
     global _dismissed_job_id
-    if runner.current is not None:
-        _dismissed_job_id = runner.current.id
+    job = _job_for_user(user)
+    if job is not None:
+        _dismissed_job_id = job.id
     return templates.TemplateResponse(
+        request,
         "run/banner.html", {"request": request, "job": None}
     )
 
 
 @router.get("/run/events")
-async def events(request: Request):
-    """SSE feed of the currently running job's output + status transitions."""
+async def events(request: Request, user: User = Depends(current_user)):
+    """SSE feed of the currently running job's output + status transitions.
+    Only streams events for the caller's job — if a different user's job is
+    in flight, the stream ends immediately."""
+    job = _job_for_user(user)
+    if job is None:
+        async def empty():
+            if False:
+                yield ""  # pragma: no cover  — make this a generator
+        return StreamingResponse(empty(), media_type="text/event-stream")
+
+    target_job_id = job.id
     q: asyncio.Queue[JobEvent] = runner.subscribe()
 
     async def stream():
         try:
             while True:
                 if await request.is_disconnected():
+                    break
+                # If our job got replaced by another user's start(), bail.
+                cur = runner.current
+                if cur is None or cur.id != target_job_id:
                     break
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=15.0)

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.datastructures import FormData
 
@@ -36,6 +36,7 @@ from sleeve_notes.fetch_bpm import (
     save_cache_entry,
 )
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.deps import User, current_user
 
 
 router = APIRouter()
@@ -45,17 +46,23 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _load_precise_overrides(conn: sqlite3.Connection) -> dict[tuple[int, str], dict]:
-    """One row per (release_id, position) override. Other overrides are ignored here."""
+def _load_precise_overrides(
+    conn: sqlite3.Connection, user_id: int
+) -> dict[tuple[int, str], dict]:
+    """One row per (release_id, position) override for this user. Other
+    overrides (broad artist+title matches) are ignored here."""
     rows = conn.execute(
         "SELECT id, release_id, position, bpm, key_camelot, note "
-        "FROM overrides WHERE release_id IS NOT NULL AND position IS NOT NULL"
+        "FROM overrides "
+        "WHERE user_id = ? AND release_id IS NOT NULL AND position IS NOT NULL",
+        (user_id,),
     ).fetchall()
     return {(r["release_id"], r["position"]): dict(r) for r in rows}
 
 
 def _build_row(
     conn: sqlite3.Connection,
+    user_id: int,
     track_row: sqlite3.Row,
     precise: dict[tuple[int, str], dict],
     by_rp: dict,
@@ -71,7 +78,7 @@ def _build_row(
     rel_artist = track_row["r_artist"] or "V/A"
     track_artist = track_row["artist"] or rel_artist
     tr = derive_track_result(
-        conn, track_row["release_id"], track_row["position"] or "",
+        conn, user_id, track_row["release_id"], track_row["position"] or "",
         track_artist, track_row["title"] or "",
         by_rp, by_tk,
     )
@@ -106,41 +113,41 @@ def index(
     filter: str = "all",
     release_id: Optional[int] = None,
     q: Optional[str] = None,
+    user: User = Depends(current_user),
 ):
     if filter not in ("all", "needs_attention", "has_override"):
         filter = "all"
     q = (q or "").strip() or None
 
     with dbmod.session() as conn:
-        precise = _load_precise_overrides(conn)
-        by_rp, by_tk, _ = load_overrides(conn)
+        precise = _load_precise_overrides(conn, user.id)
+        by_rp, by_tk, _ = load_overrides(conn, user.id)
 
         sql = (
             "SELECT t.release_id, t.position, t.artist, t.title, "
             "t.spotify_track_id, "
             "r.artist AS r_artist, r.title AS r_title "
-            "FROM tracks t JOIN releases r ON r.id = t.release_id"
+            "FROM tracks t JOIN releases r "
+            "  ON r.user_id = t.user_id AND r.id = t.release_id "
+            "WHERE t.user_id = ?"
         )
-        params: list = []
-        where: list[str] = []
+        params: list = [user.id]
         if release_id is not None:
-            where.append("t.release_id = ?")
+            sql += " AND t.release_id = ?"
             params.append(release_id)
         if q:
-            where.append(
-                "(LOWER(t.artist) LIKE ? OR LOWER(t.title) LIKE ? "
+            sql += (
+                " AND (LOWER(t.artist) LIKE ? OR LOWER(t.title) LIKE ? "
                 "OR LOWER(r.artist) LIKE ? OR LOWER(r.title) LIKE ?)"
             )
             like = f"%{q.lower()}%"
             params += [like, like, like, like]
-        if where:
-            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY r.artist NULLS LAST, r.title NULLS LAST, t.position"
         track_rows = conn.execute(sql, params).fetchall()
 
         rows = []
         for t in track_rows:
-            row = _build_row(conn, t, precise, by_rp, by_tk)
+            row = _build_row(conn, user.id, t, precise, by_rp, by_tk)
             ovr_row = precise.get((row["release_id"], row["position"]))
             if filter == "needs_attention":
                 if row["bpm"] or ovr_row:
@@ -151,6 +158,7 @@ def index(
             rows.append(row)
 
     return templates.TemplateResponse(
+        request,
         "tracks/index.html",
         {
             "request": request,
@@ -185,14 +193,14 @@ def _parse_form_changes(form: FormData) -> dict[tuple[int, str], dict]:
 
 
 @router.post("/tracks/save")
-async def save(request: Request):
+async def save(request: Request, user: User = Depends(current_user)):
     form = await request.form()
     grouped = _parse_form_changes(form)
     changed = 0
     warnings: list[str] = []
 
     with dbmod.session() as conn:
-        existing = _load_precise_overrides(conn)
+        existing = _load_precise_overrides(conn, user.id)
         for (rid, pos), entry in grouped.items():
             bpm_raw = entry.get("bpm") or ""
             key_raw = entry.get("key") or ""
@@ -224,15 +232,18 @@ async def save(request: Request):
             if empty and current is None:
                 continue  # nothing to do
             if empty and current is not None:
-                conn.execute("DELETE FROM overrides WHERE id = ?", (current["id"],))
+                conn.execute(
+                    "DELETE FROM overrides WHERE id = ? AND user_id = ?",
+                    (current["id"], user.id),
+                )
                 changed += 1
                 continue
             if current is None:
                 conn.execute(
                     "INSERT INTO overrides "
-                    "(release_id, position, bpm, key_camelot, note, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (rid, pos, bpm_val, key_val, note_val, _now_iso()),
+                    "(user_id, release_id, position, bpm, key_camelot, note, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user.id, rid, pos, bpm_val, key_val, note_val, _now_iso()),
                 )
                 changed += 1
             else:
@@ -244,8 +255,9 @@ async def save(request: Request):
                 if same:
                     continue
                 conn.execute(
-                    "UPDATE overrides SET bpm=?, key_camelot=?, note=? WHERE id=?",
-                    (bpm_val, key_val, note_val, current["id"]),
+                    "UPDATE overrides SET bpm=?, key_camelot=?, note=? "
+                    "WHERE id=? AND user_id=?",
+                    (bpm_val, key_val, note_val, current["id"], user.id),
                 )
                 changed += 1
 
@@ -254,7 +266,7 @@ async def save(request: Request):
 
 
 @router.post("/tracks/sync")
-async def sync(request: Request) -> HTMLResponse:
+async def sync(request: Request, user: User = Depends(current_user)) -> HTMLResponse:
     """Re-fetch BPM/key for one track from every source, then re-render its row.
 
     The current row's override inputs are submitted with the request (via
@@ -273,9 +285,10 @@ async def sync(request: Request) -> HTMLResponse:
             "SELECT t.release_id, t.position, t.artist, t.title, "
             "t.spotify_track_id, "
             "r.artist AS r_artist, r.title AS r_title "
-            "FROM tracks t JOIN releases r ON r.id = t.release_id "
-            "WHERE t.release_id = ? AND t.position = ?",
-            (rid, pos),
+            "FROM tracks t JOIN releases r "
+            "  ON r.user_id = t.user_id AND r.id = t.release_id "
+            "WHERE t.user_id = ? AND t.release_id = ? AND t.position = ?",
+            (user.id, rid, pos),
         ).fetchone()
         if track is None:
             return HTMLResponse(f"track {rid}/{pos} not found", status_code=404)
@@ -286,31 +299,38 @@ async def sync(request: Request) -> HTMLResponse:
 
         # Force-refetch: clear the cache row so cascade_all re-runs every source.
         ck = cache_key(track_artist, title)
-        conn.execute("DELETE FROM bpm_source_hits WHERE cache_key = ?", (ck,))
-        conn.execute("DELETE FROM bpm_cache WHERE cache_key = ?", (ck,))
+        conn.execute(
+            "DELETE FROM bpm_source_hits WHERE user_id = ? AND cache_key = ?",
+            (user.id, ck),
+        )
+        conn.execute(
+            "DELETE FROM bpm_cache WHERE user_id = ? AND cache_key = ?",
+            (user.id, ck),
+        )
 
         rl = RateLimiter()
         entry = cascade_all(track_artist, title, prev=None, rl=rl)
-        save_cache_entry(conn, ck, track_artist, title, entry)
+        save_cache_entry(conn, user.id, ck, track_artist, title, entry)
         spot_id = entry.get("spotify_track_id")
         if spot_id:
             conn.execute(
                 "UPDATE tracks SET spotify_track_id = COALESCE(spotify_track_id, ?) "
-                "WHERE release_id = ? AND position = ?",
-                (spot_id, rid, pos),
+                "WHERE user_id = ? AND release_id = ? AND position = ?",
+                (spot_id, user.id, rid, pos),
             )
             # Re-read so _build_row sees the freshly-written ID.
             track = conn.execute(
                 "SELECT t.release_id, t.position, t.artist, t.title, "
                 "t.spotify_track_id, "
                 "r.artist AS r_artist, r.title AS r_title "
-                "FROM tracks t JOIN releases r ON r.id = t.release_id "
-                "WHERE t.release_id = ? AND t.position = ?",
-                (rid, pos),
+                "FROM tracks t JOIN releases r "
+                "  ON r.user_id = t.user_id AND r.id = t.release_id "
+                "WHERE t.user_id = ? AND t.release_id = ? AND t.position = ?",
+                (user.id, rid, pos),
             ).fetchone()
 
-        precise = _load_precise_overrides(conn)
-        by_rp, by_tk, _ = load_overrides(conn)
+        precise = _load_precise_overrides(conn, user.id)
+        by_rp, by_tk, _ = load_overrides(conn, user.id)
 
         # Preserve any in-progress override edits the user submitted with the
         # sync request so they survive the row swap.
@@ -323,16 +343,22 @@ async def sync(request: Request) -> HTMLResponse:
             "note": note_raw or None,
         }
 
-        row = _build_row(conn, track, precise, by_rp, by_tk, override_display=override_display)
+        row = _build_row(conn, user.id, track, precise, by_rp, by_tk,
+                         override_display=override_display)
 
     return templates.TemplateResponse(
+        request,
         "tracks/_row.html",
         {"request": request, "r": row, "just_synced": True},
     )
 
 
 @router.get("/track/listen")
-def listen(release_id: int, position: str) -> RedirectResponse:
+def listen(
+    release_id: int,
+    position: str,
+    user: User = Depends(current_user),
+) -> RedirectResponse:
     """Resolve a track to an external player URL and 302 to it.
 
     Spotify wins when we have the ID (opportunistically captured by the
@@ -345,9 +371,10 @@ def listen(release_id: int, position: str) -> RedirectResponse:
         row = conn.execute(
             "SELECT t.artist, t.title, t.spotify_track_id, t.youtube_video_id, "
             "r.artist AS r_artist "
-            "FROM tracks t JOIN releases r ON r.id = t.release_id "
-            "WHERE t.release_id = ? AND t.position = ?",
-            (release_id, position),
+            "FROM tracks t JOIN releases r "
+            "  ON r.user_id = t.user_id AND r.id = t.release_id "
+            "WHERE t.user_id = ? AND t.release_id = ? AND t.position = ?",
+            (user.id, release_id, position),
         ).fetchone()
         if row is None:
             return RedirectResponse(
@@ -372,8 +399,8 @@ def listen(release_id: int, position: str) -> RedirectResponse:
         if video_id:
             conn.execute(
                 "UPDATE tracks SET youtube_video_id = ? "
-                "WHERE release_id = ? AND position = ?",
-                (video_id, release_id, position),
+                "WHERE user_id = ? AND release_id = ? AND position = ?",
+                (video_id, user.id, release_id, position),
             )
             return RedirectResponse(
                 url=f"https://www.youtube.com/watch?v={video_id}",

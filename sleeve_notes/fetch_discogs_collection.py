@@ -9,6 +9,14 @@ Two sources are supported for the release listing:
 Per-release detail responses are written to the ``releases`` table, which
 doubles as the cache: rows with ``raw_tracklist`` already populated are
 skipped on subsequent runs.
+
+Authenticates via Discogs OAuth 1.0a — every request is HMAC-SHA1 signed
+with the app's consumer credentials (``DISCOGS_CONSUMER_KEY`` /
+``..._SECRET``) plus the per-user token (``DISCOGS_OAUTH_TOKEN`` /
+``..._SECRET``). The user_id and username come from
+``DISCOGS_USER_ID`` / ``DISCOGS_USERNAME``. All four env vars are
+injected by the web ``JobRunner``; for standalone CLI use, set them in
+``.env`` after logging in via the web UI.
 """
 
 from __future__ import annotations
@@ -22,8 +30,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
+from requests_oauthlib import OAuth1Session
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -44,28 +52,30 @@ ROOT = project_root()
 
 API_BASE = "https://api.discogs.com"
 USER_AGENT = "sleeve-notes/0.3 (+https://github.com/GijsHendrickx/sleeve-notes)"
-REQUEST_GAP_S = 1.1            # authenticated: 60 req/min
-REQUEST_GAP_PUBLIC_S = 2.5     # unauthenticated: 25 req/min
+REQUEST_GAP_S = 1.1  # authenticated: 60 req/min
 
 
 class RetryableHTTPError(Exception):
     pass
 
 
-def auth_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Discogs token={token}",
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json",
-    }
-
-
-def public_headers() -> dict[str, str]:
-    """Unauthenticated headers — works for `/releases/{id}` at 25 req/min."""
-    return {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json",
-    }
+def make_oauth_session(token: str, token_secret: str) -> OAuth1Session:
+    """Build a signed session that talks to the Discogs API on behalf of a
+    specific user. Every request gets the User-Agent and Accept headers."""
+    consumer_key = os.environ.get("DISCOGS_CONSUMER_KEY")
+    consumer_secret = os.environ.get("DISCOGS_CONSUMER_SECRET")
+    if not consumer_key or not consumer_secret:
+        raise SystemExit(
+            "ERROR: set DISCOGS_CONSUMER_KEY and DISCOGS_CONSUMER_SECRET in .env"
+        )
+    sess = OAuth1Session(
+        consumer_key,
+        client_secret=consumer_secret,
+        resource_owner_key=token,
+        resource_owner_secret=token_secret,
+    )
+    sess.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
+    return sess
 
 
 @retry(
@@ -74,8 +84,8 @@ def public_headers() -> dict[str, str]:
     stop=stop_after_attempt(6),
     reraise=True,
 )
-def _get(url: str, headers: dict[str, str], params: dict | None = None) -> dict:
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
+def _get(session: OAuth1Session, url: str, params: dict | None = None) -> dict:
+    resp = session.get(url, params=params, timeout=30)
     if resp.status_code == 429 or resp.status_code >= 500:
         retry_after = resp.headers.get("Retry-After")
         if retry_after:
@@ -89,25 +99,27 @@ def _get(url: str, headers: dict[str, str], params: dict | None = None) -> dict:
 
 
 def fetch_collection_page(
-    username: str, folder: int, page: int, headers: dict[str, str]
+    session: OAuth1Session, username: str, folder: int, page: int
 ) -> dict:
     url = f"{API_BASE}/users/{username}/collection/folders/{folder}/releases"
-    return _get(url, headers, params={"per_page": 100, "page": page})
+    return _get(session, url, params={"per_page": 100, "page": page})
 
 
-def list_folders(username: str, headers: dict[str, str]) -> list[dict]:
+def list_folders(session: OAuth1Session, username: str) -> list[dict]:
     url = f"{API_BASE}/users/{username}/collection/folders"
-    data = _get(url, headers)
+    data = _get(session, url)
     return data.get("folders", [])
 
 
-def resolve_folder(folder_arg: str | None, username: str, headers: dict[str, str]) -> tuple[int, str]:
+def resolve_folder(
+    folder_arg: str | None, session: OAuth1Session, username: str
+) -> tuple[int, str]:
     """Return (folder_id, display_name). None/empty → folder 0 (All)."""
     if not folder_arg:
         return 0, "All"
     if folder_arg.isdigit():
         return int(folder_arg), f"id={folder_arg}"
-    folders = list_folders(username, headers)
+    folders = list_folders(session, username)
     needle = folder_arg.strip().lower()
     for f in folders:
         if (f.get("name") or "").strip().lower() == needle:
@@ -116,17 +128,19 @@ def resolve_folder(folder_arg: str | None, username: str, headers: dict[str, str
     raise SystemExit(f"Folder {folder_arg!r} not found. Available folders: {names}")
 
 
-def is_cached(conn, release_id: int) -> bool:
-    """A release counts as cached once we've stored its tracklist."""
+def is_cached(conn, user_id: int, release_id: int) -> bool:
+    """A release counts as cached once we've stored its tracklist for that user."""
     row = conn.execute(
-        "SELECT 1 FROM releases WHERE id = ? AND raw_tracklist IS NOT NULL",
-        (release_id,),
+        "SELECT 1 FROM releases "
+        "WHERE user_id = ? AND id = ? AND raw_tracklist IS NOT NULL",
+        (user_id, release_id),
     ).fetchone()
     return row is not None
 
 
 def upsert_release_detail(
     conn,
+    user_id: int,
     release_id: int,
     basic: dict,
     tracklist: list,
@@ -136,15 +150,16 @@ def upsert_release_detail(
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute(
         """
-        INSERT INTO releases (id, basic_information, raw_tracklist, notes, fetched_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET
+        INSERT INTO releases (user_id, id, basic_information, raw_tracklist, notes, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, id) DO UPDATE SET
             basic_information = excluded.basic_information,
             raw_tracklist     = excluded.raw_tracklist,
             notes             = excluded.notes,
             fetched_at        = excluded.fetched_at
         """,
         (
+            user_id,
             release_id,
             json.dumps(basic or {}, ensure_ascii=False),
             json.dumps(tracklist or [], ensure_ascii=False),
@@ -152,15 +167,15 @@ def upsert_release_detail(
             now,
         ),
     )
-    normalize_release(conn, release_id, basic or {}, tracklist or [])
+    normalize_release(conn, user_id, release_id, basic or {}, tracklist or [])
 
 
 def fetch_release_detail(
-    release_id: int, headers: dict[str, str], gap_s: float = REQUEST_GAP_S
+    session: OAuth1Session, release_id: int, gap_s: float = REQUEST_GAP_S
 ) -> dict:
     """Fetch a release detail from the Discogs API. Caller checks the DB cache."""
     url = f"{API_BASE}/releases/{release_id}"
-    detail = _get(url, headers)
+    detail = _get(session, url)
     time.sleep(gap_s)
     return detail
 
@@ -228,6 +243,29 @@ def basic_from_detail(detail: dict) -> dict:
     }
 
 
+def _require_oauth_env() -> tuple[int, str, str, str]:
+    """Read the four per-user env vars set by the web JobRunner (or by the
+    developer in .env for standalone CLI use). Bails with a clear error if
+    any are missing."""
+    load_dotenv(ROOT / ".env")
+    uid_raw = os.environ.get("DISCOGS_USER_ID")
+    username = os.environ.get("DISCOGS_USERNAME")
+    token = os.environ.get("DISCOGS_OAUTH_TOKEN")
+    token_secret = os.environ.get("DISCOGS_OAUTH_TOKEN_SECRET")
+    if not (uid_raw and username and token and token_secret):
+        raise SystemExit(
+            "ERROR: DISCOGS_USER_ID, DISCOGS_USERNAME, DISCOGS_OAUTH_TOKEN and "
+            "DISCOGS_OAUTH_TOKEN_SECRET must all be set. Log in via the web UI "
+            "to populate them automatically, or extract them from your session "
+            "for CLI use."
+        )
+    try:
+        uid = int(uid_raw)
+    except ValueError:
+        raise SystemExit(f"ERROR: DISCOGS_USER_ID must be an integer, got {uid_raw!r}")
+    return uid, username, token, token_secret
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -248,17 +286,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None, help="Stop after N releases")
     args = parser.parse_args(argv)
 
-    load_dotenv(ROOT / ".env")
-    token = os.environ.get("DISCOGS_TOKEN")
-    username = os.environ.get("DISCOGS_USERNAME")
+    user_id, username, token, token_secret = _require_oauth_env()
+    session = make_oauth_session(token, token_secret)
 
     with dbmod.session() as conn:
         if args.csv:
-            return _run_csv_path(conn, args, token)
-        return _run_api_path(conn, args, token, username)
+            return _run_csv_path(conn, args, session, user_id)
+        return _run_api_path(conn, args, session, user_id, username)
 
 
-def _run_csv_path(conn, args, token: str | None) -> int:
+def _run_csv_path(conn, args, session: OAuth1Session, user_id: int) -> int:
     csv_path = Path(args.csv).expanduser()
     if not csv_path.is_absolute():
         csv_path = (ROOT / csv_path).resolve()
@@ -282,42 +319,29 @@ def _run_csv_path(conn, args, token: str | None) -> int:
         f"(folder {folder_label!r})"
     )
 
-    missing = [rid for rid in release_ids if not is_cached(conn, rid)]
-    headers: dict[str, str] = {}
-    gap_s = REQUEST_GAP_S
+    missing = [rid for rid in release_ids if not is_cached(conn, user_id, rid)]
     if missing:
-        if token:
-            headers = auth_headers(token)
-            gap_s = REQUEST_GAP_S
-            mode_label = "authenticated"
-        else:
-            headers = public_headers()
-            gap_s = REQUEST_GAP_PUBLIC_S
-            mode_label = "unauthenticated"
-        eta_min = len(missing) * gap_s / 60
+        eta_min = len(missing) * REQUEST_GAP_S / 60
         print(
             f"  {len(missing)} releases need a tracklist fetch "
-            f"({mode_label}, {gap_s:.1f}s gap, ~{eta_min:.1f} min); "
-            "rest served from cache."
+            f"({REQUEST_GAP_S:.1f}s gap, ~{eta_min:.1f} min); rest served from cache."
         )
-        if not token:
-            print(
-                "  TIP: set DISCOGS_TOKEN in .env for ~2× faster fetches (60 req/min)."
-            )
     else:
         print("  all releases already cached; no API calls needed.")
 
     fetched = 0
     for i, rid in enumerate(release_ids, start=1):
-        if is_cached(conn, rid):
+        if is_cached(conn, user_id, rid):
             continue
         try:
-            detail = fetch_release_detail(rid, headers, gap_s)
+            detail = fetch_release_detail(session, rid)
         except Exception as e:
             print(f"  [{i}/{len(release_ids)}] release {rid}: ERROR {e}", file=sys.stderr)
             continue
         upsert_release_detail(
-            conn, rid,
+            conn,
+            user_id,
+            rid,
             basic_from_detail(detail),
             detail.get("tracklist") or [],
             detail.get("notes"),
@@ -329,7 +353,9 @@ def _run_csv_path(conn, args, token: str | None) -> int:
     conn.commit()
 
     total_cached = conn.execute(
-        "SELECT COUNT(*) AS n FROM releases WHERE raw_tracklist IS NOT NULL"
+        "SELECT COUNT(*) AS n FROM releases "
+        "WHERE user_id = ? AND raw_tracklist IS NOT NULL",
+        (user_id,),
     ).fetchone()["n"]
     print(
         f"Stored {len(release_ids)} releases in {dbmod.db_path().name} "
@@ -338,16 +364,12 @@ def _run_csv_path(conn, args, token: str | None) -> int:
     return 0
 
 
-def _run_api_path(conn, args, token: str | None, username: str | None) -> int:
-    if not token or not username:
-        print("ERROR: set DISCOGS_TOKEN and DISCOGS_USERNAME in .env", file=sys.stderr)
-        return 2
-
-    headers = auth_headers(token)
-
-    folder_id, folder_name = resolve_folder(args.folder, username, headers)
+def _run_api_path(
+    conn, args, session: OAuth1Session, user_id: int, username: str
+) -> int:
+    folder_id, folder_name = resolve_folder(args.folder, session, username)
     print(f"Fetching collection for {username}, folder {folder_name!r} (id={folder_id})...")
-    first = fetch_collection_page(username, folder_id, 1, headers)
+    first = fetch_collection_page(session, username, folder_id, 1)
     pages = first.get("pagination", {}).get("pages", 1)
     total = first.get("pagination", {}).get("items", 0)
     print(f"  pagination: {pages} pages, {total} items")
@@ -356,7 +378,7 @@ def _run_api_path(conn, args, token: str | None, username: str | None) -> int:
     basics.extend(first.get("releases", []))
     for page in range(2, pages + 1):
         time.sleep(REQUEST_GAP_S)
-        data = fetch_collection_page(username, folder_id, page, headers)
+        data = fetch_collection_page(session, username, folder_id, page)
         basics.extend(data.get("releases", []))
         print(f"  page {page}/{pages}: {len(basics)} releases so far")
         if args.limit and len(basics) >= args.limit:
@@ -373,15 +395,18 @@ def _run_api_path(conn, args, token: str | None, username: str | None) -> int:
         release_id = basic.get("id")
         if not release_id:
             continue
-        if is_cached(conn, release_id):
+        if is_cached(conn, user_id, release_id):
             continue
         try:
-            detail = fetch_release_detail(release_id, headers)
+            detail = fetch_release_detail(session, release_id)
         except Exception as e:
             print(f"  [{i}/{len(basics)}] release {release_id}: ERROR {e}", file=sys.stderr)
             continue
         upsert_release_detail(
-            conn, release_id, basic,
+            conn,
+            user_id,
+            release_id,
+            basic,
             detail.get("tracklist") or [],
             detail.get("notes"),
         )
@@ -392,7 +417,9 @@ def _run_api_path(conn, args, token: str | None, username: str | None) -> int:
     conn.commit()
 
     total_cached = conn.execute(
-        "SELECT COUNT(*) AS n FROM releases WHERE raw_tracklist IS NOT NULL"
+        "SELECT COUNT(*) AS n FROM releases "
+        "WHERE user_id = ? AND raw_tracklist IS NOT NULL",
+        (user_id,),
     ).fetchone()["n"]
     print(
         f"Stored {len(basics)} releases in {dbmod.db_path().name} "

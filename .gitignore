@@ -5,6 +5,8 @@ token.json
 data/
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
 .DS_Store
 .claude/settings.local.json
 todos.md

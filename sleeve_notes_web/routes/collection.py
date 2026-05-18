@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from sleeve_notes import db as dbmod
 from sleeve_notes import sticker_layout as L
 from sleeve_notes.fetch_bpm import derive_track_result, load_overrides
 from sleeve_notes.generate_sticker_pdf import build_bpm_lookup
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.deps import User, current_user
 from sleeve_notes_web.services.preview import render_release_stickers_svg
 
 
@@ -31,22 +32,22 @@ def _cover_url(basic: dict) -> str | None:
     return basic.get("thumb") or basic.get("cover_image") or None
 
 
-def _release_for_render(conn, release_id: int) -> dict | None:
+def _release_for_render(conn, user_id: int, release_id: int) -> dict | None:
     """Build a release dict in the shape ``render_release_stickers_svg`` expects.
 
     Mirrors ``generate_sticker_pdf.load_releases_for_render`` but for a single ID.
     """
     r = conn.execute(
         "SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
-        "FROM releases WHERE id = ?",
-        (release_id,),
+        "FROM releases WHERE user_id = ? AND id = ?",
+        (user_id, release_id),
     ).fetchone()
     if r is None:
         return None
     tracks = conn.execute(
         "SELECT position, side, artist, title, duration, duration_s "
-        "FROM tracks WHERE release_id = ? ORDER BY position",
-        (release_id,),
+        "FROM tracks WHERE user_id = ? AND release_id = ? ORDER BY position",
+        (user_id, release_id),
     ).fetchall()
     def _jl(raw, default):
         if not raw:
@@ -88,9 +89,10 @@ def index(
     bpm: Optional[str] = None,
     type: Optional[str] = None,
     format: Optional[str] = None,
+    user: User = Depends(current_user),
 ):
-    where = []
-    params: list = []
+    where = ["r.user_id = ?"]
+    params: list = [user.id]
     if q:
         where.append("(LOWER(r.artist) LIKE ? OR LOWER(r.title) LIKE ?)")
         like = f"%{q.lower()}%"
@@ -101,20 +103,27 @@ def index(
     if format:
         where.append("r.format = ?")
         params.append(format)
-    sql_where = (" WHERE " + " AND ".join(where)) if where else ""
+    sql_where = " WHERE " + " AND ".join(where)
 
     with dbmod.session() as conn:
-        total = conn.execute("SELECT COUNT(*) AS n FROM releases").fetchone()["n"]
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM releases WHERE user_id = ?",
+            (user.id,),
+        ).fetchone()["n"]
         type_options = [
             r["type"] for r in conn.execute(
-                "SELECT type, COUNT(*) AS n FROM releases WHERE type IS NOT NULL "
-                "GROUP BY type ORDER BY n DESC"
+                "SELECT type, COUNT(*) AS n FROM releases "
+                "WHERE user_id = ? AND type IS NOT NULL "
+                "GROUP BY type ORDER BY n DESC",
+                (user.id,),
             ).fetchall()
         ]
         format_options = [
             r["format"] for r in conn.execute(
-                "SELECT format, COUNT(*) AS n FROM releases WHERE format IS NOT NULL "
-                "GROUP BY format ORDER BY n DESC"
+                "SELECT format, COUNT(*) AS n FROM releases "
+                "WHERE user_id = ? AND format IS NOT NULL "
+                "GROUP BY format ORDER BY n DESC",
+                (user.id,),
             ).fetchall()
         ]
         rows_raw = conn.execute(
@@ -124,20 +133,21 @@ def index(
             params,
         ).fetchall()
 
-        by_rp, by_tk, _ = load_overrides(conn)
+        by_rp, by_tk, _ = load_overrides(conn, user.id)
         rows = []
         for r in rows_raw:
             basic = _basic_info(r["basic_information"])
             track_rows = conn.execute(
-                "SELECT position, artist, title FROM tracks WHERE release_id = ?",
-                (r["id"],),
+                "SELECT position, artist, title FROM tracks "
+                "WHERE user_id = ? AND release_id = ?",
+                (user.id, r["id"]),
             ).fetchall()
             tracks_total = len(track_rows)
             tracks_with_bpm = 0
             rel_artist = r["artist"] or "V/A"
             for t in track_rows:
                 tr = derive_track_result(
-                    conn, r["id"], t["position"] or "",
+                    conn, user.id, r["id"], t["position"] or "",
                     t["artist"] or rel_artist, t["title"] or "",
                     by_rp, by_tk,
                 )
@@ -161,6 +171,7 @@ def index(
             })
 
     return templates.TemplateResponse(
+        request,
         "collection/index.html",
         {
             "request": request,
@@ -178,12 +189,12 @@ def index(
 
 
 @router.get("/collection/{release_id}")
-def detail(request: Request, release_id: int):
+def detail(request: Request, release_id: int, user: User = Depends(current_user)):
     with dbmod.session() as conn:
         r = conn.execute(
             "SELECT id, artist, title, year, compilation, type, format, "
-            "basic_information FROM releases WHERE id = ?",
-            (release_id,),
+            "basic_information FROM releases WHERE user_id = ? AND id = ?",
+            (user.id, release_id),
         ).fetchone()
         if r is None:
             raise HTTPException(status_code=404, detail="release not found")
@@ -191,16 +202,16 @@ def detail(request: Request, release_id: int):
         basic = _basic_info(r["basic_information"])
 
         tracks_out: list[dict] = []
-        by_rp, by_tk, _ = load_overrides(conn)
+        by_rp, by_tk, _ = load_overrides(conn, user.id)
         track_rows = conn.execute(
             "SELECT position, artist, title, duration, duration_s, spotify_track_id "
-            "FROM tracks WHERE release_id = ? ORDER BY position",
-            (release_id,),
+            "FROM tracks WHERE user_id = ? AND release_id = ? ORDER BY position",
+            (user.id, release_id),
         ).fetchall()
         rel_artist = r["artist"] or "V/A"
         for t in track_rows:
             tr = derive_track_result(
-                conn, release_id, t["position"] or "",
+                conn, user.id, release_id, t["position"] or "",
                 t["artist"] or rel_artist, t["title"] or "",
                 by_rp, by_tk,
             )
@@ -234,11 +245,11 @@ def detail(request: Request, release_id: int):
 
         svgs: list[str] = []
         svg_error: str | None = None
-        render_rel = _release_for_render(conn, release_id)
+        render_rel = _release_for_render(conn, user.id, release_id)
         if render_rel and render_rel["tracks"]:
             try:
                 layout = L.derive_layout(L.DEFAULT_STICKER_W_MM, L.DEFAULT_STICKER_H_MM)
-                bpm_lookup = build_bpm_lookup(conn, [render_rel])
+                bpm_lookup = build_bpm_lookup(conn, user.id, [render_rel])
                 svgs = render_release_stickers_svg(
                     render_rel, bpm_lookup[render_rel["id"]], layout
                 )
@@ -246,6 +257,7 @@ def detail(request: Request, release_id: int):
                 svg_error = str(e)
 
     return templates.TemplateResponse(
+        request,
         "collection/release_detail.html",
         {"request": request, "release": release, "svgs": svgs, "svg_error": svg_error},
     )

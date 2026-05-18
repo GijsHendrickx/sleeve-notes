@@ -10,7 +10,8 @@ Routes:
   GET  /print-runs/svg         live sticker SVG fragment for the editor
 
 The PDF endpoint shells out to ``sleeve-notes render --print-run-id N`` so the
-render code path is identical to the CLI.
+render code path is identical to the CLI. The subprocess inherits the
+parent env *plus* the per-user OAuth vars derived from the session.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
 from sleeve_notes import db as dbmod
@@ -39,6 +40,7 @@ from sleeve_notes.generate_sticker_pdf import (
     releases_by_ids,
 )
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.deps import User, current_user
 from sleeve_notes_web.services.preview import render_release_stickers_svg
 
 
@@ -49,14 +51,17 @@ router = APIRouter()
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _editor_release_rows(conn) -> list[dict]:
-    """Lightweight rows for the editor's release list — one query."""
+def _editor_release_rows(conn, user_id: int) -> list[dict]:
+    """Lightweight rows for the editor's release list — one query, one user."""
     rows = conn.execute(
         "SELECT r.id, r.artist, r.title, r.year, "
-        "       (SELECT COUNT(*) FROM tracks t WHERE t.release_id = r.id) AS track_count "
+        "       (SELECT COUNT(*) FROM tracks t "
+        "        WHERE t.user_id = r.user_id AND t.release_id = r.id) AS track_count "
         "FROM releases r "
-        "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
-        "ORDER BY COALESCE(r.artist, ''), COALESCE(r.title, ''), r.id"
+        "WHERE r.user_id = ? "
+        "AND EXISTS (SELECT 1 FROM tracks t WHERE t.user_id = r.user_id AND t.release_id = r.id) "
+        "ORDER BY COALESCE(r.artist, ''), COALESCE(r.title, ''), r.id",
+        (user_id,),
     ).fetchall()
     return [
         {
@@ -97,14 +102,16 @@ def _settings_summary(settings: dict) -> str:
     return " · ".join(parts)
 
 
-def _render_preview_svgs(conn, focus_id: Optional[int], settings: dict):
+def _render_preview_svgs(
+    conn, user_id: int, focus_id: Optional[int], settings: dict
+):
     """Render the SVG preview for a single release at the given settings.
 
     Returns (svgs, error_str, release_obj). The caller decides how to display.
     """
     if focus_id is None:
         return [], "No release selected for preview.", None
-    releases = releases_by_ids(conn, [int(focus_id)])
+    releases = releases_by_ids(conn, user_id, [int(focus_id)])
     if not releases:
         return [], "Release has no tracks to preview.", None
     release = releases[0]
@@ -115,7 +122,7 @@ def _render_preview_svgs(conn, focus_id: Optional[int], settings: dict):
         )
     except ValueError as e:
         return [], str(e), release
-    bpm_lookup = build_bpm_lookup(conn, [release])
+    bpm_lookup = build_bpm_lookup(conn, user_id, [release])
     svgs = render_release_stickers_svg(
         release, bpm_lookup[release["id"]], layout,
         qr=settings["qr"],
@@ -136,12 +143,13 @@ def _render_preview_svgs(conn, focus_id: Optional[int], settings: dict):
 # ---------------------------------------------------------------------------
 
 @router.get("/print-runs")
-def list_view(request: Request):
+def list_view(request: Request, user: User = Depends(current_user)):
     with dbmod.session() as conn:
-        runs = list_print_runs(conn)
+        runs = list_print_runs(conn, user.id)
     for r in runs:
         r["settings_summary"] = _settings_summary(r["settings"]) if r["settings"] else None
     return templates.TemplateResponse(
+        request,
         "print_runs/list.html",
         {"request": request, "active": "print_runs", "runs": runs},
     )
@@ -152,15 +160,16 @@ def new(
     request: Request,
     duplicate_from: Optional[int] = None,
     release_id: Optional[int] = None,
+    user: User = Depends(current_user),
 ):
     with dbmod.session() as conn:
-        releases = _editor_release_rows(conn)
-        printed_ids = already_printed_ids(conn)
+        releases = _editor_release_rows(conn, user.id)
+        printed_ids = already_printed_ids(conn, user.id)
 
         source_name: Optional[str] = None
         if duplicate_from is not None:
             try:
-                source = load_print_run(conn, duplicate_from)
+                source = load_print_run(conn, user.id, duplicate_from)
                 checked = set(source["release_ids"])
                 settings = source["settings"]
                 source_name = source["name"] or source["timestamp"]
@@ -183,9 +192,12 @@ def new(
                 break
         if sample_id is None and releases:
             sample_id = releases[0]["id"]
-        svgs, svg_error, sample_release = _render_preview_svgs(conn, sample_id, settings)
+        svgs, svg_error, sample_release = _render_preview_svgs(
+            conn, user.id, sample_id, settings
+        )
 
     return templates.TemplateResponse(
+        request,
         "print_runs/editor.html",
         {
             "request": request,
@@ -204,28 +216,38 @@ def new(
 
 
 @router.get("/print-runs/svg")
-async def svg_fragment(request: Request, focus_id: Optional[int] = None):
+async def svg_fragment(
+    request: Request,
+    focus_id: Optional[int] = None,
+    user: User = Depends(current_user),
+):
     """HTMX fragment: render one release as inline SVG at the current settings.
 
     Registered before /print-runs/{run_id} so ``svg`` isn't parsed as a run id.
     """
     settings = _read_settings_form(request.query_params)
     with dbmod.session() as conn:
-        svgs, error, release = _render_preview_svgs(conn, focus_id, settings)
+        svgs, error, release = _render_preview_svgs(conn, user.id, focus_id, settings)
     return templates.TemplateResponse(
+        request,
         "print_runs/_svg.html",
         {"request": request, "svgs": svgs, "error": error, "release": release},
     )
 
 
 @router.get("/print-runs/preview-modal")
-async def preview_modal(request: Request, release_id: int):
+async def preview_modal(
+    request: Request,
+    release_id: int,
+    user: User = Depends(current_user),
+):
     """HTMX fragment: full modal dialog showing a single release's sticker(s)
     rendered with the settings hx-included from the editor's step 1 form."""
     settings = _read_settings_form(request.query_params)
     with dbmod.session() as conn:
-        svgs, error, release = _render_preview_svgs(conn, release_id, settings)
+        svgs, error, release = _render_preview_svgs(conn, user.id, release_id, settings)
     return templates.TemplateResponse(
+        request,
         "print_runs/_preview_modal.html",
         {
             "request": request,
@@ -238,7 +260,7 @@ async def preview_modal(request: Request, release_id: int):
 
 
 @router.post("/print-runs")
-async def create(request: Request):
+async def create(request: Request, user: User = Depends(current_user)):
     form = await request.form()
     name = (form.get("name") or "").strip() or None
     release_ids = [int(v) for v in form.getlist("release_id") if v]
@@ -246,22 +268,23 @@ async def create(request: Request):
         raise HTTPException(status_code=400, detail="Select at least one release.")
     settings = _read_settings_form(form)
     with dbmod.session() as conn:
-        run_id = create_print_run(conn, release_ids, settings, name=name)
+        run_id = create_print_run(conn, user.id, release_ids, settings, name=name)
     return RedirectResponse(url=f"/print-runs/{run_id}", status_code=303)
 
 
 @router.get("/print-runs/{run_id}")
-def detail(request: Request, run_id: int):
+def detail(request: Request, run_id: int, user: User = Depends(current_user)):
     with dbmod.session() as conn:
         try:
-            run = load_print_run(conn, run_id)
+            run = load_print_run(conn, user.id, run_id)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Print run {run_id} not found")
-        releases = releases_by_ids(conn, run["release_ids"])
+        releases = releases_by_ids(conn, user.id, run["release_ids"])
         # Releases removed from collection since the run was created:
         present_ids = {r["id"] for r in releases}
         missing_ids = [rid for rid in run["release_ids"] if rid not in present_ids]
     return templates.TemplateResponse(
+        request,
         "print_runs/detail.html",
         {
             "request": request,
@@ -275,11 +298,11 @@ def detail(request: Request, run_id: int):
 
 
 @router.get("/print-runs/{run_id}/pdf")
-def pdf(run_id: int):
+def pdf(run_id: int, user: User = Depends(current_user)):
     """Re-render the run from its saved releases + settings, stream PDF."""
     with dbmod.session() as conn:
         try:
-            run = load_print_run(conn, run_id)
+            run = load_print_run(conn, user.id, run_id)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Print run {run_id} not found")
 
@@ -291,6 +314,11 @@ def pdf(run_id: int):
     ]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env.pop("DISCOGS_TOKEN", None)
+    env["DISCOGS_USER_ID"] = str(user.id)
+    env["DISCOGS_USERNAME"] = user.username
+    env["DISCOGS_OAUTH_TOKEN"] = user.discogs_token
+    env["DISCOGS_OAUTH_TOKEN_SECRET"] = user.discogs_token_secret
     result = subprocess.run(argv, env=env, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(
@@ -306,7 +334,7 @@ def pdf(run_id: int):
 
 
 @router.post("/print-runs/{run_id}/delete")
-def delete(run_id: int):
+def delete(run_id: int, user: User = Depends(current_user)):
     with dbmod.session() as conn:
-        delete_print_run(conn, run_id)
+        delete_print_run(conn, user.id, run_id)
     return RedirectResponse(url="/print-runs", status_code=303)

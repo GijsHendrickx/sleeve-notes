@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import shutil
 import uuid
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from sleeve_notes import db as sleeve_db, project_root
 from sleeve_notes_web._deps import templates
+from sleeve_notes_web.services.deps import User, current_user
 from sleeve_notes_web.services.jobs import runner
 
 
@@ -27,18 +27,18 @@ router = APIRouter(prefix="/actions")
 # Modal partials ---------------------------------------------------------------
 
 @router.get("/discogs-sync", response_class=HTMLResponse)
-def modal_discogs_sync(request: Request):
-    return templates.TemplateResponse("actions/discogs_sync.html", {"request": request})
+def modal_discogs_sync(request: Request, user: User = Depends(current_user)):
+    return templates.TemplateResponse(request, "actions/discogs_sync.html", {"request": request})
 
 
 @router.get("/discogs-import", response_class=HTMLResponse)
-def modal_discogs_import(request: Request):
-    return templates.TemplateResponse("actions/discogs_import.html", {"request": request})
+def modal_discogs_import(request: Request, user: User = Depends(current_user)):
+    return templates.TemplateResponse(request, "actions/discogs_import.html", {"request": request})
 
 
 @router.get("/bpm", response_class=HTMLResponse)
-def modal_bpm(request: Request):
-    return templates.TemplateResponse("actions/bpm.html", {"request": request})
+def modal_bpm(request: Request, user: User = Depends(current_user)):
+    return templates.TemplateResponse(request, "actions/bpm.html", {"request": request})
 
 
 @router.get("/close", response_class=HTMLResponse)
@@ -68,10 +68,25 @@ def _refused_response(reason: str) -> HTMLResponse:
     return HTMLResponse(body)
 
 
-@router.post("/discogs-sync/start", response_class=HTMLResponse)
-def start_discogs_sync(folder: str = Form(""), limit: str = Form("")) -> HTMLResponse:
+def _kickoff(user: User, kind: str, argv: list[str]) -> HTMLResponse:
     if runner.current is not None and runner.current.status == "running":
         return _refused_response("Another job is already running — wait for it to finish.")
+    runner.start(
+        kind, argv,
+        user_id=user.id,
+        username=user.username,
+        discogs_token=user.discogs_token,
+        discogs_token_secret=user.discogs_token_secret,
+    )
+    return _started_response()
+
+
+@router.post("/discogs-sync/start", response_class=HTMLResponse)
+def start_discogs_sync(
+    folder: str = Form(""),
+    limit: str = Form(""),
+    user: User = Depends(current_user),
+) -> HTMLResponse:
     argv: list[str] = []
     if folder.strip():
         argv += ["--folder", folder.strip()]
@@ -82,17 +97,15 @@ def start_discogs_sync(folder: str = Form(""), limit: str = Form("")) -> HTMLRes
                 argv += ["--limit", str(n)]
         except ValueError:
             pass
-    runner.start("fetch", argv)
-    return _started_response()
+    return _kickoff(user, "fetch", argv)
 
 
 @router.post("/discogs-import/start", response_class=HTMLResponse)
 async def start_discogs_import(
     csv: UploadFile = File(...),
     folder: str = Form(""),
+    user: User = Depends(current_user),
 ) -> HTMLResponse:
-    if runner.current is not None and runner.current.status == "running":
-        return _refused_response("Another job is already running — wait for it to finish.")
     if not csv.filename:
         return _refused_response("No CSV file selected.")
     uploads = project_root() / ".tmp" / "uploads"
@@ -104,21 +117,26 @@ async def start_discogs_import(
     argv: list[str] = ["--csv", str(dest)]
     if folder.strip():
         argv += ["--folder", folder.strip()]
-    runner.start("fetch", argv)
-    return _started_response()
+    return _kickoff(user, "fetch", argv)
 
 
 @router.post("/bpm/start", response_class=HTMLResponse)
-def start_bpm(force: str = Form("")) -> HTMLResponse:
-    if runner.current is not None and runner.current.status == "running":
-        return _refused_response("Another job is already running — wait for it to finish.")
+def start_bpm(
+    force: str = Form(""),
+    user: User = Depends(current_user),
+) -> HTMLResponse:
     if force == "1":
         conn = sleeve_db.connect()
         try:
             with conn:
-                conn.execute("DELETE FROM bpm_source_hits")
-                conn.execute("DELETE FROM bpm_cache")
+                conn.execute(
+                    "DELETE FROM bpm_source_hits WHERE user_id = ?",
+                    (user.id,),
+                )
+                conn.execute(
+                    "DELETE FROM bpm_cache WHERE user_id = ?",
+                    (user.id,),
+                )
         finally:
             conn.close()
-    runner.start("bpm", [])
-    return _started_response()
+    return _kickoff(user, "bpm", [])

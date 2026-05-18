@@ -102,14 +102,15 @@ def extract_rpms(formats: list[dict]) -> list[str]:
 
 def normalize_release(
     conn: sqlite3.Connection,
+    user_id: int,
     release_id: int,
     basic: dict,
     tracklist: list[dict],
 ) -> None:
     """Extract release fields, classify, and (re)write the tracks rows.
 
-    Idempotent: existing track rows for the release are replaced. Raw
-    ``basic_information`` / ``raw_tracklist`` must already be in place
+    Idempotent: existing track rows for the (user, release) are replaced.
+    Raw ``basic_information`` / ``raw_tracklist`` must already be in place
     (the caller's INSERT runs first).
     """
     release_artists = basic.get("artists") or []
@@ -136,7 +137,7 @@ def normalize_release(
             rpm = ?,
             type = ?,
             format = ?
-        WHERE id = ?
+        WHERE user_id = ? AND id = ?
         """,
         (
             release_artist or "V/A",
@@ -152,18 +153,23 @@ def normalize_release(
             json.dumps(extract_rpms(formats), ensure_ascii=False),
             type_,
             fmt,
+            user_id,
             release_id,
         ),
     )
 
-    conn.execute("DELETE FROM tracks WHERE release_id = ?", (release_id,))
+    conn.execute(
+        "DELETE FROM tracks WHERE user_id = ? AND release_id = ?",
+        (user_id, release_id),
+    )
     for t in tracks:
         conn.execute(
             """
-            INSERT INTO tracks (release_id, position, side, artist, title, duration, duration_s)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tracks (user_id, release_id, position, side, artist, title, duration, duration_s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 release_id,
                 t["position"],
                 t["side"],

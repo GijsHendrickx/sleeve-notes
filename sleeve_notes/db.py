@@ -1,43 +1,35 @@
 """SQLite store for sleeve-notes.
 
-A single DB file at ``<project_root>/data/sleeve_notes.db`` replaces every JSON
-file that used to live in ``.tmp/`` (plus ``overrides.json`` at root). The
-schema is intentionally close to the old JSONs so the cascade/consensus
-logic in ``fetch_bpm.py`` stays unchanged in shape; we just persist via
-rows instead of nested dicts.
+A single DB file at ``<project_root>/data/sleeve_notes.db`` holds all
+state for the app. Tables:
 
-Tables:
-
-  releases             one row per Discogs release. Holds the raw API
-                       payload (``basic_information``, ``raw_tracklist``,
-                       ``notes``) and the normalized columns derived from
-                       it (``artist``, ``title``, ``rpm``, ``type``,
-                       ``format``, ...). All normalization happens at fetch
-                       time via ``sleeve_notes.ingest.normalize_release``.
-  tracks               normalized track rows. Populated by fetch alongside
-                       the parent release row.
-  bpm_cache            one row per (artist, title) hash. Tracks which
-                       sources have been queried.
-  bpm_source_hits      one row per (cache_key, source) — the per-source
-                       BPM/key result. Reconstructed into the old v2
+  users                one row per Discogs user that has signed in via
+                       OAuth. ``id`` is the Discogs user_id; every other
+                       per-user table foreign-keys back to it.
+  releases             one row per (user, Discogs release). Holds the raw
+                       API payload (``basic_information``,
+                       ``raw_tracklist``, ``notes``) and the normalized
+                       columns derived from it (``artist``, ``title``,
+                       ``rpm``, ``type``, ``format``, ...). All
+                       normalization happens at fetch time via
+                       ``sleeve_notes.ingest.normalize_release``.
+  tracks               normalized track rows. Populated by fetch
+                       alongside the parent release row.
+  bpm_cache            one row per (user, artist, title) hash. Tracks
+                       which sources have been queried for that user.
+  bpm_source_hits      one row per (user, cache_key, source) — the
+                       per-source BPM/key result. Reconstructed into the
                        cache-entry shape by ``load_cache_entry``.
-  overrides            manual BPM/key overrides (replaces overrides.json).
+  overrides            manual BPM/key overrides.
   print_runs +
-  print_run_releases   print history (replaces printed.json).
+  print_run_releases   print history.
   kv                   small key/value table — Beatport OAuth tokens,
                        schema version, anything that doesn't fit a table.
-
-On first init ``migrate_from_json`` imports whatever legacy files it
-finds, then renames the originals to ``*.bak`` so they don't get
-re-imported. The migration runs inside the same transaction as the
-schema setup: if anything raises, the half-written DB is deleted so
-the next call re-tries cleanly.
+                       App-wide, NOT per-user.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -52,14 +44,20 @@ except ImportError:
     from sleeve_notes import project_root
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_FILENAME = "sleeve_notes.db"
-# Pre-rename filename, migrated in place on first connect.
-LEGACY_DB_FILENAME = "bpm_stickers.db"
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS releases (
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS releases (
+  user_id INTEGER NOT NULL,
+  id INTEGER NOT NULL,
   artist TEXT,
   title TEXT,
   year INTEGER,
@@ -73,12 +71,16 @@ CREATE TABLE IF NOT EXISTS releases (
   raw_tracklist TEXT,
   type TEXT,
   format TEXT,
-  fetched_at TEXT
+  fetched_at TEXT,
+  PRIMARY KEY (user_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_releases_artist ON releases(artist);
+CREATE INDEX IF NOT EXISTS idx_releases_user_artist ON releases(user_id, artist);
+CREATE INDEX IF NOT EXISTS idx_releases_user_type ON releases(user_id, type);
+CREATE INDEX IF NOT EXISTS idx_releases_user_format ON releases(user_id, format);
 
 CREATE TABLE IF NOT EXISTS tracks (
+  user_id INTEGER NOT NULL,
   release_id INTEGER NOT NULL,
   position TEXT NOT NULL,
   side TEXT,
@@ -88,22 +90,23 @@ CREATE TABLE IF NOT EXISTS tracks (
   duration_s INTEGER,
   spotify_track_id TEXT,
   youtube_video_id TEXT,
-  PRIMARY KEY (release_id, position)
+  PRIMARY KEY (user_id, release_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tracks_release ON tracks(release_id);
-
 CREATE TABLE IF NOT EXISTS bpm_cache (
-  cache_key TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  cache_key TEXT NOT NULL,
   artist TEXT,
   title TEXT,
   sources_tried TEXT NOT NULL DEFAULT '[]',
-  updated_at TEXT
+  updated_at TEXT,
+  PRIMARY KEY (user_id, cache_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_bpm_cache_artist_title ON bpm_cache(artist, title);
+CREATE INDEX IF NOT EXISTS idx_bpm_cache_user_artist_title ON bpm_cache(user_id, artist, title);
 
 CREATE TABLE IF NOT EXISTS bpm_source_hits (
+  user_id INTEGER NOT NULL,
   cache_key TEXT NOT NULL,
   source TEXT NOT NULL,
   bpm INTEGER,
@@ -111,11 +114,12 @@ CREATE TABLE IF NOT EXISTS bpm_source_hits (
   score REAL,
   url TEXT,
   mbid TEXT,
-  PRIMARY KEY (cache_key, source)
+  PRIMARY KEY (user_id, cache_key, source)
 );
 
 CREATE TABLE IF NOT EXISTS overrides (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   release_id INTEGER,
   position TEXT,
   artist TEXT,
@@ -126,15 +130,18 @@ CREATE TABLE IF NOT EXISTS overrides (
   created_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_overrides_rp ON overrides(release_id, position);
-CREATE INDEX IF NOT EXISTS idx_overrides_at ON overrides(artist, title);
+CREATE INDEX IF NOT EXISTS idx_overrides_user_rp ON overrides(user_id, release_id, position);
+CREATE INDEX IF NOT EXISTS idx_overrides_user_at ON overrides(user_id, artist, title);
 
 CREATE TABLE IF NOT EXISTS print_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   timestamp TEXT NOT NULL,
   name TEXT,
   settings_json TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_print_runs_user ON print_runs(user_id);
 
 CREATE TABLE IF NOT EXISTS print_run_releases (
   print_run_id INTEGER NOT NULL,
@@ -164,195 +171,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _move_legacy_db_to_data_dir(p: Path) -> None:
-    """One-shot relocation of a pre-data/ DB.
-
-    Prior versions kept the DB directly at the project root rather than
-    inside ``data/``. If the new ``data/`` path is empty but a root-level
-    file exists (either the current or pre-rename filename), move it (plus
-    its WAL/SHM sidecars) so existing users don't lose their data when
-    they upgrade.
-    """
-    if p.exists():
-        return
-    for name in (DB_FILENAME, LEGACY_DB_FILENAME):
-        legacy = project_root() / name
-        if not legacy.exists():
-            continue
-        p.parent.mkdir(parents=True, exist_ok=True)
-        legacy.rename(p)
-        for suffix in ("-wal", "-shm"):
-            side = legacy.with_name(legacy.name + suffix)
-            if side.exists():
-                side.rename(p.with_name(p.name + suffix))
-        print(
-            f"  sleeve-notes: moved legacy {legacy.name} → "
-            f"{p.relative_to(project_root())}.",
-            file=sys.stderr,
-        )
-        return
-
-
-def _rename_legacy_db_filename(p: Path) -> None:
-    """One-shot rename of the pre-`sleeve-notes` DB file.
-
-    Earlier versions of this project shipped as ``bpm-stickers`` with a
-    ``data/bpm_stickers.db`` file. On the first run after the rename,
-    move it to the new ``data/sleeve_notes.db`` location (plus its
-    WAL/SHM sidecars) so the cache, overrides and Beatport tokens carry
-    over without a re-cascade. If both files happen to exist (a user
-    re-ran the old build after the rename), leave them alone and warn —
-    we won't silently merge or overwrite either one.
-    """
-    if p.exists():
-        return
-    legacy = p.with_name(LEGACY_DB_FILENAME)
-    if not legacy.exists():
-        return
-    legacy.rename(p)
-    for suffix in ("-wal", "-shm"):
-        side = legacy.with_name(legacy.name + suffix)
-        if side.exists():
-            side.rename(p.with_name(p.name + suffix))
-    print(
-        f"  sleeve-notes: renamed {legacy.name} → {p.name} "
-        f"(project was previously named bpm-stickers).",
-        file=sys.stderr,
-    )
-
-
-def _ensure_release_columns(conn: sqlite3.Connection) -> None:
-    """Bring an existing releases table up to the current schema.
-
-    CREATE TABLE IF NOT EXISTS doesn't reshape an existing table, so older DBs
-    need explicit ALTERs to add ``type`` / ``format`` and to drop the retired
-    ``is_dj_release`` / ``skip_reasons`` / ``filtered_at`` columns. SQLite 3.35+
-    (shipped with Python 3.11+) supports ALTER TABLE DROP COLUMN.
-    """
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(releases)").fetchall()}
-    if "type" not in existing:
-        conn.execute("ALTER TABLE releases ADD COLUMN type TEXT")
-    if "format" not in existing:
-        conn.execute("ALTER TABLE releases ADD COLUMN format TEXT")
-    conn.execute("DROP INDEX IF EXISTS idx_releases_dj")
-    for legacy in ("is_dj_release", "skip_reasons", "filtered_at"):
-        if legacy in existing:
-            conn.execute(f"ALTER TABLE releases DROP COLUMN {legacy}")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_type ON releases(type)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_releases_format ON releases(format)")
-
-
-def _ensure_track_columns(conn: sqlite3.Connection) -> None:
-    """Add per-track external-player IDs to existing DBs.
-
-    spotify_track_id is opportunistically backfilled by the BPM cascade
-    (ReccoBeats path already matches against Spotify). youtube_video_id
-    is lazily resolved on first click of the per-track listen icon.
-    """
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(tracks)").fetchall()}
-    if "spotify_track_id" not in existing:
-        conn.execute("ALTER TABLE tracks ADD COLUMN spotify_track_id TEXT")
-    if "youtube_video_id" not in existing:
-        conn.execute("ALTER TABLE tracks ADD COLUMN youtube_video_id TEXT")
-
-
-def _ensure_print_run_columns(conn: sqlite3.Connection) -> None:
-    """Promote print_runs to a first-class object with name + settings_json.
-
-    Pre-migration rows are wiped because we can't reconstruct the layout/content
-    settings that produced them. The new web UI treats every run as a saved
-    {releases + settings} recipe; legacy rows without settings would break
-    Duplicate and Re-render, so we'd rather start clean than fake defaults.
-    """
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(print_runs)").fetchall()}
-    if "settings_json" in existing:
-        return
-    conn.execute("DELETE FROM print_run_releases")
-    conn.execute("DELETE FROM print_runs")
-    if "name" not in existing:
-        conn.execute("ALTER TABLE print_runs ADD COLUMN name TEXT")
-    conn.execute("ALTER TABLE print_runs ADD COLUMN settings_json TEXT")
-
-
-def _ensure_overrides_columns(conn: sqlite3.Connection) -> None:
-    """Drop retired override columns from older DBs. SQLite 3.35+ (shipped
-    with Python 3.11+) supports ALTER TABLE DROP COLUMN."""
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(overrides)").fetchall()}
-    if "continuous_mix" in existing:
-        conn.execute("ALTER TABLE overrides DROP COLUMN continuous_mix")
-
-
-def _backfill_normalized_releases(conn: sqlite3.Connection) -> None:
-    """Re-normalize legacy releases that pre-date fetch's normalize-in-place.
-
-    Runs ``normalize_release`` for any row that has a stored ``raw_tracklist``
-    but is missing ``type``/``format`` or has no ``tracks`` entries yet — the
-    two signals that a release was ingested before fetch took ownership of
-    normalization. Subsequent connects no-op because the WHERE clause is empty.
-    """
-    from sleeve_notes.ingest import normalize_release  # local: avoid import cycle on first init
-
-    rows = conn.execute(
-        "SELECT id, basic_information, raw_tracklist FROM releases r "
-        "WHERE raw_tracklist IS NOT NULL "
-        "AND (type IS NULL OR format IS NULL "
-        "     OR NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id))"
-    ).fetchall()
-    if not rows:
-        return
-    for r in rows:
-        try:
-            basic = json.loads(r["basic_information"] or "{}")
-        except json.JSONDecodeError:
-            basic = {}
-        try:
-            tracklist = json.loads(r["raw_tracklist"] or "[]")
-        except json.JSONDecodeError:
-            tracklist = []
-        normalize_release(conn, r["id"], basic, tracklist)
-
-
 def connect() -> sqlite3.Connection:
-    """Open (or create) the DB. On first creation, runs the JSON migration."""
+    """Open (or create) the DB."""
     p = db_path()
-    _move_legacy_db_to_data_dir(p)
-    _rename_legacy_db_filename(p)
     p.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not p.exists()
     conn = sqlite3.connect(p)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
-    _ensure_release_columns(conn)
-    _ensure_track_columns(conn)
-    _ensure_overrides_columns(conn)
-    _ensure_print_run_columns(conn)
-    _backfill_normalized_releases(conn)
-    if fresh:
-        try:
-            files_to_move = _migrate_from_json(conn)
-            set_kv(conn, "schema_version", str(SCHEMA_VERSION))
-            conn.commit()
-        except Exception:
-            conn.close()
-            try:
-                p.unlink()
-            except FileNotFoundError:
-                pass
-            raise
-        # Only rename source files after the DB commit succeeds. If the rename
-        # itself fails (perm error, etc.) we've still got the data persisted.
-        for src in files_to_move:
-            _rename_to_bak(src)
-        if files_to_move:
-            print(
-                f"  sleeve-notes: migrated {len(files_to_move)} legacy file(s) "
-                f"into {p.name}; originals renamed to .bak.",
-                file=sys.stderr,
-            )
-    else:
-        conn.commit()
+    set_kv(conn, "schema_version", str(SCHEMA_VERSION))
+    conn.commit()
     return conn
 
 
@@ -385,377 +214,3 @@ def set_kv(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 def delete_kv(conn: sqlite3.Connection, key: str) -> None:
     conn.execute("DELETE FROM kv WHERE key = ?", (key,))
-
-
-# ---------------------------------------------------------------------------
-# JSON migration
-# ---------------------------------------------------------------------------
-
-def _rename_to_bak(p: Path) -> None:
-    if not p.exists():
-        return
-    suffix = p.suffix if p.suffix else ""
-    base = p.with_suffix(suffix + ".bak") if suffix else Path(str(p) + ".bak")
-    i = 1
-    while base.exists():
-        base = (
-            p.with_suffix(suffix + f".bak{i}")
-            if suffix else Path(str(p) + f".bak{i}")
-        )
-        i += 1
-    try:
-        p.rename(base)
-    except OSError as e:
-        print(f"  sleeve-notes: could not rename {p.name} → {base.name}: {e}", file=sys.stderr)
-
-
-_V1_URL_TO_SOURCE = (
-    ("songbpm.com", "songbpm"),
-    ("deezer.com", "deezer"),
-    ("spotify.com", "reccobeats"),  # v1 stored Spotify track URLs for ReccoBeats hits
-    ("reccobeats.com", "reccobeats"),
-    ("beatport.com", "beatport"),
-    ("acousticbrainz.org", "acousticbrainz"),
-)
-
-
-def _v1_entry_to_v2(entry: dict) -> tuple[dict, list[str]]:
-    """Best-effort mapping of a v1 single-source cache entry onto v2 shape.
-
-    Returns (sources, sources_tried). Drops entries with no usable URL or
-    no BPM/key — they'll be re-queried by the v2 cascade.
-    """
-    bpm = entry.get("bpm")
-    key_cam = entry.get("key_camelot")
-    if not bpm and not key_cam:
-        return {}, []
-    url = entry.get("source_url") or ""
-    src: str | None = None
-    for needle, name in _V1_URL_TO_SOURCE:
-        if needle in url:
-            src = name
-            break
-    if not src:
-        return {}, []
-    hit: dict = {}
-    if bpm is not None:
-        hit["bpm"] = bpm
-    if key_cam:
-        hit["key_camelot"] = key_cam
-    if entry.get("score") is not None:
-        hit["score"] = entry["score"]
-    if url:
-        hit["url"] = url
-    return {src: hit}, [src]
-
-
-def _migrate_from_json(conn: sqlite3.Connection) -> list[Path]:
-    """Best-effort one-shot import of any legacy JSON state.
-
-    Returns the list of file paths to rename to ``.bak`` after the commit.
-    """
-    root = project_root()
-    tmp = root / ".tmp"
-    to_move: list[Path] = []
-    now = _now_iso()
-
-    # collection.json → releases (raw fields)
-    coll = tmp / "collection.json"
-    if coll.exists():
-        try:
-            with coll.open("r", encoding="utf-8") as f:
-                entries = json.load(f)
-        except Exception:
-            entries = []
-        for e in entries or []:
-            rid = e.get("id")
-            if not rid:
-                continue
-            conn.execute(
-                """
-                INSERT INTO releases (id, basic_information, raw_tracklist, notes, fetched_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    basic_information = excluded.basic_information,
-                    raw_tracklist     = excluded.raw_tracklist,
-                    notes             = excluded.notes,
-                    fetched_at        = COALESCE(releases.fetched_at, excluded.fetched_at)
-                """,
-                (
-                    rid,
-                    json.dumps(e.get("basic_information") or {}, ensure_ascii=False),
-                    json.dumps(e.get("tracklist") or [], ensure_ascii=False),
-                    e.get("notes"),
-                    now,
-                ),
-            )
-        to_move.append(coll)
-
-    # release_cache/*.json → fill releases rows that collection.json didn't
-    rc_dir = tmp / "release_cache"
-    if rc_dir.exists() and rc_dir.is_dir():
-        from sleeve_notes.fetch_discogs_collection import basic_from_detail
-        for p in rc_dir.glob("*.json"):
-            try:
-                rid = int(p.stem)
-            except ValueError:
-                continue
-            try:
-                with p.open("r", encoding="utf-8") as f:
-                    detail = json.load(f)
-            except Exception:
-                continue
-            row = conn.execute(
-                "SELECT raw_tracklist FROM releases WHERE id = ?", (rid,)
-            ).fetchone()
-            if row and row["raw_tracklist"]:
-                continue
-            basic = basic_from_detail(detail)
-            conn.execute(
-                """
-                INSERT INTO releases (id, basic_information, raw_tracklist, notes, fetched_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    basic_information = excluded.basic_information,
-                    raw_tracklist     = excluded.raw_tracklist,
-                    notes             = excluded.notes,
-                    fetched_at        = COALESCE(releases.fetched_at, excluded.fetched_at)
-                """,
-                (
-                    rid,
-                    json.dumps(basic, ensure_ascii=False),
-                    json.dumps(detail.get("tracklist") or [], ensure_ascii=False),
-                    detail.get("notes"),
-                    now,
-                ),
-            )
-        to_move.append(rc_dir)
-
-    # dj_releases.json → extracted columns + tracks
-    dj = tmp / "dj_releases.json"
-    if dj.exists():
-        try:
-            with dj.open("r", encoding="utf-8") as f:
-                kept = json.load(f)
-        except Exception:
-            kept = []
-        for r in kept or []:
-            rid = r.get("id")
-            if not rid:
-                continue
-            conn.execute(
-                """
-                INSERT INTO releases (
-                    id, artist, title, year, compilation, labels, genres, styles, rpm
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    artist = excluded.artist,
-                    title  = excluded.title,
-                    year   = excluded.year,
-                    compilation = excluded.compilation,
-                    labels = excluded.labels,
-                    genres = excluded.genres,
-                    styles = excluded.styles,
-                    rpm    = excluded.rpm
-                """,
-                (
-                    rid,
-                    r.get("artist"),
-                    r.get("title"),
-                    r.get("year"),
-                    1 if r.get("compilation") else 0,
-                    json.dumps(r.get("labels") or [], ensure_ascii=False),
-                    json.dumps(r.get("genres") or [], ensure_ascii=False),
-                    json.dumps(r.get("styles") or [], ensure_ascii=False),
-                    json.dumps(r.get("rpm") or [], ensure_ascii=False),
-                ),
-            )
-            conn.execute("DELETE FROM tracks WHERE release_id = ?", (rid,))
-            for t in r.get("tracks") or []:
-                conn.execute(
-                    """
-                    INSERT INTO tracks (release_id, position, side, artist, title, duration, duration_s)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        rid,
-                        t.get("position"),
-                        t.get("side"),
-                        t.get("artist"),
-                        t.get("title"),
-                        t.get("duration"),
-                        t.get("duration_s"),
-                    ),
-                )
-        to_move.append(dj)
-
-    # skipped.json → carry artist/title forward; the old is_dj_release=0
-    # status is no longer modelled. These releases land in the collection
-    # like any other; they just won't have tracks until a fresh fetch.
-    skipped = tmp / "skipped.json"
-    if skipped.exists():
-        try:
-            with skipped.open("r", encoding="utf-8") as f:
-                sk = json.load(f)
-        except Exception:
-            sk = []
-        for entry in sk or []:
-            rid = entry.get("id")
-            if not rid:
-                continue
-            conn.execute(
-                """
-                INSERT INTO releases (id, artist, title)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    artist = COALESCE(releases.artist, excluded.artist),
-                    title  = COALESCE(releases.title,  excluded.title)
-                """,
-                (rid, entry.get("artist"), entry.get("title")),
-            )
-        to_move.append(skipped)
-
-    # bpm_cache.json → bpm_cache + bpm_source_hits. Handles both shapes:
-    #   v2: {"_meta":…, "tracks": {ck: {"sources":…, "sources_tried":[…]}}}
-    #   v1: {ck: {"bpm":…, "source_url":…, "reason":…}}  (flat, single-source)
-    bpm_cache_file = tmp / "bpm_cache.json"
-    if bpm_cache_file.exists():
-        try:
-            with bpm_cache_file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = None
-        if isinstance(data, dict):
-            tracks_cache = data.get("tracks") if "_meta" in data else data
-            tracks_cache = tracks_cache or {}
-            migrated = 0
-            dropped = 0
-            for ck, entry in tracks_cache.items():
-                if not isinstance(entry, dict):
-                    continue
-                if "sources" in entry or "sources_tried" in entry:
-                    # v2 shape — pass through.
-                    sources = entry.get("sources") or {}
-                    sources_tried = entry.get("sources_tried") or []
-                else:
-                    # v1 shape — lossy migration: only entries with a known
-                    # source URL get imported, mapped onto that single source.
-                    sources, sources_tried = _v1_entry_to_v2(entry)
-                    if not sources_tried:
-                        dropped += 1
-                        continue
-                conn.execute(
-                    """
-                    INSERT INTO bpm_cache (cache_key, sources_tried, updated_at)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT (cache_key) DO UPDATE SET
-                        sources_tried = excluded.sources_tried,
-                        updated_at    = excluded.updated_at
-                    """,
-                    (ck, json.dumps(sources_tried), now),
-                )
-                for src, hit in sources.items():
-                    if not isinstance(hit, dict):
-                        continue
-                    conn.execute(
-                        """
-                        INSERT INTO bpm_source_hits (cache_key, source, bpm, key_camelot, score, url, mbid)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (cache_key, source) DO UPDATE SET
-                            bpm = excluded.bpm,
-                            key_camelot = excluded.key_camelot,
-                            score = excluded.score,
-                            url = excluded.url,
-                            mbid = excluded.mbid
-                        """,
-                        (
-                            ck, src,
-                            hit.get("bpm"), hit.get("key_camelot"),
-                            hit.get("score"), hit.get("url"), hit.get("mbid"),
-                        ),
-                    )
-                migrated += 1
-            if dropped:
-                print(
-                    f"  sleeve-notes: bpm_cache.json was pre-consensus schema; "
-                    f"kept {migrated} entries with a known source URL, "
-                    f"dropped {dropped} unmappable entries (will be re-queried).",
-                    file=sys.stderr,
-                )
-        to_move.append(bpm_cache_file)
-
-    # bpm_results.json: derivable from cache, don't import — just retire.
-    bpm_results_file = tmp / "bpm_results.json"
-    if bpm_results_file.exists():
-        to_move.append(bpm_results_file)
-
-    # printed.json → print_runs + print_run_releases
-    printed = tmp / "printed.json"
-    if printed.exists():
-        try:
-            with printed.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = None
-        if isinstance(data, dict):
-            for entry in data.get("prints") or []:
-                if not isinstance(entry, dict):
-                    continue
-                ts = entry.get("timestamp") or now
-                cur = conn.execute("INSERT INTO print_runs (timestamp) VALUES (?)", (ts,))
-                pr_id = cur.lastrowid
-                for rid in entry.get("release_ids") or []:
-                    try:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO print_run_releases (print_run_id, release_id) VALUES (?, ?)",
-                            (pr_id, int(rid)),
-                        )
-                    except (TypeError, ValueError):
-                        continue
-        to_move.append(printed)
-
-    # overrides.json → overrides table
-    overrides_file = root / "overrides.json"
-    if overrides_file.exists():
-        try:
-            with overrides_file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = None
-        if isinstance(data, list):
-            for e in data:
-                if not isinstance(e, dict):
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO overrides (
-                        release_id, position, artist, title, bpm, key_camelot,
-                        note, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        e.get("release_id"),
-                        e.get("position"),
-                        e.get("artist"),
-                        e.get("title"),
-                        e.get("bpm"),
-                        e.get("key_camelot"),
-                        e.get("note"),
-                        now,
-                    ),
-                )
-        to_move.append(overrides_file)
-
-    # beatport_tokens.json → kv['beatport_tokens']
-    btf = tmp / "beatport_tokens.json"
-    if btf.exists():
-        try:
-            with btf.open("r", encoding="utf-8") as f:
-                tokens = json.load(f)
-        except Exception:
-            tokens = None
-        if isinstance(tokens, dict):
-            set_kv(conn, "beatport_tokens", json.dumps(tokens))
-        to_move.append(btf)
-
-    return to_move

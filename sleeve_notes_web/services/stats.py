@@ -1,7 +1,8 @@
 """Read-only aggregations for the dashboard + collection screens.
 
 Computations that need the BPM consensus go via ``derive_track_result`` so
-the numbers always match what the renderer would print.
+the numbers always match what the renderer would print. Every helper is
+scoped to one user_id — dashboards never aggregate across tenants.
 """
 
 from __future__ import annotations
@@ -24,19 +25,22 @@ class CoverageStats:
     missing: int
 
 
-def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
-    """Per-track BPM coverage across every track in the collection."""
-    by_rp, by_tk, _ = load_overrides(conn)
+def collection_coverage(conn: sqlite3.Connection, user_id: int) -> CoverageStats:
+    """Per-track BPM coverage across every track in the user's collection."""
+    by_rp, by_tk, _ = load_overrides(conn, user_id)
     rows = conn.execute(
         "SELECT t.release_id, t.position, t.artist, t.title, r.artist AS r_artist "
-        "FROM tracks t JOIN releases r ON r.id = t.release_id"
+        "FROM tracks t JOIN releases r "
+        "  ON r.user_id = t.user_id AND r.id = t.release_id "
+        "WHERE t.user_id = ?",
+        (user_id,),
     ).fetchall()
     total = len(rows)
     with_bpm = high = octave = shared = single = disputed = 0
     for r in rows:
         artist = r["artist"] or r["r_artist"] or "V/A"
         result = derive_track_result(
-            conn, r["release_id"], r["position"] or "",
+            conn, user_id, r["release_id"], r["position"] or "",
             artist, r["title"] or "", by_rp, by_tk,
         )
         if result.get("bpm"):
@@ -64,27 +68,43 @@ def collection_coverage(conn: sqlite3.Connection) -> CoverageStats:
     )
 
 
-def new_since_last_print(conn: sqlite3.Connection) -> tuple[int, str | None]:
-    """Count of releases (with tracks) that aren't in any past print_run + last-print timestamp."""
+def new_since_last_print(
+    conn: sqlite3.Connection, user_id: int
+) -> tuple[int, str | None]:
+    """Count of releases (with tracks) for this user that aren't in any past
+    print_run + last-print timestamp."""
     last_ts_row = conn.execute(
-        "SELECT timestamp FROM print_runs ORDER BY id DESC LIMIT 1"
+        "SELECT timestamp FROM print_runs WHERE user_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (user_id,),
     ).fetchone()
     last_ts = last_ts_row["timestamp"] if last_ts_row else None
     n = conn.execute(
         "SELECT COUNT(*) AS n FROM releases r "
-        "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
-        "AND NOT EXISTS (SELECT 1 FROM print_run_releases prr WHERE prr.release_id = r.id)"
+        "WHERE r.user_id = ? "
+        "AND EXISTS (SELECT 1 FROM tracks t WHERE t.user_id = r.user_id AND t.release_id = r.id) "
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM print_run_releases prr "
+        "  JOIN print_runs p ON p.id = prr.print_run_id "
+        "  WHERE p.user_id = r.user_id AND prr.release_id = r.id"
+        ")",
+        (user_id,),
     ).fetchone()["n"]
     return n, last_ts
 
 
-def collection_totals(conn: sqlite3.Connection) -> dict:
+def collection_totals(conn: sqlite3.Connection, user_id: int) -> dict:
     """Total release count + breakdown by type (sorted by count desc)."""
-    total = conn.execute("SELECT COUNT(*) AS n FROM releases").fetchone()["n"]
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM releases WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()["n"]
     by_type = [
         (r["type"] or "(unset)", r["n"])
         for r in conn.execute(
-            "SELECT type, COUNT(*) AS n FROM releases GROUP BY type ORDER BY n DESC"
+            "SELECT type, COUNT(*) AS n FROM releases "
+            "WHERE user_id = ? GROUP BY type ORDER BY n DESC",
+            (user_id,),
         ).fetchall()
     ]
     return {"total": total or 0, "by_type": by_type}

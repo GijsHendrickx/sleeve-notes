@@ -1100,8 +1100,8 @@ def _consense_categorical(
 # Continuous-mix filter, cache I/O, and overrides
 # ============================================================================
 
-def load_overrides(conn) -> tuple[dict, dict, list[str]]:
-    """Load overrides from the DB into two lookup tables.
+def load_overrides(conn, user_id: int) -> tuple[dict, dict, list[str]]:
+    """Load overrides from the DB into two lookup tables, scoped to one user.
 
     Returns (by_release_position, by_track_key, warnings).
       by_release_position: dict[(release_id, position), entry] — most precise
@@ -1113,7 +1113,8 @@ def load_overrides(conn) -> tuple[dict, dict, list[str]]:
 
     rows = conn.execute(
         "SELECT id, release_id, position, artist, title, bpm, key_camelot, note "
-        "FROM overrides"
+        "FROM overrides WHERE user_id = ?",
+        (user_id,),
     ).fetchall()
 
     for row in rows:
@@ -1188,48 +1189,59 @@ def override_to_result(entry: dict) -> dict:
 # (Again)" → 9 cache_keys, Klubbheads "Kickin' Hard" → 5, etc.).
 URL_SHARE_SUSPECT_THRESHOLD = 3
 
-_URL_SHARE_CACHE: dict[int, dict[tuple[str, str], int]] = {}
+_URL_SHARE_CACHE: dict[tuple[int, int], dict[tuple[str, str], int]] = {}
 
 
-def url_share_counts(conn) -> dict[tuple[str, str], int]:
-    """How many distinct cache_keys each (source, url) pair appears under.
+def url_share_counts(conn, user_id: int) -> dict[tuple[str, str], int]:
+    """How many distinct cache_keys each (source, url) pair appears under,
+    for one user's lookup history.
 
-    Cached per-connection. Call ``invalidate_url_share_counts`` after writing
-    to ``bpm_source_hits`` so the next read reflects the new data.
+    Cached per-(connection, user). Call ``invalidate_url_share_counts``
+    after writing to ``bpm_source_hits`` so the next read reflects the
+    new data.
     """
-    cid = id(conn)
-    cached = _URL_SHARE_CACHE.get(cid)
+    key = (id(conn), user_id)
+    cached = _URL_SHARE_CACHE.get(key)
     if cached is not None:
         return cached
     rows = conn.execute(
         "SELECT source, url, COUNT(DISTINCT cache_key) AS n "
-        "FROM bpm_source_hits WHERE url IS NOT NULL AND url != '' "
-        "GROUP BY source, url"
+        "FROM bpm_source_hits "
+        "WHERE user_id = ? AND url IS NOT NULL AND url != '' "
+        "GROUP BY source, url",
+        (user_id,),
     ).fetchall()
     counts: dict[tuple[str, str], int] = {(r[0], r[1]): r[2] for r in rows}
-    _URL_SHARE_CACHE[cid] = counts
+    _URL_SHARE_CACHE[key] = counts
     return counts
 
 
-def invalidate_url_share_counts(conn=None) -> None:
+def invalidate_url_share_counts(conn=None, user_id: int | None = None) -> None:
     if conn is None:
         _URL_SHARE_CACHE.clear()
+        return
+    if user_id is None:
+        # drop every entry for this conn regardless of user
+        cid = id(conn)
+        for k in [k for k in _URL_SHARE_CACHE if k[0] == cid]:
+            _URL_SHARE_CACHE.pop(k, None)
     else:
-        _URL_SHARE_CACHE.pop(id(conn), None)
+        _URL_SHARE_CACHE.pop((id(conn), user_id), None)
 
 
-def load_cache_entry(conn, ck: str) -> dict | None:
-    """Reconstruct the v2-style cache entry shape from DB rows."""
+def load_cache_entry(conn, user_id: int, ck: str) -> dict | None:
+    """Reconstruct the v2-style cache entry shape from DB rows for one user."""
     row = conn.execute(
-        "SELECT sources_tried FROM bpm_cache WHERE cache_key = ?", (ck,)
+        "SELECT sources_tried FROM bpm_cache WHERE user_id = ? AND cache_key = ?",
+        (user_id, ck),
     ).fetchone()
     if not row:
         return None
     sources: dict[str, dict] = {}
     for sr in conn.execute(
         "SELECT source, bpm, key_camelot, score, url, mbid "
-        "FROM bpm_source_hits WHERE cache_key = ?",
-        (ck,),
+        "FROM bpm_source_hits WHERE user_id = ? AND cache_key = ?",
+        (user_id, ck),
     ):
         hit = {
             "bpm": sr["bpm"],
@@ -1247,19 +1259,22 @@ def load_cache_entry(conn, ck: str) -> dict | None:
     return {"sources": sources, "sources_tried": tried}
 
 
-def save_cache_entry(conn, ck: str, artist: str, title: str, entry: dict) -> None:
+def save_cache_entry(
+    conn, user_id: int, ck: str, artist: str, title: str, entry: dict
+) -> None:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute(
         """
-        INSERT INTO bpm_cache (cache_key, artist, title, sources_tried, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (cache_key) DO UPDATE SET
+        INSERT INTO bpm_cache (user_id, cache_key, artist, title, sources_tried, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, cache_key) DO UPDATE SET
             artist = COALESCE(bpm_cache.artist, excluded.artist),
             title  = COALESCE(bpm_cache.title,  excluded.title),
             sources_tried = excluded.sources_tried,
             updated_at = excluded.updated_at
         """,
         (
+            user_id,
             ck,
             artist,
             title,
@@ -1272,9 +1287,9 @@ def save_cache_entry(conn, ck: str, artist: str, title: str, entry: dict) -> Non
             continue
         conn.execute(
             """
-            INSERT INTO bpm_source_hits (cache_key, source, bpm, key_camelot, score, url, mbid)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (cache_key, source) DO UPDATE SET
+            INSERT INTO bpm_source_hits (user_id, cache_key, source, bpm, key_camelot, score, url, mbid)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id, cache_key, source) DO UPDATE SET
                 bpm = excluded.bpm,
                 key_camelot = excluded.key_camelot,
                 score = excluded.score,
@@ -1282,6 +1297,7 @@ def save_cache_entry(conn, ck: str, artist: str, title: str, entry: dict) -> Non
                 mbid = excluded.mbid
             """,
             (
+                user_id,
                 ck,
                 src,
                 hit.get("bpm"),
@@ -1345,6 +1361,7 @@ def build_track_result(
 
 def derive_track_result(
     conn,
+    user_id: int,
     release_id: int,
     position: str,
     artist: str,
@@ -1367,12 +1384,12 @@ def derive_track_result(
     if override is not None:
         return {**base, **override_to_result(override)}
 
-    entry = load_cache_entry(conn, cache_key(artist, title))
+    entry = load_cache_entry(conn, user_id, cache_key(artist, title))
     if entry is None:
         entry = {"sources": {}, "sources_tried": []}
     return build_track_result(
         position, artist, title, entry,
-        share_counts=url_share_counts(conn),
+        share_counts=url_share_counts(conn, user_id),
     )
 
 
@@ -1392,10 +1409,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    uid_raw = os.environ.get("DISCOGS_USER_ID")
+    if not uid_raw:
+        print("ERROR: DISCOGS_USER_ID must be set in env.", file=sys.stderr)
+        return 2
+    try:
+        user_id = int(uid_raw)
+    except ValueError:
+        print(f"ERROR: DISCOGS_USER_ID must be an integer, got {uid_raw!r}", file=sys.stderr)
+        return 2
+
     with dbmod.session() as conn:
         rl = RateLimiter()
 
-        by_rp, by_tk, override_warnings = load_overrides(conn)
+        by_rp, by_tk, override_warnings = load_overrides(conn, user_id)
         for w in override_warnings:
             print(f"  override warning: {w}", file=sys.stderr)
         if by_rp or by_tk:
@@ -1404,8 +1431,10 @@ def main(argv: list[str] | None = None) -> int:
 
         releases = conn.execute(
             "SELECT r.id, r.artist, r.title FROM releases r "
-            "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
-            "ORDER BY r.id"
+            "WHERE r.user_id = ? "
+            "AND EXISTS (SELECT 1 FROM tracks t WHERE t.user_id = r.user_id AND t.release_id = r.id) "
+            "ORDER BY r.id",
+            (user_id,),
         ).fetchall()
         if not releases:
             print(
@@ -1414,7 +1443,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        total_tracks = conn.execute("SELECT COUNT(*) AS n FROM tracks").fetchone()["n"]
+        total_tracks = conn.execute(
+            "SELECT COUNT(*) AS n FROM tracks WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["n"]
 
         # Pass 1: classify every track without doing any network I/O.
         # Anything that needs the cascade lands in `worklist`; everything
@@ -1427,8 +1459,8 @@ def main(argv: list[str] | None = None) -> int:
             release_artist = release["artist"] or "V/A"
             tracks = conn.execute(
                 "SELECT position, artist, title "
-                "FROM tracks WHERE release_id = ? ORDER BY position",
-                (rid,),
+                "FROM tracks WHERE user_id = ? AND release_id = ? ORDER BY position",
+                (user_id, rid),
             ).fetchall()
             for track in tracks:
                 artist = track["artist"] or release_artist
@@ -1450,7 +1482,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 ck = cache_key(artist, title)
-                cached = load_cache_entry(conn, ck)
+                cached = load_cache_entry(conn, user_id, ck)
                 tried = set((cached or {}).get("sources_tried") or [])
                 if cached and set(ALL_SOURCES).issubset(tried):
                     cached_hits += 1
@@ -1490,13 +1522,15 @@ def main(argv: list[str] | None = None) -> int:
                             file=sys.stderr,
                         )
                         continue
-                    save_cache_entry(conn, w["cache_key"], w["artist"], w["title"], entry)
+                    save_cache_entry(
+                        conn, user_id, w["cache_key"], w["artist"], w["title"], entry
+                    )
                     spot_id = entry.get("spotify_track_id")
                     if spot_id:
                         conn.execute(
                             "UPDATE tracks SET spotify_track_id = COALESCE(spotify_track_id, ?) "
-                            "WHERE release_id = ? AND position = ?",
-                            (spot_id, w["rid"], w["position"]),
+                            "WHERE user_id = ? AND release_id = ? AND position = ?",
+                            (spot_id, user_id, w["rid"], w["position"]),
                         )
                     done_cascade += 1
                     cached_src = (w["cached"] or {}).get("sources") or {}
@@ -1546,12 +1580,12 @@ def main(argv: list[str] | None = None) -> int:
             release_artist = release["artist"] or "V/A"
             tracks = conn.execute(
                 "SELECT position, artist, title "
-                "FROM tracks WHERE release_id = ?",
-                (rid,),
+                "FROM tracks WHERE user_id = ? AND release_id = ?",
+                (user_id, rid),
             ).fetchall()
             for track in tracks:
                 tr = derive_track_result(
-                    conn, rid, track["position"],
+                    conn, user_id, rid, track["position"],
                     track["artist"] or release_artist,
                     track["title"] or "",
                     by_rp, by_tk,

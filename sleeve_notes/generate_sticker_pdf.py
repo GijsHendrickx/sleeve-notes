@@ -4,12 +4,16 @@ Defaults: 96 x 50.8 mm stickers, two per row on A4, fonts auto-shrink to fit.
 Pass --sticker-w / --sticker-h (in mm) to change the size. Columns and rows
 per page are derived from the chosen size so as many stickers as possible
 fit on A4 while keeping the page-edge margin non-negative.
+
+Per-user: every DB query is scoped on ``DISCOGS_USER_ID`` from the env
+(set by the web JobRunner, or by the developer in .env for CLI use).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,13 +125,19 @@ def normalize_settings(settings: dict | None) -> dict:
     return s
 
 
-def already_printed_ids(conn) -> set[int]:
-    rows = conn.execute("SELECT DISTINCT release_id FROM print_run_releases").fetchall()
+def already_printed_ids(conn, user_id: int) -> set[int]:
+    rows = conn.execute(
+        "SELECT DISTINCT pr.release_id FROM print_run_releases pr "
+        "JOIN print_runs p ON p.id = pr.print_run_id "
+        "WHERE p.user_id = ?",
+        (user_id,),
+    ).fetchall()
     return {int(r["release_id"]) for r in rows}
 
 
 def create_print_run(
     conn,
+    user_id: int,
     release_ids: list[int],
     settings: dict,
     name: str | None = None,
@@ -135,8 +145,8 @@ def create_print_run(
     """Insert a new print_run row with its release links. Returns the new id."""
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cur = conn.execute(
-        "INSERT INTO print_runs (timestamp, name, settings_json) VALUES (?, ?, ?)",
-        (timestamp, (name or None), json.dumps(normalize_settings(settings))),
+        "INSERT INTO print_runs (user_id, timestamp, name, settings_json) VALUES (?, ?, ?, ?)",
+        (user_id, timestamp, (name or None), json.dumps(normalize_settings(settings))),
     )
     pr_id = cur.lastrowid
     for rid in sorted({int(r) for r in release_ids}):
@@ -147,11 +157,12 @@ def create_print_run(
     return pr_id
 
 
-def load_print_run(conn, run_id: int) -> dict:
+def load_print_run(conn, user_id: int, run_id: int) -> dict:
     """Returns ``{id, timestamp, name, settings, release_ids}``. Raises KeyError."""
     row = conn.execute(
-        "SELECT id, timestamp, name, settings_json FROM print_runs WHERE id = ?",
-        (run_id,),
+        "SELECT id, timestamp, name, settings_json FROM print_runs "
+        "WHERE id = ? AND user_id = ?",
+        (run_id, user_id),
     ).fetchone()
     if row is None:
         raise KeyError(f"print run {run_id} not found")
@@ -168,12 +179,13 @@ def load_print_run(conn, run_id: int) -> dict:
     }
 
 
-def list_print_runs(conn) -> list[dict]:
-    """All runs, newest first, with light summary for the list view."""
+def list_print_runs(conn, user_id: int) -> list[dict]:
+    """All runs for one user, newest first, with light summary for the list view."""
     rows = conn.execute(
         "SELECT p.id, p.timestamp, p.name, p.settings_json, "
         "       (SELECT COUNT(*) FROM print_run_releases pr WHERE pr.print_run_id = p.id) AS release_count "
-        "FROM print_runs p ORDER BY p.id DESC"
+        "FROM print_runs p WHERE p.user_id = ? ORDER BY p.id DESC",
+        (user_id,),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
@@ -190,14 +202,23 @@ def list_print_runs(conn) -> list[dict]:
     return out
 
 
-def delete_print_run(conn, run_id: int) -> None:
+def delete_print_run(conn, user_id: int, run_id: int) -> None:
+    # Verify ownership before deleting; print_run_releases is keyed only by
+    # print_run_id but the run itself carries the user_id.
+    owned = conn.execute(
+        "SELECT 1 FROM print_runs WHERE id = ? AND user_id = ?",
+        (run_id, user_id),
+    ).fetchone()
+    if owned is None:
+        return
     conn.execute("DELETE FROM print_run_releases WHERE print_run_id = ?", (run_id,))
-    conn.execute("DELETE FROM print_runs WHERE id = ?", (run_id,))
+    conn.execute("DELETE FROM print_runs WHERE id = ? AND user_id = ?", (run_id, user_id))
 
 
-def last_print_timestamp(conn) -> str | None:
+def last_print_timestamp(conn, user_id: int) -> str | None:
     row = conn.execute(
-        "SELECT timestamp FROM print_runs ORDER BY id DESC LIMIT 1"
+        "SELECT timestamp FROM print_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+        (user_id,),
     ).fetchone()
     return row["timestamp"] if row else None
 
@@ -206,11 +227,11 @@ def last_print_timestamp(conn) -> str | None:
 # DB → in-memory release dicts (shape the layout module expects)
 # ---------------------------------------------------------------------------
 
-def _hydrate_release_row(conn, r) -> dict:
+def _hydrate_release_row(conn, user_id: int, r) -> dict:
     tracks = conn.execute(
         "SELECT position, side, artist, title, duration, duration_s "
-        "FROM tracks WHERE release_id = ? ORDER BY position",
-        (r["id"],),
+        "FROM tracks WHERE user_id = ? AND release_id = ? ORDER BY position",
+        (user_id, r["id"]),
     ).fetchall()
     return {
         "id": r["id"],
@@ -226,7 +247,7 @@ def _hydrate_release_row(conn, r) -> dict:
     }
 
 
-def load_releases_for_render(conn) -> list[dict]:
+def load_releases_for_render(conn, user_id: int) -> list[dict]:
     """Releases that should appear on the sticker sheet.
 
     Excludes rows without any track rows — those wouldn't render usefully.
@@ -234,13 +255,15 @@ def load_releases_for_render(conn) -> list[dict]:
     releases = conn.execute(
         "SELECT r.id, r.artist, r.title, r.year, r.compilation, r.labels, "
         "r.genres, r.styles, r.rpm FROM releases r "
-        "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
-        "ORDER BY r.id"
+        "WHERE r.user_id = ? AND EXISTS ("
+        "  SELECT 1 FROM tracks t WHERE t.user_id = r.user_id AND t.release_id = r.id"
+        ") ORDER BY r.id",
+        (user_id,),
     ).fetchall()
-    return [_hydrate_release_row(conn, r) for r in releases]
+    return [_hydrate_release_row(conn, user_id, r) for r in releases]
 
 
-def releases_by_ids(conn, ids: list[int]) -> list[dict]:
+def releases_by_ids(conn, user_id: int, ids: list[int]) -> list[dict]:
     """Hydrate the given release IDs (in input order), skipping any that lack
     tracks. Used by the web UI when rendering a print run's exact selection."""
     if not ids:
@@ -248,12 +271,14 @@ def releases_by_ids(conn, ids: list[int]) -> list[dict]:
     placeholders = ",".join("?" for _ in ids)
     rows = conn.execute(
         f"SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
-        f"FROM releases WHERE id IN ({placeholders}) "
-        f"AND EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)",
-        ids,
+        f"FROM releases WHERE user_id = ? AND id IN ({placeholders}) "
+        f"AND EXISTS ("
+        f"  SELECT 1 FROM tracks t WHERE t.user_id = releases.user_id AND t.release_id = releases.id"
+        f")",
+        [user_id, *ids],
     ).fetchall()
     by_id = {r["id"]: r for r in rows}
-    return [_hydrate_release_row(conn, by_id[rid]) for rid in ids if rid in by_id]
+    return [_hydrate_release_row(conn, user_id, by_id[rid]) for rid in ids if rid in by_id]
 
 
 def _json_loads(raw: str | None, default):
@@ -265,9 +290,11 @@ def _json_loads(raw: str | None, default):
         return default
 
 
-def build_bpm_lookup(conn, releases: list[dict]) -> dict[int, dict[str, dict]]:
+def build_bpm_lookup(
+    conn, user_id: int, releases: list[dict]
+) -> dict[int, dict[str, dict]]:
     """Map (release_id → position → per-track BPM dict) using cache + overrides."""
-    by_rp, by_tk, _ = load_overrides(conn)
+    by_rp, by_tk, _ = load_overrides(conn, user_id)
     lookup: dict[int, dict[str, dict]] = {}
     for r in releases:
         per_pos: dict[str, dict] = {}
@@ -275,6 +302,7 @@ def build_bpm_lookup(conn, releases: list[dict]) -> dict[int, dict[str, dict]]:
         for t in r["tracks"]:
             result = derive_track_result(
                 conn,
+                user_id,
                 r["id"],
                 t.get("position", ""),
                 t.get("artist") or release_artist,
@@ -361,16 +389,26 @@ def main(argv: list[str] | None = None) -> int:
     if pdf_out.suffix.lower() != ".pdf":
         pdf_out = pdf_out.with_suffix(".pdf")
 
+    uid_raw = os.environ.get("DISCOGS_USER_ID")
+    if not uid_raw:
+        print("ERROR: DISCOGS_USER_ID must be set in env.", file=sys.stderr)
+        return 2
+    try:
+        user_id = int(uid_raw)
+    except ValueError:
+        print(f"ERROR: DISCOGS_USER_ID must be an integer, got {uid_raw!r}", file=sys.stderr)
+        return 2
+
     with dbmod.session() as conn:
         if args.print_run_id is not None:
             try:
-                run = load_print_run(conn, args.print_run_id)
+                run = load_print_run(conn, user_id, args.print_run_id)
             except KeyError as e:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 2
             for k, v in run["settings"].items():
                 setattr(args, k, v)
-            releases = releases_by_ids(conn, run["release_ids"])
+            releases = releases_by_ids(conn, user_id, run["release_ids"])
             if not releases:
                 print(
                     f"ERROR: print run {args.print_run_id} has no renderable releases "
@@ -379,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 2
         else:
-            releases = load_releases_for_render(conn)
+            releases = load_releases_for_render(conn, user_id)
             if not releases:
                 print(
                     "ERROR: no releases with tracks found. Run "
@@ -389,11 +427,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
 
             if args.new_only:
-                already = already_printed_ids(conn)
+                already = already_printed_ids(conn, user_id)
                 before = len(releases)
                 releases = [r for r in releases if int(r["id"]) not in already]
                 skipped = before - len(releases)
-                last_ts = last_print_timestamp(conn)
+                last_ts = last_print_timestamp(conn, user_id)
                 last_str = f" (last print: {last_ts})" if last_ts else ""
                 if not releases:
                     print(
@@ -415,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             raise SystemExit(str(e))
 
-        bpm_lookup = build_bpm_lookup(conn, releases)
+        bpm_lookup = build_bpm_lookup(conn, user_id, releases)
         pdf_out.parent.mkdir(parents=True, exist_ok=True)
 
         c = canvas.Canvas(str(pdf_out), pagesize=A4)
@@ -469,8 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.mark_printed:
             rendered_ids = [int(r["id"]) for r in releases]
             settings = {k: getattr(args, k) for k in DEFAULT_SETTINGS}
-            run_id = create_print_run(conn, rendered_ids, settings)
-            total_in_history = len(already_printed_ids(conn))
+            run_id = create_print_run(conn, user_id, rendered_ids, settings)
+            total_in_history = len(already_printed_ids(conn, user_id))
             print(
                 f"  --mark-printed: saved as print run #{run_id} "
                 f"({len(rendered_ids)} release(s)). Total in print history: {total_in_history}."

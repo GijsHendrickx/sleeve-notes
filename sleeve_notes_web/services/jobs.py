@@ -43,6 +43,8 @@ class Job:
     kind: JobKind
     argv: list[str]
     started_at: float
+    user_id: int
+    username: str
     status: JobStatus = "running"
     finished_at: float | None = None
     lines: list[str] = field(default_factory=list)
@@ -96,8 +98,26 @@ class JobRunner:
                 # Loop closed during shutdown.
                 pass
 
-    def start(self, kind: JobKind, argv: list[str]) -> tuple[Job, bool]:
-        """Start a job. Returns (job, started_now). If a job is running, returns it with started_now=False."""
+    def start(
+        self,
+        kind: JobKind,
+        argv: list[str],
+        *,
+        user_id: int,
+        username: str,
+        discogs_token: str,
+        discogs_token_secret: str,
+    ) -> tuple[Job, bool]:
+        """Start a job. Returns (job, started_now). If a job is running, returns
+        it with started_now=False.
+
+        The four ``discogs_*`` args are injected as env vars into the
+        subprocess so the per-user OAuth signing in
+        ``fetch_discogs_collection`` works. Tokens are NOT stored on the
+        Job — only on the worker thread's stack — so they disappear once
+        the subprocess exits. One job at a time globally; a second user's
+        start() while one is in flight returns the existing job.
+        """
         with self._lock:
             if self._current is not None and self._current.status == "running":
                 return self._current, False
@@ -106,12 +126,18 @@ class JobRunner:
                 kind=kind,
                 argv=list(argv),
                 started_at=time.time(),
+                user_id=user_id,
+                username=username,
             )
             self._current = job
             self._seq = 0
         # Tell any existing subscribers we're starting fresh.
         self._broadcast(JobEvent(kind="status", status="running", seq=0))
-        t = threading.Thread(target=self._run, args=(job,), daemon=True)
+        t = threading.Thread(
+            target=self._run,
+            args=(job, discogs_token, discogs_token_secret),
+            daemon=True,
+        )
         t.start()
         return job, True
 
@@ -141,9 +167,16 @@ class JobRunner:
         threading.Thread(target=_watchdog, daemon=True).start()
         return True
 
-    def _run(self, job: Job) -> None:
+    def _run(self, job: Job, discogs_token: str, discogs_token_secret: str) -> None:
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        # Strip the legacy single-tenant Discogs vars in case they're in the
+        # parent process — they'd silently override the per-user OAuth.
+        env.pop("DISCOGS_TOKEN", None)
+        env["DISCOGS_USER_ID"] = str(job.user_id)
+        env["DISCOGS_USERNAME"] = job.username
+        env["DISCOGS_OAUTH_TOKEN"] = discogs_token
+        env["DISCOGS_OAUTH_TOKEN_SECRET"] = discogs_token_secret
         cmd = [sys.executable, "-m", "sleeve_notes.cli", job.kind, *job.argv]
         self._append_line(job, f"$ {' '.join(cmd)}")
         try:
