@@ -15,6 +15,8 @@ The engine in `sleeve_notes/` is the source of truth: deterministic Python that 
 data/             # NOT disposable: sleeve_notes.db (collection, BPM cache, overrides, print history).
 sleeve_notes/     # Engine (Python package). CLI subcommands dispatch into these modules.
 sleeve_notes_web/ # FastAPI + HTMX + Jinja web UI. See "Web UI conventions" below.
+roadmap.md        # Feature ideas / future work. See "Capturing feature ideas" below.
+MIGRATION_PLAN.md # Plan for porting to Django + Render. Lives here as long as the migration is in flight.
 .env              # Discogs consumer creds, SESSION_SECRET, Spotify/Beatport/YT keys. NEVER commit.
 .env.example      # Documents every required + optional key; safe to commit.
 ```
@@ -84,6 +86,16 @@ The web UI lives in `sleeve_notes_web/` (FastAPI + HTMX + Jinja, launched via `s
 **`SLEEVE_NOTES_ROOT` is the root-resolution hook.** All paths (`data/`, `.tmp/`, `.env`) are resolved relative to `project_root()` in `sleeve_notes/__init__.py`, which respects the `SLEEVE_NOTES_ROOT` env var. Don't hardcode `Path.cwd()` or `__file__`-relative paths in engine code — break this and every test/install path gets weird.
 
 **Every long-running step must be idempotent and resumable.** The DB caches (`releases.raw_tracklist IS NOT NULL`, `bpm_cache.sources_tried`, `print_runs`) exist so a `Ctrl-C` mid-run loses at most a handful of seconds. Commit to the DB at coarse intervals (fetch: every 25 releases; bpm: every 5 cascade runs) — never per row (too slow) and never only at the end (loses everything on interrupt).
+
+## Capturing feature ideas
+
+Feature ideas often slip into messages that are about something else — "and it would be cool if X", "we should probably also be able to Y", "what if users could also Z". The user has explicitly said these are easy to lose and they want them preserved.
+
+Whenever the user describes a feature, capability, or non-trivial improvement that **isn't in scope of the current task**, proactively append it to `roadmap.md` — no need to ask first. Match the existing style: `## Section` headers with `**Name** — description` items for short entries, or short prose sections for larger ideas. Reference related design docs (e.g. `MIGRATION_PLAN.md`) rather than duplicating their content. Flag genuinely open design questions in a sub-section so the implementer doesn't have to rediscover them later.
+
+Briefly mention in your reply that you captured it (one line is enough), so the user can correct if you misread the intent.
+
+When in doubt, capture it. Re-finding a forgotten idea costs more than a one-line entry in a file.
 
 ## Before pushing to GitHub
 
