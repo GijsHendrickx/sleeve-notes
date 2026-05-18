@@ -40,7 +40,7 @@
     </a>
 
     <!-- New since last print card -->
-    <a href="/preview?new_only=1" class="card card-hover block p-6">
+    <a href="/print-runs/new" class="card card-hover block p-6">
       <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">New since last print</div>
       <div class="mt-3 flex items-baseline gap-2">
         <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ new_count }}</div>
@@ -53,7 +53,7 @@
           No print runs recorded yet.
         {% endif %}
       </div>
-      <div class="mt-5 inline-flex items-center gap-1 text-[12px] text-sky-400">Open in Preview →</div>
+      <div class="mt-5 inline-flex items-center gap-1 text-[12px] text-sky-400">Start a print run →</div>
     </a>
 
     <!-- Quick actions card -->
@@ -67,8 +67,8 @@
         <a href="/tracks" class="btn btn-ghost justify-start w-full">
           <span class="text-app-dim">✎</span> Edit tracks
         </a>
-        <a href="/preview" class="btn btn-ghost justify-start w-full">
-          <span class="text-app-dim">◐</span> Open Preview
+        <a href="/print-runs" class="btn btn-ghost justify-start w-full">
+          <span class="text-app-dim">◐</span> Print runs
         </a>
       </div>
     </div>

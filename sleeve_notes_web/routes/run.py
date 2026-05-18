@@ -35,7 +35,7 @@ def _job_title(job: Job) -> str:
     if job.kind == "fetch":
         return "Discogs CSV import" if "--csv" in job.argv else "Discogs sync"
     if job.kind == "render":
-        return "Generate stickers"
+        return "Print run"
     if job.kind == "run":
         return "Pipeline"
     return job.kind

@@ -79,24 +79,120 @@ class PdfDrawer:
 
 
 # ---------------------------------------------------------------------------
-# Print history
+# Print runs: each run is a first-class {releases + settings} recipe
 # ---------------------------------------------------------------------------
+
+DEFAULT_SETTINGS: dict = {
+    "sticker_w": L.DEFAULT_STICKER_W_MM,
+    "sticker_h": L.DEFAULT_STICKER_H_MM,
+    "tile": False,
+    "tile_cols": 2,
+    "tile_rows": 5,
+    "qr": True,
+    "show_artist": True,
+    "show_title": True,
+    "show_rpm": True,
+    "show_key": True,
+    "show_bpm": True,
+    "show_duration": True,
+    "show_track_title": True,
+    "show_sides": True,
+}
+
+
+def normalize_settings(settings: dict | None) -> dict:
+    """Merge over DEFAULT_SETTINGS and coerce types — lets callers pass partial
+    or string-typed dicts (e.g. from a form post) and still get a clean dict."""
+    s = dict(DEFAULT_SETTINGS)
+    if not settings:
+        return s
+    for k, default in DEFAULT_SETTINGS.items():
+        if k not in settings:
+            continue
+        v = settings[k]
+        if isinstance(default, bool):
+            s[k] = bool(v) if not isinstance(v, str) else v.lower() in ("1", "true", "on", "yes")
+        elif isinstance(default, int):
+            s[k] = int(v)
+        elif isinstance(default, float):
+            s[k] = float(v)
+        else:
+            s[k] = v
+    return s
+
 
 def already_printed_ids(conn) -> set[int]:
     rows = conn.execute("SELECT DISTINCT release_id FROM print_run_releases").fetchall()
     return {int(r["release_id"]) for r in rows}
 
 
-def append_print_run(conn, release_ids: list[int]) -> int:
+def create_print_run(
+    conn,
+    release_ids: list[int],
+    settings: dict,
+    name: str | None = None,
+) -> int:
+    """Insert a new print_run row with its release links. Returns the new id."""
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    cur = conn.execute("INSERT INTO print_runs (timestamp) VALUES (?)", (timestamp,))
+    cur = conn.execute(
+        "INSERT INTO print_runs (timestamp, name, settings_json) VALUES (?, ?, ?)",
+        (timestamp, (name or None), json.dumps(normalize_settings(settings))),
+    )
     pr_id = cur.lastrowid
-    for rid in sorted(set(release_ids)):
+    for rid in sorted({int(r) for r in release_ids}):
         conn.execute(
             "INSERT OR IGNORE INTO print_run_releases (print_run_id, release_id) VALUES (?, ?)",
-            (pr_id, int(rid)),
+            (pr_id, rid),
         )
     return pr_id
+
+
+def load_print_run(conn, run_id: int) -> dict:
+    """Returns ``{id, timestamp, name, settings, release_ids}``. Raises KeyError."""
+    row = conn.execute(
+        "SELECT id, timestamp, name, settings_json FROM print_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"print run {run_id} not found")
+    rel_rows = conn.execute(
+        "SELECT release_id FROM print_run_releases WHERE print_run_id = ? ORDER BY release_id",
+        (run_id,),
+    ).fetchall()
+    return {
+        "id": row["id"],
+        "timestamp": row["timestamp"],
+        "name": row["name"],
+        "settings": normalize_settings(_json_loads(row["settings_json"], None)),
+        "release_ids": [int(r["release_id"]) for r in rel_rows],
+    }
+
+
+def list_print_runs(conn) -> list[dict]:
+    """All runs, newest first, with light summary for the list view."""
+    rows = conn.execute(
+        "SELECT p.id, p.timestamp, p.name, p.settings_json, "
+        "       (SELECT COUNT(*) FROM print_run_releases pr WHERE pr.print_run_id = p.id) AS release_count "
+        "FROM print_runs p ORDER BY p.id DESC"
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        out.append({
+            "id": r["id"],
+            "timestamp": r["timestamp"],
+            "name": r["name"],
+            "release_count": r["release_count"],
+            "settings": (
+                normalize_settings(_json_loads(r["settings_json"], None))
+                if r["settings_json"] else None
+            ),
+        })
+    return out
+
+
+def delete_print_run(conn, run_id: int) -> None:
+    conn.execute("DELETE FROM print_run_releases WHERE print_run_id = ?", (run_id,))
+    conn.execute("DELETE FROM print_runs WHERE id = ?", (run_id,))
 
 
 def last_print_timestamp(conn) -> str | None:
@@ -110,6 +206,26 @@ def last_print_timestamp(conn) -> str | None:
 # DB → in-memory release dicts (shape the layout module expects)
 # ---------------------------------------------------------------------------
 
+def _hydrate_release_row(conn, r) -> dict:
+    tracks = conn.execute(
+        "SELECT position, side, artist, title, duration, duration_s "
+        "FROM tracks WHERE release_id = ? ORDER BY position",
+        (r["id"],),
+    ).fetchall()
+    return {
+        "id": r["id"],
+        "artist": r["artist"],
+        "title": r["title"],
+        "year": r["year"],
+        "compilation": bool(r["compilation"]),
+        "labels": _json_loads(r["labels"], []),
+        "genres": _json_loads(r["genres"], []),
+        "styles": _json_loads(r["styles"], []),
+        "rpm": _json_loads(r["rpm"], []),
+        "tracks": [dict(t) for t in tracks],
+    }
+
+
 def load_releases_for_render(conn) -> list[dict]:
     """Releases that should appear on the sticker sheet.
 
@@ -121,26 +237,23 @@ def load_releases_for_render(conn) -> list[dict]:
         "WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = r.id) "
         "ORDER BY r.id"
     ).fetchall()
-    out: list[dict] = []
-    for r in releases:
-        tracks = conn.execute(
-            "SELECT position, side, artist, title, duration, duration_s "
-            "FROM tracks WHERE release_id = ? ORDER BY position",
-            (r["id"],),
-        ).fetchall()
-        out.append({
-            "id": r["id"],
-            "artist": r["artist"],
-            "title": r["title"],
-            "year": r["year"],
-            "compilation": bool(r["compilation"]),
-            "labels": _json_loads(r["labels"], []),
-            "genres": _json_loads(r["genres"], []),
-            "styles": _json_loads(r["styles"], []),
-            "rpm": _json_loads(r["rpm"], []),
-            "tracks": [dict(t) for t in tracks],
-        })
-    return out
+    return [_hydrate_release_row(conn, r) for r in releases]
+
+
+def releases_by_ids(conn, ids: list[int]) -> list[dict]:
+    """Hydrate the given release IDs (in input order), skipping any that lack
+    tracks. Used by the web UI when rendering a print run's exact selection."""
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT id, artist, title, year, compilation, labels, genres, styles, rpm "
+        f"FROM releases WHERE id IN ({placeholders}) "
+        f"AND EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)",
+        ids,
+    ).fetchall()
+    by_id = {r["id"]: r for r in rows}
+    return [_hydrate_release_row(conn, by_id[rid]) for rid in ids if rid in by_id]
 
 
 def _json_loads(raw: str | None, default):
@@ -204,8 +317,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--mark-printed", action="store_true",
-        help="After a successful render, append the rendered release IDs to the "
-        "print history (print_runs / print_run_releases tables).",
+        help="After a successful render, save the rendered release IDs and current "
+        "settings as a new print run (print_runs / print_run_releases tables).",
+    )
+    parser.add_argument(
+        "--print-run-id", type=int, default=None,
+        help="Render a previously-saved print run (uses its stored releases and "
+        "settings; other layout/selection flags are ignored). Mutually exclusive "
+        "with --new-only and --mark-printed.",
     )
     parser.add_argument(
         "--no-qr", dest="qr", action="store_false",
@@ -232,48 +351,69 @@ def main(argv: list[str] | None = None) -> int:
         "current working directory.",
     )
     args = parser.parse_args(argv)
+    if args.print_run_id is not None and (args.new_only or args.mark_printed):
+        raise SystemExit(
+            "--print-run-id is mutually exclusive with --new-only / --mark-printed."
+        )
     pdf_out: Path = args.output.expanduser()
     if pdf_out.is_dir() or str(args.output).endswith(("/", "\\")):
         pdf_out = pdf_out / "stickers.pdf"
     if pdf_out.suffix.lower() != ".pdf":
         pdf_out = pdf_out.with_suffix(".pdf")
 
-    try:
-        layout = L.derive_layout(
-            args.sticker_w, args.sticker_h,
-            tile=args.tile, tile_cols=args.tile_cols, tile_rows=args.tile_rows,
-        )
-    except ValueError as e:
-        raise SystemExit(str(e))
-
     with dbmod.session() as conn:
-        releases = load_releases_for_render(conn)
-        if not releases:
-            print(
-                "ERROR: no releases with tracks found. Run "
-                "`sleeve-notes fetch` first.",
-                file=sys.stderr,
-            )
-            return 2
-
-        if args.new_only:
-            already = already_printed_ids(conn)
-            before = len(releases)
-            releases = [r for r in releases if int(r["id"]) not in already]
-            skipped = before - len(releases)
-            last_ts = last_print_timestamp(conn)
-            last_str = f" (last print: {last_ts})" if last_ts else ""
+        if args.print_run_id is not None:
+            try:
+                run = load_print_run(conn, args.print_run_id)
+            except KeyError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
+            for k, v in run["settings"].items():
+                setattr(args, k, v)
+            releases = releases_by_ids(conn, run["release_ids"])
             if not releases:
                 print(
-                    f"Nothing new to print. All {before} release(s) are already in the "
-                    f"print history{last_str}.",
+                    f"ERROR: print run {args.print_run_id} has no renderable releases "
+                    "(all source releases were removed or lack tracks).",
                     file=sys.stderr,
                 )
-                return 0
-            print(
-                f"--new-only: rendering {len(releases)} new release(s); skipping "
-                f"{skipped} already-printed{last_str}."
+                return 2
+        else:
+            releases = load_releases_for_render(conn)
+            if not releases:
+                print(
+                    "ERROR: no releases with tracks found. Run "
+                    "`sleeve-notes fetch` first.",
+                    file=sys.stderr,
+                )
+                return 2
+
+            if args.new_only:
+                already = already_printed_ids(conn)
+                before = len(releases)
+                releases = [r for r in releases if int(r["id"]) not in already]
+                skipped = before - len(releases)
+                last_ts = last_print_timestamp(conn)
+                last_str = f" (last print: {last_ts})" if last_ts else ""
+                if not releases:
+                    print(
+                        f"Nothing new to print. All {before} release(s) are already in the "
+                        f"print history{last_str}.",
+                        file=sys.stderr,
+                    )
+                    return 0
+                print(
+                    f"--new-only: rendering {len(releases)} new release(s); skipping "
+                    f"{skipped} already-printed{last_str}."
+                )
+
+        try:
+            layout = L.derive_layout(
+                args.sticker_w, args.sticker_h,
+                tile=args.tile, tile_cols=args.tile_cols, tile_rows=args.tile_rows,
             )
+        except ValueError as e:
+            raise SystemExit(str(e))
 
         bpm_lookup = build_bpm_lookup(conn, releases)
         pdf_out.parent.mkdir(parents=True, exist_ok=True)
@@ -328,11 +468,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.mark_printed:
             rendered_ids = [int(r["id"]) for r in releases]
-            append_print_run(conn, rendered_ids)
+            settings = {k: getattr(args, k) for k in DEFAULT_SETTINGS}
+            run_id = create_print_run(conn, rendered_ids, settings)
             total_in_history = len(already_printed_ids(conn))
             print(
-                f"  --mark-printed: appended {len(rendered_ids)} release(s) to "
-                f"print history. Total in print history: {total_in_history}."
+                f"  --mark-printed: saved as print run #{run_id} "
+                f"({len(rendered_ids)} release(s)). Total in print history: {total_in_history}."
             )
 
     return 0

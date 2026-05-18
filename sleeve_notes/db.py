@@ -131,7 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_overrides_at ON overrides(artist, title);
 
 CREATE TABLE IF NOT EXISTS print_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  timestamp TEXT NOT NULL
+  timestamp TEXT NOT NULL,
+  name TEXT,
+  settings_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS print_run_releases (
@@ -254,6 +256,24 @@ def _ensure_track_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tracks ADD COLUMN youtube_video_id TEXT")
 
 
+def _ensure_print_run_columns(conn: sqlite3.Connection) -> None:
+    """Promote print_runs to a first-class object with name + settings_json.
+
+    Pre-migration rows are wiped because we can't reconstruct the layout/content
+    settings that produced them. The new web UI treats every run as a saved
+    {releases + settings} recipe; legacy rows without settings would break
+    Duplicate and Re-render, so we'd rather start clean than fake defaults.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(print_runs)").fetchall()}
+    if "settings_json" in existing:
+        return
+    conn.execute("DELETE FROM print_run_releases")
+    conn.execute("DELETE FROM print_runs")
+    if "name" not in existing:
+        conn.execute("ALTER TABLE print_runs ADD COLUMN name TEXT")
+    conn.execute("ALTER TABLE print_runs ADD COLUMN settings_json TEXT")
+
+
 def _ensure_overrides_columns(conn: sqlite3.Connection) -> None:
     """Drop retired override columns from older DBs. SQLite 3.35+ (shipped
     with Python 3.11+) supports ALTER TABLE DROP COLUMN."""
@@ -307,6 +327,7 @@ def connect() -> sqlite3.Connection:
     _ensure_release_columns(conn)
     _ensure_track_columns(conn)
     _ensure_overrides_columns(conn)
+    _ensure_print_run_columns(conn)
     _backfill_normalized_releases(conn)
     if fresh:
         try:

@@ -398,7 +398,7 @@ def draw_sticker(
         title_text_w = header_inner_w - rpm_bot_w - 4
 
     artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
-    title_line = ellipsize(title_text, title_text_w, "Helvetica-Oblique", HEADER_TITLE_PT)
+    title_line = ellipsize(title_text, title_text_w, "Helvetica", HEADER_TITLE_PT)
 
     if show_artist:
         drawer.text(
@@ -408,7 +408,7 @@ def draw_sticker(
     if show_title:
         drawer.text(
             inner_x, title_baseline, title_line,
-            font="Helvetica-Oblique", size=HEADER_TITLE_PT, color=BLACK,
+            font="Helvetica", size=HEADER_TITLE_PT, color=BLACK,
         )
 
     if not side_labels:

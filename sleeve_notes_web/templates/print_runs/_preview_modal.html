@@ -1,0 +1,34 @@
+{# Sticker preview for a single release at the editor's current settings.
+   Swapped into #modal-root by the step-2 row Preview buttons. #}
+<div class="modal-backdrop"
+     onclick="if (event.target === this) htmx.ajax('GET', '/actions/close', '#modal-root')">
+  <div class="modal-card max-w-[min(90vw,32rem)]"
+       hx-on:keydown.escape="htmx.ajax('GET', '/actions/close', '#modal-root')">
+    <div class="px-5 pt-5 pb-3 border-b hairline flex items-start gap-4">
+      <div class="min-w-0 flex-1">
+        <div class="text-[15px] font-semibold text-app-ink tracking-tight truncate">
+          {% if release %}{{ release.artist or 'V/A' }} – {{ release.title }}{% else %}Preview{% endif %}
+        </div>
+        <div class="text-[12px] text-app-mute mt-1">{{ settings_summary }}</div>
+      </div>
+      <button type="button" class="text-app-mute hover:text-app-ink text-[16px] leading-none -mt-1"
+              hx-get="/actions/close" hx-target="#modal-root" hx-swap="innerHTML" aria-label="Close">×</button>
+    </div>
+    <div class="px-5 py-5">
+      {% if error %}
+        <div class="text-amber-400 text-[13px]">{{ error }}</div>
+      {% elif svgs %}
+        <div class="flex flex-wrap gap-3 justify-center">
+          {% for svg in svgs %}
+            <div class="sticker-preview">{{ svg|safe }}</div>
+          {% endfor %}
+        </div>
+        {% if svgs|length > 1 %}
+          <div class="text-[11px] text-app-mute mt-3 text-center">Splits into {{ svgs|length }} stickers ({{ release.tracks|length }} tracks).</div>
+        {% endif %}
+      {% else %}
+        <div class="text-app-mute text-[13px]">No preview available.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>

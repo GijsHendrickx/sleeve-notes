@@ -239,7 +239,8 @@ sleeve-notes render --sticker-w 140 --sticker-h 80   # bigger stickers, fewer pe
 sleeve-notes render --tile                       # edge-to-edge: exactly 10 stickers per A4, slice with 5 ruler cuts
 sleeve-notes render --tile --tile-cols 3 --tile-rows 4    # 12-per-A4 tile (70 x 74.2 mm)
 sleeve-notes render --new-only                   # only releases not yet in the print history
-sleeve-notes render --new-only --mark-printed    # render new + record the print in history
+sleeve-notes render --new-only --mark-printed    # render new + save as a new print run (releases + settings)
+sleeve-notes render --print-run-id 7              # re-render a previously-saved print run by id
 sleeve-notes render -o ~/Desktop/crate-2026-05.pdf   # custom output path
 sleeve-notes render -o out/                       # custom dir; filename defaults to stickers.pdf
 ```
@@ -253,18 +254,21 @@ sleeve-notes render -o out/                       # custom dir; filename default
 - **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
 
-**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. The tool keeps a per-print history in the `print_runs` + `print_run_releases` tables (each row: timestamp + the release IDs that were on it). `--new-only` filters the render to releases that don't appear in any prior print run; `--mark-printed` inserts a new `print_runs` row after a successful render. Typical workflow:
+**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. Print history lives in the `print_runs` + `print_run_releases` tables. Each `print_runs` row stores a timestamp, an optional name and the layout/content settings used (`settings_json`); the join table records the release IDs that were on it. `--new-only` filters the render to releases that don't appear in any prior print run; `--mark-printed` saves the rendered set + the current CLI settings as a new print run. Typical workflow:
 
 ```bash
-# First time: print everything, mark them all as printed
+# First time: print everything, save it as a print run
 sleeve-notes render --mark-printed
 
 # Later, after adding new records to Discogs and re-fetching:
 sleeve-notes render --new-only                  # preview new arrivals
-sleeve-notes render --new-only --mark-printed   # ready to print → commit to history
+sleeve-notes render --new-only --mark-printed   # ready to print → save as a new print run
+
+# Re-render exactly what was on a previous run (settings and all):
+sleeve-notes render --print-run-id 3 -o /tmp/reprint.pdf
 ```
 
-The two flags compose cleanly: alone, `--new-only` just filters; alone, `--mark-printed` marks the entire current collection (handy for marking pre-existing prints as already done). Releases that drop out of your Discogs collection later are ignored — `--new-only` only adds, never removes.
+`--print-run-id` is mutually exclusive with `--new-only` / `--mark-printed` — the saved run already pins both the release set and the settings. Releases that drop out of your Discogs collection later are ignored when re-rendering a saved run — the IDs are kept but lossily skipped at render time.
 
 Inspect history with `sleeve-notes query print_runs` and
 `sleeve-notes query print_run_releases`.
@@ -294,7 +298,7 @@ The sidebar splits into two sections — **Collection** (data views) and **Actio
 | **Dashboard** (`/`) | At-a-glance BPM coverage (high / octave / shared / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
 | **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
 | **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **▶** listen icon (Spotify-green when we have a Spotify ID, YouTube-red otherwise) that opens the track in a new tab, plus a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. The same listen icon also appears in the per-release drawer's tracklist on `/collection`. |
-| **Generate stickers** (`/preview`) | Live SVG preview of the sticker for any release at the requested mm size. Step through releases with `←` / `→`, then generate the PDF with the same tile / new-only / mark-printed flags as the CLI. |
+| **Print runs** (`/print-runs`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with its size, tile mode and content toggles at a glance. The editor (`/print-runs/new`) opens with the **Never printed** chip selected (toggle to **All records** for the full collection), per-row checkboxes to fine-tune, search-within-list, and a live SVG sticker preview that updates as you change settings. **Save & generate** stores the run and takes you to its detail page, where you can re-download the PDF, **Duplicate** it as a starting point for the next print, or delete it. |
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
 | **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
@@ -381,7 +385,7 @@ The DB tables in summary:
 | `bpm_cache` | One row per (artist, title) hash. Tracks which sources have been queried. |
 | `bpm_source_hits` | One row per (cache_key, source) — the raw BPM/key/url returned by each source. |
 | `overrides` | Manual BPM/key overrides. Managed via `sleeve-notes overrides`. |
-| `print_runs` + `print_run_releases` | Print history for `--new-only` / `--mark-printed`. |
+| `print_runs` + `print_run_releases` | First-class print runs: each row holds a timestamp, optional name and `settings_json` blob, with the join table linking it to the release IDs that were on it. Backs both the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the web Print runs page. |
 | `kv` | Tiny key/value table — Beatport tokens, schema version. |
 
 ---

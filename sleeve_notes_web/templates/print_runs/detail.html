@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ run.name or 'Print run' }} · sleeve-notes{% endblock %}
+{% block breadcrumb %}<a href="/print-runs" class="hover:text-app-dim">Print runs</a> <span class="text-app-mute mx-1">/</span> {{ run.name or 'Run #' ~ run.id }}{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  <div class="card p-5">
+    <div class="flex items-start gap-4">
+      <div class="min-w-0 flex-1">
+        <div class="text-app-ink text-[20px] font-semibold tracking-tight">{{ run.name or 'Untitled run' }}</div>
+        <div class="text-app-mute text-[12px] font-mono mt-1">created {{ run.timestamp }}</div>
+        <div class="text-app-dim text-[12px] mt-2">{{ settings_summary }}</div>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <a href="/print-runs/{{ run.id }}/pdf" target="_blank" class="btn btn-primary">Download PDF</a>
+        <a href="/print-runs/new?duplicate_from={{ run.id }}" class="btn btn-ghost">Duplicate</a>
+        <form method="post" action="/print-runs/{{ run.id }}/delete" onsubmit="return confirm('Delete this print run?');">
+          <button type="submit" class="btn btn-quiet">Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if missing_ids %}
+  <div class="card p-4 border-amber-500/40 text-amber-400 text-[12px]">
+    {{ missing_ids|length }} release{{ '' if missing_ids|length == 1 else 's' }} from this run are no longer in your collection (or have no tracks). They will be skipped when re-rendering.
+  </div>
+  {% endif %}
+
+  <div class="card overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b hairline">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Releases in this run</div>
+      <div class="text-app-dim text-[12px] font-mono">{{ releases|length }} / {{ run.release_ids|length }}</div>
+    </div>
+    {% if releases %}
+    <table class="dense w-full text-[13px]">
+      <thead class="text-[10px] uppercase tracking-[0.06em] text-app-mute">
+        <tr class="border-b hairline">
+          <th class="text-left">Artist</th>
+          <th class="text-left">Title</th>
+          <th class="text-left w-20">Year</th>
+          <th class="text-right w-20">Tracks</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in releases %}
+        <tr class="border-t hairline align-middle">
+          <td>{{ r.artist or 'V/A' }}</td>
+          <td class="text-app-ink">{{ r.title }}</td>
+          <td class="font-mono text-app-mute">{{ r.year or '' }}</td>
+          <td class="text-right font-mono text-app-dim">{{ r.tracks|length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="p-6 text-app-mute text-[13px]">No matching releases in collection.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

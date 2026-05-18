@@ -84,7 +84,7 @@
 
   {% if release.tracks %}
     <div class="flex gap-2 pt-1">
-      <a href="/preview?release_id={{ release.id }}" class="btn btn-primary">Preview sticker →</a>
+      <a href="/print-runs/new?release_id={{ release.id }}" class="btn btn-primary">Print sticker →</a>
       <a href="/tracks?release_id={{ release.id }}" class="btn btn-quiet">Edit tracks</a>
     </div>
   {% endif %}

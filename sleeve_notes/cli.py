@@ -34,7 +34,7 @@ Inspection / data:
   auth-beatport  One-time Beatport OAuth bootstrap
 
 Interactive:
-  web            Launch the localhost web UI (dashboard, overrides, preview)
+  web            Launch the localhost web UI (dashboard, overrides, print runs)
 
 Pass -h/--help to any subcommand for its own options.
 """
