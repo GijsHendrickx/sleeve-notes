@@ -1,9 +1,12 @@
-"""Records app views — collection (records list) and tracks list."""
+"""Records app views — collection (records list), tracks list, release detail."""
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
+
+from sleeve_notes import sticker_layout as L
+from sleeve_notes.preview import render_release_stickers_svg
 
 from records.models import Release, Track
 from records.services.bpm_cascade import (
@@ -12,6 +15,7 @@ from records.services.bpm_cascade import (
     load_all_cache_entries,
     load_overrides,
 )
+from print_runs.services.render import build_bpm_lookup, releases_by_ids
 
 
 LIST_LIMIT = 500
@@ -151,4 +155,81 @@ def tracks(request):
             ("all", "All"),
             ("needs_attention", "Without BPM"),
         ],
+    })
+
+
+@login_required
+def release_detail(request, release_id):
+    """HTMX partial for the right-side drawer on /collection.
+
+    Returns the release header + tracklist with derived BPM/key + a list of
+    inline SVG sticker previews. Falls through to a full-page render when
+    accessed without HTMX (so deep-linking still works).
+    """
+    rel = get_object_or_404(
+        Release.objects.prefetch_related("tracks"),
+        pk=release_id, user=request.user,
+    )
+    release_artist = rel.artist or "V/A"
+
+    by_rp, by_tk, _ = load_overrides(request.user)
+    cache_entries = load_all_cache_entries(request.user)
+
+    tracks_out = []
+    for t in rel.tracks.all().order_by("position"):
+        result = derive_track_result(
+            request.user, rel.discogs_release_id,
+            t.position or "",
+            t.artist or release_artist,
+            t.title or "",
+            by_rp, by_tk,
+            cache_entries=cache_entries,
+        )
+        tracks_out.append({
+            "position": t.position,
+            "artist": t.artist or release_artist,
+            "title": t.title,
+            "duration": t.duration,
+            "bpm": result.get("bpm"),
+            "bpm_confidence": result.get("bpm_confidence"),
+            "bpm_sources": result.get("bpm_sources"),
+            "key_camelot": result.get("key_camelot"),
+        })
+
+    # Build sticker preview SVGs by reusing the print_runs render service.
+    svgs: list[str] = []
+    svg_error: str | None = None
+    render_releases = releases_by_ids(request.user, [rel.discogs_release_id])
+    if render_releases:
+        render_release = render_releases[0]
+        try:
+            layout = L.derive_layout(L.DEFAULT_STICKER_W_MM, L.DEFAULT_STICKER_H_MM)
+            bpm_lookup = build_bpm_lookup(request.user, [render_release])
+            svgs = render_release_stickers_svg(
+                render_release, bpm_lookup[render_release["id"]], layout,
+            )
+        except (ValueError, KeyError) as e:
+            svg_error = str(e)
+
+    template = (
+        "records/_release_detail.html"
+        if request.headers.get("HX-Request")
+        else "records/release_detail.html"
+    )
+    return render(request, template, {
+        "active": "collection",
+        "release": {
+            "id": rel.id,
+            "discogs_release_id": rel.discogs_release_id,
+            "artist": rel.artist,
+            "title": rel.title,
+            "year": rel.year,
+            "compilation": rel.compilation,
+            "release_type": rel.release_type,
+            "format": rel.format,
+            "thumb_url": rel.thumb_url,
+            "tracks": tracks_out,
+        },
+        "svgs": svgs,
+        "svg_error": svg_error,
     })

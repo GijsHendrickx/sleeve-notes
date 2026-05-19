@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}{{ release.title }} — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}<a href="{% url 'records:collection' %}" class="text-app-dim hover:text-app-ink">Records</a> · {{ release.title }}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+  {% include "records/_release_detail.html" %}
+</div>
+{% endblock %}
