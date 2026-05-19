@@ -112,6 +112,10 @@ ACCOUNT_SIGNUP_FIELDS = ["username*"]  # Discogs doesn't return email; only user
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_LOGIN_ON_GET = True
 SOCIALACCOUNT_ADAPTER = "discogs_provider.adapter.DiscogsSocialAccountAdapter"
+# Persist the Discogs OAuth1 access token + secret so background jobs can call
+# the API on behalf of the user. Without this, allauth discards the token after
+# the auth handshake and the sync command can't authenticate.
+SOCIALACCOUNT_STORE_TOKENS = True
 SOCIALACCOUNT_PROVIDERS = {
     "discogs": {
         "APP": {
