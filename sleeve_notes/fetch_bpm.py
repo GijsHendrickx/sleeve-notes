@@ -7,19 +7,19 @@ Sources, in order:
                     endpoint. Requires a Spotify Client Credentials app for
                     name→ID translation (free, no user OAuth).
   4. Beatport v4  — editorial BPM from labels themselves. OAuth via the public
-                    Swagger client_id; refresh tokens stored in the DB
-                    (set up via sleeve_notes/beatport_auth.py).
+                    Swagger client_id. Token storage is pending the Django
+                    port; this source is silently disabled until then.
   5. AcousticBrainz — open dataset, looked up via MusicBrainz recording IDs.
                     Frozen since 2022, but excellent coverage for older
                     electronic releases.
 
-All five are validated against the queried artist+title via fuzzy match, and
-results are cached in the ``bpm_cache`` + ``bpm_source_hits`` tables. Each
-cache entry tracks which sources have already been tried, so re-runs only
-hit the sources that haven't exhausted yet. Sources without configured
-credentials raise SourceUnavailable and are skipped without being marked
-as tried — configuring them later automatically extends previously-skipped
-entries on the next run.
+All four (currently five minus Beatport) are validated against the queried
+artist+title via fuzzy match. Results are cached in the Django BpmCache
+model (see ``webapp/records/services/bpm_cascade.py`` for the ORM-bound
+orchestrator). Each cache entry tracks which sources have already been
+tried, so re-runs only hit the sources that haven't exhausted yet. Sources
+without configured credentials raise SourceUnavailable and are skipped
+without being marked as tried.
 """
 
 from __future__ import annotations
@@ -57,7 +57,6 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from sleeve_notes import project_root
 
-from sleeve_notes import db as dbmod
 
 ROOT = project_root()
 
@@ -646,19 +645,20 @@ _beatport_token_lock = threading.Lock()
 
 
 def _load_beatport_tokens() -> dict | None:
-    with dbmod.session() as conn:
-        raw = dbmod.get_kv(conn, "beatport_tokens")
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except Exception:
-        return None
+    """Beatport token persistence pending Django port.
+
+    During the SQLite era these were cached in the kv table. The Django
+    port hasn't ported beatport_auth yet — until it does, this returns
+    None so each cascade either refreshes via env credentials (handled
+    below) or skips Beatport gracefully. Tracking issue: re-port
+    beatport_auth + KV storage to a Django model in core/.
+    """
+    return None
 
 
 def _save_beatport_tokens(tokens: dict) -> None:
-    with dbmod.session() as conn:
-        dbmod.set_kv(conn, "beatport_tokens", json.dumps(tokens))
+    """No-op until Django KV storage is implemented (see _load_beatport_tokens)."""
+    return None
 
 
 def _refresh_beatport_access(refresh_token: str) -> dict:
@@ -682,14 +682,14 @@ def _refresh_beatport_access(refresh_token: str) -> dict:
 
 
 def _full_reauth_beatport() -> dict | None:
-    """Re-authenticate from scratch via username/password. Returns None if
-    BEATPORT_USERNAME/PASSWORD aren't in the env."""
-    username = os.environ.get("BEATPORT_USERNAME")
-    password = os.environ.get("BEATPORT_PASSWORD")
-    if not username or not password:
-        return None
-    from sleeve_notes.beatport_auth import authenticate
-    return authenticate(username, password)
+    """Re-authenticate from scratch via username/password.
+
+    Always returns None during the Django port: the old beatport_auth
+    helper used Selenium-driven OAuth which depended on dbmod, and we
+    haven't re-implemented that flow yet. Beatport is silently disabled
+    until then; the other four sources still run.
+    """
+    return None
 
 
 def _get_beatport_token() -> str:
@@ -716,8 +716,8 @@ def _get_beatport_token() -> str:
             _save_beatport_tokens(fresh)
             return fresh["access_token"]
         raise SourceUnavailable(
-            "Beatport tokens missing/expired and no BEATPORT_USERNAME/PASSWORD in .env — "
-            "run `sleeve-notes auth-beatport` to authorize"
+            "Beatport is disabled in the Django port (token storage pending). "
+            "The other four sources still run."
         )
 
 
@@ -1097,71 +1097,8 @@ def _consense_categorical(
 
 
 # ============================================================================
-# Continuous-mix filter, cache I/O, and overrides
+# Override + consensus helpers (pure; ORM-side wrappers live in webapp/)
 # ============================================================================
-
-def load_overrides(conn, user_id: int) -> tuple[dict, dict, list[str]]:
-    """Load overrides from the DB into two lookup tables, scoped to one user.
-
-    Returns (by_release_position, by_track_key, warnings).
-      by_release_position: dict[(release_id, position), entry] — most precise
-      by_track_key:        dict[cache_key(artist, title), entry] — broader
-    """
-    by_rp: dict[tuple[int, str], dict] = {}
-    by_tk: dict[str, dict] = {}
-    warnings: list[str] = []
-
-    rows = conn.execute(
-        "SELECT id, release_id, position, artist, title, bpm, key_camelot, note "
-        "FROM overrides WHERE user_id = ?",
-        (user_id,),
-    ).fetchall()
-
-    for row in rows:
-        entry = {
-            "id": row["id"],
-            "release_id": row["release_id"],
-            "position": row["position"],
-            "artist": row["artist"],
-            "title": row["title"],
-            "bpm": row["bpm"],
-            "key_camelot": row["key_camelot"],
-            "note": row["note"],
-        }
-
-        if entry["bpm"] is not None:
-            try:
-                bpm_int = int(round(float(entry["bpm"])))
-            except (TypeError, ValueError):
-                warnings.append(f"override #{row['id']}: invalid bpm {entry['bpm']!r}")
-                continue
-            if not (BPM_MIN <= bpm_int <= BPM_MAX):
-                warnings.append(
-                    f"override #{row['id']}: bpm {bpm_int} outside {BPM_MIN}-{BPM_MAX}"
-                )
-                continue
-            entry["bpm"] = bpm_int
-
-        raw_key = entry.get("key_camelot")
-        if raw_key is not None:
-            normalized = parse_key_to_camelot(str(raw_key))
-            if normalized is None:
-                warnings.append(
-                    f"override #{row['id']}: unrecognised key_camelot {raw_key!r}"
-                )
-                continue
-            entry["key_camelot"] = normalized
-
-        if entry["release_id"] is not None and entry["position"] is not None:
-            by_rp[(int(entry["release_id"]), str(entry["position"]))] = entry
-        elif entry["artist"] and entry["title"]:
-            by_tk[cache_key(str(entry["artist"]), str(entry["title"]))] = entry
-        else:
-            warnings.append(
-                f"override #{row['id']}: must have (release_id, position) or (artist, title)"
-            )
-
-    return by_rp, by_tk, warnings
 
 
 def override_to_result(entry: dict) -> dict:
@@ -1188,126 +1125,6 @@ def override_to_result(entry: dict) -> dict:
 # pass through, while catching the multi-remix patterns (Salt-N-Pepa "Push It
 # (Again)" → 9 cache_keys, Klubbheads "Kickin' Hard" → 5, etc.).
 URL_SHARE_SUSPECT_THRESHOLD = 3
-
-_URL_SHARE_CACHE: dict[tuple[int, int], dict[tuple[str, str], int]] = {}
-
-
-def url_share_counts(conn, user_id: int) -> dict[tuple[str, str], int]:
-    """How many distinct cache_keys each (source, url) pair appears under,
-    for one user's lookup history.
-
-    Cached per-(connection, user). Call ``invalidate_url_share_counts``
-    after writing to ``bpm_source_hits`` so the next read reflects the
-    new data.
-    """
-    key = (id(conn), user_id)
-    cached = _URL_SHARE_CACHE.get(key)
-    if cached is not None:
-        return cached
-    rows = conn.execute(
-        "SELECT source, url, COUNT(DISTINCT cache_key) AS n "
-        "FROM bpm_source_hits "
-        "WHERE user_id = ? AND url IS NOT NULL AND url != '' "
-        "GROUP BY source, url",
-        (user_id,),
-    ).fetchall()
-    counts: dict[tuple[str, str], int] = {(r[0], r[1]): r[2] for r in rows}
-    _URL_SHARE_CACHE[key] = counts
-    return counts
-
-
-def invalidate_url_share_counts(conn=None, user_id: int | None = None) -> None:
-    if conn is None:
-        _URL_SHARE_CACHE.clear()
-        return
-    if user_id is None:
-        # drop every entry for this conn regardless of user
-        cid = id(conn)
-        for k in [k for k in _URL_SHARE_CACHE if k[0] == cid]:
-            _URL_SHARE_CACHE.pop(k, None)
-    else:
-        _URL_SHARE_CACHE.pop((id(conn), user_id), None)
-
-
-def load_cache_entry(conn, user_id: int, ck: str) -> dict | None:
-    """Reconstruct the v2-style cache entry shape from DB rows for one user."""
-    row = conn.execute(
-        "SELECT sources_tried FROM bpm_cache WHERE user_id = ? AND cache_key = ?",
-        (user_id, ck),
-    ).fetchone()
-    if not row:
-        return None
-    sources: dict[str, dict] = {}
-    for sr in conn.execute(
-        "SELECT source, bpm, key_camelot, score, url, mbid "
-        "FROM bpm_source_hits WHERE user_id = ? AND cache_key = ?",
-        (user_id, ck),
-    ):
-        hit = {
-            "bpm": sr["bpm"],
-            "key_camelot": sr["key_camelot"],
-            "score": sr["score"],
-            "url": sr["url"],
-        }
-        if sr["mbid"]:
-            hit["mbid"] = sr["mbid"]
-        sources[sr["source"]] = {k: v for k, v in hit.items() if v is not None}
-    try:
-        tried = json.loads(row["sources_tried"] or "[]")
-    except json.JSONDecodeError:
-        tried = []
-    return {"sources": sources, "sources_tried": tried}
-
-
-def save_cache_entry(
-    conn, user_id: int, ck: str, artist: str, title: str, entry: dict
-) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    conn.execute(
-        """
-        INSERT INTO bpm_cache (user_id, cache_key, artist, title, sources_tried, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (user_id, cache_key) DO UPDATE SET
-            artist = COALESCE(bpm_cache.artist, excluded.artist),
-            title  = COALESCE(bpm_cache.title,  excluded.title),
-            sources_tried = excluded.sources_tried,
-            updated_at = excluded.updated_at
-        """,
-        (
-            user_id,
-            ck,
-            artist,
-            title,
-            json.dumps(entry.get("sources_tried") or []),
-            now,
-        ),
-    )
-    for src, hit in (entry.get("sources") or {}).items():
-        if not isinstance(hit, dict):
-            continue
-        conn.execute(
-            """
-            INSERT INTO bpm_source_hits (user_id, cache_key, source, bpm, key_camelot, score, url, mbid)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (user_id, cache_key, source) DO UPDATE SET
-                bpm = excluded.bpm,
-                key_camelot = excluded.key_camelot,
-                score = excluded.score,
-                url = excluded.url,
-                mbid = excluded.mbid
-            """,
-            (
-                user_id,
-                ck,
-                src,
-                hit.get("bpm"),
-                hit.get("key_camelot"),
-                hit.get("score"),
-                hit.get("url"),
-                hit.get("mbid"),
-            ),
-        )
-
 
 def build_track_result(
     position: str, artist: str, title: str, entry: dict,
@@ -1357,40 +1174,6 @@ def build_track_result(
         "shared_siblings": shared_siblings,
         "reason": reason,
     }
-
-
-def derive_track_result(
-    conn,
-    user_id: int,
-    release_id: int,
-    position: str,
-    artist: str,
-    title: str,
-    overrides_rp: dict,
-    overrides_tk: dict,
-) -> dict:
-    """Compute the per-track BPM result without running the cascade.
-
-    Used by the PDF renderer to pull final values out of the cache + overrides
-    without re-querying the network. Returns the same shape as
-    ``build_track_result`` would, plus a manual-override short-circuit.
-    """
-    base = {"position": position, "artist": artist, "title": title}
-    override = overrides_rp.get((release_id, position))
-    if override is None:
-        ck = cache_key(artist, title)
-        if ck in overrides_tk:
-            override = overrides_tk[ck]
-    if override is not None:
-        return {**base, **override_to_result(override)}
-
-    entry = load_cache_entry(conn, user_id, cache_key(artist, title))
-    if entry is None:
-        entry = {"sources": {}, "sources_tried": []}
-    return build_track_result(
-        position, artist, title, entry,
-        share_counts=url_share_counts(conn, user_id),
-    )
 
 
 # ============================================================================
