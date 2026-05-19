@@ -2,26 +2,120 @@
 
 Dit document beschrijft hoe Sleeve Notes wordt overgezet van de huidige FastAPI + HTMX + SQLite stack naar Django + Postgres, gehost op Render. Het doel is een ingezette applicatie waar deployen `git push` is, maintenance dashboards-werk is, en de codebase grotendeels uit bewezen frameworks bestaat in plaats van custom code.
 
+> **Lees dit eerst:** [Voortgang](#voortgang) documenteert wat er werkelijk is gebeurd t.o.v. het plan. De fase-secties hieronder zijn het oorspronkelijke ontwerp; de Voortgang corrigeert daar waar realiteit het plan inhaalde.
+
 ## Inhoudsopgave
 
-1. [Doelstelling](#doelstelling)
-2. [Eindstack](#eindstack)
-3. [Aannames](#aannames)
-4. [Vroege architectuur-beslissingen](#vroege-architectuur-beslissingen)
-5. [Fase 0 — Voorbereiding](#fase-0--voorbereiding)
-6. [Fase 1 — Skelet & deploy-pipeline](#fase-1--skelet--deploy-pipeline)
-7. [Fase 2 — Auth](#fase-2--auth)
-8. [Fase 3 — Models & migrations](#fase-3--models--migrations)
-9. [Fase 4 — Engine integratie](#fase-4--engine-integratie)
-10. [Fase 5 — Web UI port](#fase-5--web-ui-port)
-11. [Fase 6 — Productie cut-over](#fase-6--productie-cut-over)
-12. [Fase 7 — Operationeel](#fase-7--operationeel)
-13. [Per-user credentials architectuur](#per-user-credentials-architectuur)
-14. [Operationele zorgvuldigheid v1](#operationele-zorgvuldigheid-v1)
-15. [Buiten scope v1](#buiten-scope-v1)
-16. [Maandelijkse maintenance](#maandelijkse-maintenance)
-17. [Tijdsinschatting](#tijdsinschatting)
-18. [Open vragen](#open-vragen)
+1. [Voortgang](#voortgang)
+2. [Doelstelling](#doelstelling)
+3. [Eindstack](#eindstack)
+4. [Aannames](#aannames)
+5. [Vroege architectuur-beslissingen](#vroege-architectuur-beslissingen)
+6. [Fase 0 — Voorbereiding](#fase-0--voorbereiding)
+7. [Fase 1 — Skelet & deploy-pipeline](#fase-1--skelet--deploy-pipeline)
+8. [Fase 2 — Auth](#fase-2--auth)
+9. [Fase 3 — Models & migrations](#fase-3--models--migrations)
+10. [Fase 4 — Engine integratie](#fase-4--engine-integratie)
+11. [Fase 5 — Web UI port](#fase-5--web-ui-port)
+12. [Fase 6 — Productie cut-over](#fase-6--productie-cut-over)
+13. [Fase 7 — Operationeel](#fase-7--operationeel)
+14. [Per-user credentials architectuur](#per-user-credentials-architectuur)
+15. [Operationele zorgvuldigheid v1](#operationele-zorgvuldigheid-v1)
+16. [Buiten scope v1](#buiten-scope-v1)
+17. [Maandelijkse maintenance](#maandelijkse-maintenance)
+18. [Tijdsinschatting](#tijdsinschatting)
+19. [Open vragen](#open-vragen)
+
+---
+
+## Voortgang
+
+Stand van zaken voor wie net dit document opent in een nieuw context window.
+
+### Branch & live state
+
+- **Branch:** `django-port` (op origin, auto-deploy naar Render staging)
+- **Laatste commit:** `f529b92` (zie `git log --oneline` voor actuele lijst)
+- **Staging URL:** `https://sleeve-notes-web-staging.onrender.com` — Basic Auth gate actief; achter de gate werkt Discogs OAuth login + logout
+- **Lokaal:** `docker compose up -d db` voor Postgres; `cd webapp && ../.venv/bin/python manage.py runserver` voor Django; legacy FastAPI app draait nog via `sleeve-notes web` (zie waarschuwing onder *Transitional state*)
+
+### Fase-status
+
+| Fase | Status | Notitie |
+|---|---|---|
+| 0. Voorbereiding | ✓ klaar | Render + Sentry + Discogs staging-OAuth-app aangemaakt; secrets in Bitwarden |
+| 1. Skelet & deploy | ✓ klaar | Django 5.2 + Postgres + Sentry + Basic Auth gate + healthz + RUNBOOK; `git push` deployt |
+| 2. Auth | ✓ klaar | django-allauth + custom Discogs OAuth1 provider; sign-in werkt end-to-end op staging |
+| 3. Models | ✓ klaar | Records / PrintRun / AuditEvent / BpmCache + admin; UUID PKs op user-facing, TimestampedModel base |
+| 4. Engine integratie | gedeeltelijk | 4A.1–4A.4 klaar (alle DB-rakende modules geport). 4B (Django-Q2) en 4C (PDF render command) staan nog open. |
+| 5. Web UI port | ✗ niet begonnen | Volledige FastAPI → Django UI; komt na 4 |
+| 6. Productie cut-over | ✗ niet begonnen | Pas wanneer 5 klaar is + staging een week stabiel |
+| 7. Operationeel | n.v.t. | Doorlopend |
+
+### Sub-blok status binnen fase 4
+
+| Sub-blok | Status | Commit |
+|---|---|---|
+| 4A.1 Django bootstrap in engine | ✓ | `3b05e48` |
+| 4A.2 Port `overrides.py` | ✓ | `3b05e48` |
+| 4A.3 Port `query.py` + `fetch_discogs_collection.py` | ✓ | `3024322` |
+| 4A.4 Port `fetch_bpm.py` | ✓ | `f529b92` |
+| 4B Django-Q2 voor async tasks | TODO (~1u) | — |
+| 4C PDF render management command | TODO (~30m) | — |
+
+### Architectuur-beslissingen die tijdens de port zijn gewijzigd
+
+Het oorspronkelijke plan was correct in opzet maar miste detail. Wijzigingen die de plan-aannames overrulen:
+
+- **Aanname #5 omgekeerd.** Het plan zei "geen dedicated bpm_cache als aparte tabel, wordt veld op Track". Verkeerd — de cache is per *song* (artist+title hash), niet per *track*. Dezelfde song op een single én een LP deelt één cache-row. `records.BpmCache` is dus een eigen model. `Track.bpm` is volledig verwijderd; rendering leest door de cache.
+- **Schema is iteratief verfijnd.** De model-sketches in fase 3 hieronder zijn historisch. Canonieke schema-staat: `webapp/records/models.py` / `webapp/print_runs/models.py` / `webapp/audit/models.py`. Het oorspronkelijke `Release.artists` (JSONField) is `artist` (CharField) geworden om met de Discogs-engine te matchen. `Override` is herontworpen om zowel precise (release+position) als broad (artist+title) match te ondersteunen — anders zou de "zelfde song op single + LP" feature verloren gaan.
+- **Schaal-doel + tijdsinvestering bevestigd.** v1 mikt op 10–100 users, geen deadline, variabel/burst-werk. Render instances staan op de kleinste paid tier (~$21/mnd voor staging-stack).
+
+### Engine-port pattern (hou dit aan voor 4B / 4C en later)
+
+De gevolgde conventie tijdens fase 4:
+
+```
+sleeve_notes/<module>.py                              ← legacy SQLite versie
+  → main() vervangen door dunne delegator
+  → pure helper-functies (HTTP, parsing, layout, etc.) blijven 1:1 staan
+    en worden door de Django-kant geïmporteerd
+
+webapp/<app>/services/<module>.py                     ← ORM-bound logica
+  → wraps de pure helpers uit sleeve_notes/
+  → schrijft via Django ORM
+  → call-pattern: run_*(user, *, log=print, ...)
+
+webapp/<app>/management/commands/<command>.py         ← entry point
+  → thin wrapper rond services/
+  → resolve user via DISCOGS_USER_ID env var
+  → mapped door sleeve_notes/<module>.py delegator
+```
+
+Concrete voorbeelden: `webapp/records/services/discogs_sync.py` (sync) en `webapp/records/services/bpm_cascade.py` (BPM cascade). Eerst port-pattern volgen, daarna naar Django-Q2 tillen in fase 4B.
+
+### Transitional state — gotchas voor de volgende sessie
+
+- **`sleeve-notes web` start nog de oude FastAPI app.** Dat is fine zolang we de Django web UI niet hebben gebouwd (fase 5). Maar: gebruikers die de oude FastAPI gebruiken zien een SQLite-wereld; de CLI subcommands (`fetch`, `bpm`, `query`, `overrides`) schrijven nu naar Postgres. **De twee datasets zijn ontkoppeld.** Dit is OK voor nu (alleen de developer test) maar moet worden opgelost vóór fase 6.
+- **Beatport in de BPM cascade leest nog uit het SQLite kv-tabel** via `sleeve_notes/db.py`. Wanneer het SQLite-bestand niet bestaat (bv. op Render) faalt `_load_beatport_tokens` netjes; cascade slaat Beatport over. Wanneer we Beatport echt willen gebruiken na de port: app-wide kv mechanism nodig (kv-model in `core/` of `audit/` app, of env-var fallback).
+- **`sleeve_notes/db.py` bestaat nog.** Andere engine modules (`generate_sticker_pdf.py`, `beatport_auth.py`, dood gemaakte legacy code in `fetch_bpm.py`) importeren het. Verwijderen kan zodra die laatste callers ook geport zijn (fase 4C en daarna).
+- **`sleeve_notes/ingest.normalize_release` is dode code** sinds 4A.3. De pure helpers eromheen (`join_artists`, `transform_tracks`, `extract_rpms`) worden wél gebruikt door `webapp/records/services/discogs_sync.py`.
+- **CSRF_TRUSTED_ORIGINS moet per environment gezet** zijn voor HTTPS POSTs (sign-out, forms). Staging heeft het al; productie moet later toegevoegd worden.
+- **Custom domein nog niet ingezet.** Staging draait op `*.onrender.com`. Bij custom domein: Cloudflare Access voor staging i.p.v. HTTP Basic Auth + DNS records voor Resend (DKIM/SPF/DMARC).
+
+### Volgende stappen — concreet starten met 4B
+
+Voor wie 4B oppakt (Django-Q2):
+
+1. Add `django-q2` to `pyproject.toml` dependencies; `pip install -e .`.
+2. Configure in `webapp/sleevenotes_app/settings.py`: `Q_CLUSTER = {"orm": "default", ...}` (Postgres als broker, geen Redis).
+3. Add `django_q` to `INSTALLED_APPS`; `makemigrations` + `migrate` (creates Q2 broker tables).
+4. Create `webapp/records/jobs.py` (or similar) with `@async_task`-wrapped versions of `run_bpm_cascade` and `sync_via_csv`/`sync_via_api`.
+5. Update `render.yaml`: add a `worker` service of type `worker` that runs `python manage.py qcluster`. Same Docker image, different command.
+6. Per-user lock in jobs (DB-row in AuditEvent or a dedicated UserJobLock model) so one user can't start two parallel syncs.
+7. Test: trigger a sync via a temp management command that just calls `async_task("...", user.id)`.
+
+Voor 4C (PDF render management command): lees `sleeve_notes/generate_sticker_pdf.py`, port `main()` naar een Django management command `render_print_run`, gebruik het bestaande `PrintRun` model voor input + `pdf_hash` veld voor output-hash.
 
 ---
 
