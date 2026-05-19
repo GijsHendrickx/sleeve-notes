@@ -5,23 +5,29 @@ from .models import Override, Release, Track
 
 @admin.register(Release)
 class ReleaseAdmin(admin.ModelAdmin):
-    list_display = ("title", "discogs_release_id", "user", "year", "created_at")
-    list_filter = ("user", "year")
-    search_fields = ("title", "discogs_release_id")
+    list_display = (
+        "title", "artist", "discogs_release_id", "year",
+        "release_type", "format", "user", "created_at",
+    )
+    list_filter = ("user", "release_type", "format", "year")
+    search_fields = ("title", "artist", "discogs_release_id")
     readonly_fields = ("id", "created_at", "updated_at")
 
 
 @admin.register(Track)
 class TrackAdmin(admin.ModelAdmin):
-    list_display = ("position", "title", "release", "bpm", "bpm_resolved_at")
+    list_display = ("position", "title", "artist", "release", "bpm", "bpm_resolved_at")
     list_filter = ("bpm_resolved_at",)
-    search_fields = ("title", "release__title")
+    search_fields = ("title", "artist", "release__title")
     readonly_fields = ("id", "created_at", "updated_at")
 
 
 @admin.register(Override)
 class OverrideAdmin(admin.ModelAdmin):
-    list_display = ("track", "field", "user", "created_at")
-    list_filter = ("field", "user")
-    search_fields = ("track__title",)
+    list_display = (
+        "user", "release", "position", "artist", "title",
+        "bpm", "key_camelot", "created_at",
+    )
+    list_filter = ("user",)
+    search_fields = ("artist", "title", "release__title")
     readonly_fields = ("id", "created_at", "updated_at")

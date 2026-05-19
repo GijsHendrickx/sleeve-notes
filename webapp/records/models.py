@@ -10,17 +10,30 @@ class Release(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     discogs_release_id = models.IntegerField()
+    artist = models.CharField(max_length=500, blank=True)
     title = models.CharField(max_length=500)
-    artists = models.JSONField()
-    raw_tracklist = models.JSONField(null=True, blank=True)
     year = models.IntegerField(null=True, blank=True)
-    formats = models.JSONField(null=True, blank=True)
+    compilation = models.BooleanField(default=False)
     labels = models.JSONField(null=True, blank=True)
+    genres = models.JSONField(null=True, blank=True)
+    styles = models.JSONField(null=True, blank=True)
+    rpm = models.CharField(max_length=10, blank=True)
+    notes = models.TextField(blank=True)
+    basic_information = models.JSONField(null=True, blank=True)
+    raw_tracklist = models.JSONField(null=True, blank=True)
+    release_type = models.CharField(max_length=50, blank=True)
+    format = models.CharField(max_length=50, blank=True)
     thumb_url = models.URLField(max_length=500, blank=True)
+    fetched_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = [("user", "discogs_release_id")]
-        indexes = [models.Index(fields=["user", "discogs_release_id"])]
+        indexes = [
+            models.Index(fields=["user", "discogs_release_id"]),
+            models.Index(fields=["user", "artist"]),
+            models.Index(fields=["user", "release_type"]),
+            models.Index(fields=["user", "format"]),
+        ]
         ordering = ["-created_at"]
 
     def __str__(self):
@@ -31,28 +44,53 @@ class Track(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     release = models.ForeignKey(Release, on_delete=models.CASCADE, related_name="tracks")
     position = models.CharField(max_length=20, blank=True)
+    side = models.CharField(max_length=5, blank=True)
+    artist = models.CharField(max_length=500, blank=True)
     title = models.CharField(max_length=500)
     duration = models.CharField(max_length=20, blank=True)
+    duration_s = models.IntegerField(null=True, blank=True)
+    spotify_track_id = models.CharField(max_length=64, blank=True)
+    youtube_video_id = models.CharField(max_length=64, blank=True)
     bpm = models.FloatField(null=True, blank=True)
     bpm_sources_tried = models.JSONField(default=list)
     bpm_resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["release", "position"]
+        unique_together = [("release", "position")]
 
     def __str__(self):
         return f"{self.position} {self.title}".strip()
 
 
 class Override(TimestampedModel):
+    """Manual BPM/key override.
+
+    Either identify a track precisely (release + position) or broadly
+    (artist + title). The broad form matches every track with that
+    artist+title — useful for the same song on a single and an LP.
+    Exactly one mode must be set; enforced at the application layer.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    track = models.ForeignKey(Track, on_delete=models.CASCADE, related_name="overrides")
-    field = models.CharField(max_length=50)
-    value = models.JSONField()
+    release = models.ForeignKey(
+        Release, on_delete=models.CASCADE, null=True, blank=True,
+    )
+    position = models.CharField(max_length=20, blank=True)
+    artist = models.CharField(max_length=500, blank=True)
+    title = models.CharField(max_length=500, blank=True)
+    bpm = models.IntegerField(null=True, blank=True)
+    key_camelot = models.CharField(max_length=20, blank=True)
+    note = models.TextField(blank=True)
 
     class Meta:
-        unique_together = [("user", "track", "field")]
+        indexes = [
+            models.Index(fields=["user", "release", "position"]),
+            models.Index(fields=["user", "artist", "title"]),
+        ]
+        ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.track}: {self.field}"
+        if self.release_id:
+            return f"{self.release.title} @ {self.position}"
+        return f"{self.artist} — {self.title}"
