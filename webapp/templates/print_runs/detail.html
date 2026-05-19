@@ -18,6 +18,11 @@
     </div>
     <a href="{% url 'print_runs:pdf_download' run.id %}"
        class="btn btn-primary">Download PDF</a>
+    <form method="post" action="{% url 'print_runs:delete' run.id %}"
+          onsubmit="return confirm('Delete this print run? The PDF can’t be downloaded again.');">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-quiet text-rose-400 hover:text-rose-300">Delete</button>
+    </form>
   </div>
 
   <p class="text-sm text-app-dim">

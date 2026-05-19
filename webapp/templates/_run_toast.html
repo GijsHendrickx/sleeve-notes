@@ -36,3 +36,23 @@ in base.html with `:empty { display: none; }` so an empty response hides it.
     <div class="text-app-mute text-[11px] mt-1">Took {{ elapsed_s }}s.</div>
   {% endif %}
 </div>
+
+{% if state == 'done' and task_id %}
+{# Auto-refresh the page in place once per completed job, so the user sees
+   the new BPMs / synced releases without a manual reload. Idempotent across
+   the toast's ~5 polls in done state via window.__sn_refreshed_for_task. #}
+<script>
+(() => {
+  const taskId = "{{ task_id|escapejs }}";
+  if (window.__sn_refreshed_for_task === taskId) return;
+  window.__sn_refreshed_for_task = taskId;
+  setTimeout(() => {
+    if (window.htmx) {
+      htmx.ajax("GET", window.location.href, {
+        target: "main", swap: "innerHTML", select: "main > *",
+      });
+    }
+  }, 600);
+})();
+</script>
+{% endif %}

@@ -67,4 +67,5 @@ def run_banner(request):
         "progress_pct": pct,
         "state": lock.state,
         "result_text": lock.result_text,
+        "task_id": lock.task_id,
     })

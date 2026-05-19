@@ -6,6 +6,7 @@ import re
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
 
 from records.models import Release
 
@@ -38,6 +39,14 @@ def detail(request, run_id):
         "active": "print_runs",
         "run": run,
     })
+
+
+@login_required
+@require_POST
+def delete(request, run_id):
+    run = get_object_or_404(PrintRun, pk=run_id, user=request.user)
+    run.delete()
+    return redirect("print_runs:index")
 
 
 @login_required
