@@ -45,3 +45,42 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false
+
+  - type: worker
+    name: sleeve-notes-worker-staging
+    runtime: docker
+    plan: starter
+    branch: django-port
+    autoDeploy: true
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: frankfurt
+    # Same image as the web service, different entrypoint: run the Q2 cluster
+    # instead of gunicorn. Migrations are owned by the web service, so the
+    # worker just starts qcluster — exiting on SIGTERM, which Q2 handles cleanly.
+    dockerCommand: python manage.py qcluster
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: APP_NAME
+        value: Sleeve Notes
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: .onrender.com
+      - key: DEFAULT_FROM_EMAIL
+        value: noreply@example.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sleeve-notes-db-staging
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: DISCOGS_CONSUMER_KEY
+        sync: false
+      - key: DISCOGS_CONSUMER_SECRET
+        sync: false
+      - key: SENTRY_DSN
+        sync: false

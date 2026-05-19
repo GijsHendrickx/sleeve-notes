@@ -35,7 +35,7 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 ### Branch & live state
 
 - **Branch:** `django-port` (op origin, auto-deploy naar Render staging)
-- **Laatste commit:** `f529b92` (zie `git log --oneline` voor actuele lijst)
+- **Laatste commit:** zie `git log --oneline` voor actuele lijst
 - **Staging URL:** `https://sleeve-notes-web-staging.onrender.com` — Basic Auth gate actief; achter de gate werkt Discogs OAuth login + logout
 - **Lokaal:** `docker compose up -d db` voor Postgres; `cd webapp && ../.venv/bin/python manage.py runserver` voor Django; legacy FastAPI app draait nog via `sleeve-notes web` (zie waarschuwing onder *Transitional state*)
 
@@ -47,7 +47,7 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 1. Skelet & deploy | ✓ klaar | Django 5.2 + Postgres + Sentry + Basic Auth gate + healthz + RUNBOOK; `git push` deployt |
 | 2. Auth | ✓ klaar | django-allauth + custom Discogs OAuth1 provider; sign-in werkt end-to-end op staging |
 | 3. Models | ✓ klaar | Records / PrintRun / AuditEvent / BpmCache + admin; UUID PKs op user-facing, TimestampedModel base |
-| 4. Engine integratie | gedeeltelijk | 4A.1–4A.4 klaar (alle DB-rakende modules geport). 4B (Django-Q2) en 4C (PDF render command) staan nog open. |
+| 4. Engine integratie | gedeeltelijk | 4A + 4B klaar (alle DB-rakende modules geport; Django-Q2 + per-user lock + worker service). 4C (PDF render command) staat nog open. |
 | 5. Web UI port | ✗ niet begonnen | Volledige FastAPI → Django UI; komt na 4 |
 | 6. Productie cut-over | ✗ niet begonnen | Pas wanneer 5 klaar is + staging een week stabiel |
 | 7. Operationeel | n.v.t. | Doorlopend |
@@ -60,7 +60,8 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 4A.2 Port `overrides.py` | ✓ | `3b05e48` |
 | 4A.3 Port `query.py` + `fetch_discogs_collection.py` | ✓ | `3024322` |
 | 4A.4 Port `fetch_bpm.py` | ✓ | `f529b92` |
-| 4B Django-Q2 voor async tasks | TODO (~1u) | — |
+| 4A.5 Port `query.py` CLI naar delegator | ✓ | `54ddf44` |
+| 4B Django-Q2 voor async tasks + per-user lock + worker service | ✓ | (HEAD) |
 | 4C PDF render management command | TODO (~30m) | — |
 
 ### Architectuur-beslissingen die tijdens de port zijn gewijzigd
@@ -103,19 +104,24 @@ Concrete voorbeelden: `webapp/records/services/discogs_sync.py` (sync) en `webap
 - **CSRF_TRUSTED_ORIGINS moet per environment gezet** zijn voor HTTPS POSTs (sign-out, forms). Staging heeft het al; productie moet later toegevoegd worden.
 - **Custom domein nog niet ingezet.** Staging draait op `*.onrender.com`. Bij custom domein: Cloudflare Access voor staging i.p.v. HTTP Basic Auth + DNS records voor Resend (DKIM/SPF/DMARC).
 
-### Volgende stappen — concreet starten met 4B
+### Volgende stappen — concreet starten met 4C
 
-Voor wie 4B oppakt (Django-Q2):
+Voor wie 4C (PDF render management command) oppakt:
 
-1. Add `django-q2` to `pyproject.toml` dependencies; `pip install -e .`.
-2. Configure in `webapp/sleevenotes_app/settings.py`: `Q_CLUSTER = {"orm": "default", ...}` (Postgres als broker, geen Redis).
-3. Add `django_q` to `INSTALLED_APPS`; `makemigrations` + `migrate` (creates Q2 broker tables).
-4. Create `webapp/records/jobs.py` (or similar) with `@async_task`-wrapped versions of `run_bpm_cascade` and `sync_via_csv`/`sync_via_api`.
-5. Update `render.yaml`: add a `worker` service of type `worker` that runs `python manage.py qcluster`. Same Docker image, different command.
-6. Per-user lock in jobs (DB-row in AuditEvent or a dedicated UserJobLock model) so one user can't start two parallel syncs.
-7. Test: trigger a sync via a temp management command that just calls `async_task("...", user.id)`.
+- Lees `sleeve_notes/generate_sticker_pdf.py` — pure-helpers (sticker_layout, qrcode, reportlab) blijven 1:1.
+- Port `main()` naar een Django management command `render_print_run` in `webapp/print_runs/management/commands/`.
+- Input: `--print-run-id <uuid>`. Vul `PrintRun.pdf_hash` (SHA256-hex van de gerenderde PDF bytes).
+- Output gaat naar stdout (bytes) of `--output PATH`. Op Render's ephemeral disk schrijft de web-view straks rechtstreeks naar de response.
+- Voor lange runs: `enqueue_print_render(user, print_run_id)` in `webapp/print_runs/jobs.py` met dezelfde lock-pattern als 4B (zie `records/jobs.py`).
+- Daarna: laatste imports van `sleeve_notes/db.py` opruimen (alleen `generate_sticker_pdf.py` en `beatport_auth.py` raken het nog) en het bestand verwijderen.
 
-Voor 4C (PDF render management command): lees `sleeve_notes/generate_sticker_pdf.py`, port `main()` naar een Django management command `render_print_run`, gebruik het bestaande `PrintRun` model voor input + `pdf_hash` veld voor output-hash.
+### Wat 4B opleverde (referentie voor 4C / 5)
+
+- **`core.UserJobLock`** — OneToOne(user), kind, task_id, started_at. `acquire(user, kind)` raised `LockHeld` als er al een actieve job is; `release(user)` verwijdert de rij. Tasks gebruiken `try/finally` zodat crashes ook unlocken.
+- **`records/jobs.py`** — `enqueue_discogs_sync(user, source=...)` en `enqueue_bpm_cascade(user)` zijn de publieke API. Workers krijgen alleen `user_id` mee (geen request state); OAuth tokens worden uit `SocialToken` gehaald op de worker.
+- **`Q_CLUSTER` config** — Postgres-as-broker, 2 workers default, 15 min timeout, `max_attempts=1` (geen auto-retry; errors moeten luid zijn).
+- **`render.yaml` worker service** — zelfde Docker image, `dockerCommand: python manage.py qcluster`. Migraties draait alleen de web-service zodat workers niet racen tegen schema-changes.
+- **Smoke-test command** — `webapp/records/management/commands/test_enqueue.py` (verwijderbaar zodra fase 5 routes draait). Verifieert enqueue + lock + qcluster pickup zonder echte Discogs-credentials.
 
 ---
 

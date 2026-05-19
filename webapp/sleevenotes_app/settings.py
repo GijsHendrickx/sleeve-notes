@@ -42,10 +42,12 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "discogs_provider",
+    "core",
     "users",
     "records",
     "print_runs",
     "audit",
+    "django_q",
 ]
 
 MIDDLEWARE = [
@@ -141,6 +143,23 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@example.com")
 
 # ─── Default primary-key type ────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ─── Background jobs (Django-Q2) ─────────────────────────────────────────────
+# Postgres-as-broker keeps us at one external service (the DB). Single Q
+# cluster across the app; per-user job locks live in records.UserJobLock.
+Q_CLUSTER = {
+    "name": "sleeve_notes",
+    "orm": "default",
+    "workers": env.int("Q_CLUSTER_WORKERS", default=2),
+    "timeout": env.int("Q_CLUSTER_TIMEOUT", default=900),   # 15 min hard kill
+    "retry": env.int("Q_CLUSTER_RETRY", default=1200),      # must exceed timeout
+    "max_attempts": 1,                                      # no auto-retry; surfaces errors loudly
+    "save_limit": 250,
+    "ack_failures": True,
+    "catch_up": False,
+    "bulk": 10,
+    "label": "Sleeve Notes Q",
+}
 
 # ─── Error & performance monitoring (Sentry) ─────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")
