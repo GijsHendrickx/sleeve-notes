@@ -13,6 +13,7 @@ Callable from:
 from __future__ import annotations
 
 import hashlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -156,13 +157,14 @@ def build_bpm_lookup(user, releases: list[dict]) -> dict[int, dict[str, dict]]:
 
 @dataclass
 class RenderResult:
-    output_path: Path
+    pdf_bytes: bytes
+    pdf_hash: str
+    output_path: Path | None
     sticker_count: int
     page_count: int
     extra_stickers: int
     missing_bpm_count: int
     layout: L.LayoutConfig
-    pdf_hash: str
 
 
 def render_pdf(
@@ -170,12 +172,15 @@ def render_pdf(
     *,
     releases: list[dict],
     settings: dict,
-    output_path: Path,
+    output_path: Path | None = None,
     log: Logger = print,
 ) -> RenderResult:
-    """Render the sticker PDF for the given releases + settings to ``output_path``.
+    """Render the sticker PDF for the given releases + settings.
 
-    Returns a RenderResult with stats and the SHA256 hex of the file contents.
+    Returns a RenderResult holding the PDF bytes and a SHA256 hex digest.
+    If ``output_path`` is given, the same bytes are also written to disk —
+    the management command uses this for `-o` output. The web view leaves
+    it None and streams ``pdf_bytes`` straight back to the browser.
     """
     s = normalize_settings(settings)
     try:
@@ -187,9 +192,9 @@ def render_pdf(
         raise ValueError(str(e))
 
     bpm_lookup = build_bpm_lookup(user, releases)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    c = canvas.Canvas(str(output_path), pagesize=A4)
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
     c.setTitle("Discogs DJ Stickers")
     drawer = PdfDrawer(c)
     sticker_count = L.draw_sticker_pages(
@@ -206,6 +211,10 @@ def render_pdf(
         show_sides=s["show_sides"],
     )
     c.save()
+    pdf_bytes = buffer.getvalue()
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(pdf_bytes)
 
     per_page = layout.per_page
     pages = (sticker_count + per_page - 1) // per_page
@@ -216,15 +225,16 @@ def render_pdf(
         for t in r["tracks"]
         if bpm_lookup.get(r["id"], {}).get(t["position"], {}).get("bpm") is None
     )
-    pdf_hash = hashlib.sha256(output_path.read_bytes()).hexdigest()
+    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
     return RenderResult(
+        pdf_bytes=pdf_bytes,
+        pdf_hash=pdf_hash,
         output_path=output_path,
         sticker_count=sticker_count,
         page_count=pages,
         extra_stickers=max(0, extra),
         missing_bpm_count=missing,
         layout=layout,
-        pdf_hash=pdf_hash,
     )
 
 

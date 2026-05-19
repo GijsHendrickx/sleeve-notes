@@ -1,22 +1,29 @@
 {% extends "base.html" %}
 
 {% block title %}{{ run.name|default:"Print run" }} — {{ APP_NAME }}{% endblock %}
-{% block breadcrumb %}{{ run.name|default:"Print run" }}{% endblock %}
+{% block breadcrumb %}<a href="{% url 'print_runs:index' %}" class="text-app-dim hover:text-app-ink">Print runs</a> · {{ run.name|default:"Print run" }}{% endblock %}
 
 {% block content %}
 <div class="max-w-3xl space-y-4">
-  <div class="text-sm text-app-dim">
-    <div>ID: <span class="text-app-ink font-mono">{{ run.id }}</span></div>
-    <div>Created: {{ run.created_at|date:"Y-m-d H:i" }}</div>
-    <div>Releases: {{ run.release_ids|length }}</div>
-    {% if run.pdf_hash %}
-    <div>Last PDF hash: <span class="font-mono text-xs">{{ run.pdf_hash|slice:":16" }}…</span></div>
-    {% endif %}
+  <div class="flex items-center gap-3">
+    <div class="text-sm text-app-dim space-y-1 flex-1">
+      <div>ID: <span class="text-app-ink font-mono text-xs">{{ run.id }}</span></div>
+      <div>Created: {{ run.created_at|date:"Y-m-d H:i" }}</div>
+      <div>Releases: {{ run.release_ids|length }}</div>
+      {% if run.pdf_hash %}
+      <div>Last PDF hash:
+        <span class="font-mono text-xs">{{ run.pdf_hash|slice:":16" }}…</span>
+      </div>
+      {% endif %}
+    </div>
+    <a href="{% url 'print_runs:pdf_download' run.id %}"
+       class="btn btn-primary">Download PDF</a>
   </div>
 
   <p class="text-sm text-app-dim">
-    Re-render via <code>sleeve-notes render --print-run-id {{ run.id }}</code>.
-    A PDF-download endpoint + sticker preview drawer land in a follow-up commit.
+    The PDF is rendered on demand — no file lives on disk between
+    downloads. The hash above is updated to match the bytes you'd get from
+    the next click.
   </p>
 </div>
 {% endblock %}
