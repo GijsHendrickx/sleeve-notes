@@ -12,11 +12,38 @@ from records.models import Release
 
 from print_runs.models import PrintRun
 from print_runs.services.render import (
+    DEFAULT_SETTINGS,
     already_printed_ids,
     create_print_run,
     releases_by_ids,
     render_pdf,
 )
+
+
+_BOOL_SETTINGS = (
+    "tile", "qr",
+    "show_artist", "show_title", "show_rpm",
+    "show_key", "show_bpm", "show_duration",
+    "show_track_title", "show_sides",
+)
+_NUMERIC_SETTINGS = ("sticker_w", "sticker_h", "tile_cols", "tile_rows")
+
+
+def _settings_from_post(post) -> dict:
+    """Build a settings dict from editor POST data.
+
+    Numeric fields pass through verbatim (normalize_settings coerces).
+    Bool fields are forced: present → "on", absent → "" — so an unchecked
+    checkbox resolves to False instead of falling back to DEFAULT_SETTINGS.
+    """
+    out: dict = {}
+    for f in _NUMERIC_SETTINGS:
+        v = (post.get(f) or "").strip()
+        if v:
+            out[f] = v
+    for f in _BOOL_SETTINGS:
+        out[f] = "on" if post.get(f) else ""
+    return out
 
 
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -65,21 +92,24 @@ def editor(request):
             int(x) for x in request.POST.getlist("release_id")
             if str(x).isdigit()
         ]
+        settings_in = _settings_from_post(request.POST)
+        name = (request.POST.get("name") or "").strip()
         if not ids:
             return render(request, "print_runs/editor.html", {
                 "active": "print_runs",
                 "error": "Select at least one release.",
-                "name": (request.POST.get("name") or "").strip(),
+                "name": name,
                 "rows": _editor_rows(request.user, preselected=set()),
+                "settings": settings_in or dict(DEFAULT_SETTINGS),
             })
-        name = (request.POST.get("name") or "").strip()
-        run = create_print_run(request.user, ids, settings={}, name=name)
+        run = create_print_run(request.user, ids, settings=settings_in, name=name)
         return redirect("print_runs:detail", run_id=run.id)
 
     return render(request, "print_runs/editor.html", {
         "active": "print_runs",
         "name": "",
         "rows": _editor_rows(request.user),
+        "settings": dict(DEFAULT_SETTINGS),
     })
 
 
