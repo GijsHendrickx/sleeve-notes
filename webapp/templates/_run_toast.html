@@ -1,42 +1,38 @@
 {% comment %}
-Renders one of three states; outer <div> polls every 2s so it re-renders
-whenever the worker advances or completes the job. When state=done|failed,
-the view lazy-deletes the row after COMPLETION_LINGER_S and the next poll
-returns an empty body, vanishing the toast.
+The outer `.run-toast` element stays in the DOM across polls. We swap its
+innerHTML (not outerHTML) so the CSS `toast-in` entry animation fires only
+once — when the element first appears — instead of re-running every 2s.
+The view returns just this inner content; the `.run-toast` wrapper lives
+in base.html with `:empty { display: none; }` so an empty response hides it.
 {% endcomment %}
-<div class="run-toast"
-     hx-get="{% url 'run_banner' %}"
-     hx-trigger="every 2s"
-     hx-swap="outerHTML">
-  {% if state == 'done' %}
-    <div class="progress-track done"><div class="progress-bar"></div></div>
-  {% elif state == 'failed' %}
-    <div class="progress-track failed"><div class="progress-bar"></div></div>
-  {% elif progress_pct is not None %}
-    <div class="progress-track determinate" style="--progress: {{ progress_pct }}%;">
-      <div class="progress-bar"></div>
+{% if state == 'done' %}
+  <div class="progress-track done"><div class="progress-bar"></div></div>
+{% elif state == 'failed' %}
+  <div class="progress-track failed"><div class="progress-bar"></div></div>
+{% elif progress_pct is not None %}
+  <div class="progress-track determinate" style="--progress: {{ progress_pct }}%;">
+    <div class="progress-bar"></div>
+  </div>
+{% else %}
+  <div class="progress-track"><div class="progress-bar"></div></div>
+{% endif %}
+
+<div class="p-3">
+  <div class="text-app-ink text-[13px] font-medium">
+    {{ title }}{% if state == 'done' %} — complete{% elif state == 'failed' %} — failed{% endif %}
+  </div>
+
+  {% if state == 'running' %}
+    {% if progress_text %}
+      <div class="text-app-dim text-[12px] mt-1">{{ progress_text }}</div>
+    {% endif %}
+    <div class="text-app-mute text-[11px] mt-1">
+      Running for {{ elapsed_s }}s{% if progress_pct is not None %} · {{ progress_pct }}%{% endif %}…
     </div>
   {% else %}
-    <div class="progress-track"><div class="progress-bar"></div></div>
-  {% endif %}
-
-  <div class="p-3">
-    <div class="text-app-ink text-[13px] font-medium">
-      {{ title }}{% if state == 'done' %} — complete{% elif state == 'failed' %} — failed{% endif %}
-    </div>
-
-    {% if state == 'running' %}
-      {% if progress_text %}
-        <div class="text-app-dim text-[12px] mt-1">{{ progress_text }}</div>
-      {% endif %}
-      <div class="text-app-mute text-[11px] mt-1">
-        Running for {{ elapsed_s }}s{% if progress_pct is not None %} · {{ progress_pct }}%{% endif %}…
-      </div>
-    {% else %}
-      {% if result_text %}
-        <div class="text-app-dim text-[12px] mt-1">{{ result_text }}</div>
-      {% endif %}
-      <div class="text-app-mute text-[11px] mt-1">Took {{ elapsed_s }}s.</div>
+    {% if result_text %}
+      <div class="text-app-dim text-[12px] mt-1">{{ result_text }}</div>
     {% endif %}
-  </div>
+    <div class="text-app-mute text-[11px] mt-1">Took {{ elapsed_s }}s.</div>
+  {% endif %}
 </div>

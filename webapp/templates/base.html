@@ -151,7 +151,11 @@
       box-shadow: 0 20px 60px rgba(0,0,0,0.5);
     }
 
-    /* Run toast — fixed bottom-right with indeterminate progress bar. */
+    /* Run toast — fixed bottom-right with indeterminate progress bar.
+       Hidden when empty (no active or recently-finished job). The toast-in
+       animation lives on the :not(:empty) state so it only fires when the
+       toast first gains content; subsequent innerHTML swaps keep the rule
+       matched, so the animation doesn't re-run on every poll. */
     .run-toast {
       position: fixed; right: 20px; bottom: 20px; z-index: 50;
       width: 320px; max-width: calc(100vw - 40px);
@@ -162,8 +166,9 @@
       border-radius: 12px;
       box-shadow: 0 16px 40px rgba(0,0,0,0.45);
       overflow: hidden;
-      animation: toast-in 200ms ease-out;
     }
+    .run-toast:empty { display: none; }
+    .run-toast:not(:empty) { animation: toast-in 200ms ease-out; }
     @keyframes toast-in {
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -271,9 +276,9 @@
   <div id="modal-root"
        hx-on:close-modal="this.innerHTML='';"></div>
 
-  <div id="run-banner"
+  <div id="run-banner" class="run-toast"
        hx-get="{% url 'run_banner' %}"
-       hx-trigger="load, run-status from:body"
+       hx-trigger="load, run-status from:body, every 2s"
        hx-swap="innerHTML"></div>
   {% endif %}
 </body>
