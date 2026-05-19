@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Tracks — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Tracks{% endblock %}
+
+{% block content %}
+{% comment %}
+Empty GET form: the search input + filter chip <a>s bind to it via
+form="tracks-search" so they share a row with the POST form's buttons
+without nesting.
+{% endcomment %}
+<form id="tracks-search" method="get" action="{% url 'records:tracks' %}"></form>
+
+<form method="post" action="{% url 'records:tracks_save' %}{% if q or filter and filter != 'all' %}?{% if q %}q={{ q|urlencode }}{% endif %}{% if filter and filter != 'all' %}{% if q %}&{% endif %}filter={{ filter }}{% endif %}{% endif %}"
+      class="flex flex-col h-[calc(100vh-7.5rem)]">
+  {% csrf_token %}
+
+  <div class="flex flex-wrap gap-2 items-center mb-4 text-sm">
+    <input form="tracks-search" name="q" value="{{ q }}" placeholder="Search track or artist…"
+           class="field h-8 px-3 w-64 text-[13px]" />
+    {% if filter and filter != 'all' %}
+      <input form="tracks-search" type="hidden" name="filter" value="{{ filter }}" />
+    {% endif %}
+    <button form="tracks-search" type="submit" class="btn btn-ghost h-8">Search</button>
+
+    <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium mx-2">Filter</div>
+    {% for key, label in filter_presets %}
+      <a href="{% url 'records:tracks' %}?filter={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}"
+         class="px-3 py-1.5 rounded-full text-[12px] border transition-colors
+                {% if filter == key %}surface-3 border-app-line2 text-app-ink
+                {% else %}border-app-line text-app-dim hover:bg-app-s2 hover:text-app-ink{% endif %}">{{ label }}</a>
+    {% endfor %}
+
+    {% if saved %}
+      <span class="ml-auto text-[12px] text-emerald-400">
+        Saved {{ saved }} change{{ saved|pluralize }}.
+      </span>
+    {% else %}
+      <span class="ml-auto text-[12px] text-app-mute">
+        {{ shown_count }} of {{ total }} track{{ total|pluralize }}
+      </span>
+    {% endif %}
+    <button type="submit" class="btn btn-primary h-8">Save</button>
+  </div>
+
+  <div class="flex-1 overflow-auto card">
+    <table class="dense w-full text-[13px]">
+      <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+        <tr class="border-b hairline">
+          <th class="text-left w-56">Release</th>
+          <th class="text-left w-16">Position</th>
+          <th class="text-left">Track</th>
+          <th class="text-right w-16">BPM</th>
+          <th class="text-left w-14">Key</th>
+          <th class="w-8"></th>
+          <th class="text-right w-24 border-l hairline-2 pl-3">Override BPM</th>
+          <th class="text-left w-24">Override key</th>
+          <th class="text-left w-44">Note</th>
+          <th class="w-10 border-l hairline-2 pl-3"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          {% include "records/_track_row.html" %}
+        {% empty %}
+        <tr>
+          <td colspan="10" class="text-center py-12 text-app-mute">
+            {% if total == 0 %}
+              No tracks yet. Sync your Discogs collection first.
+            {% else %}
+              Nothing matches the current filter.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+{% endblock %}

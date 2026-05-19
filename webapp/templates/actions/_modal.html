@@ -1,0 +1,18 @@
+{% comment %}
+Modal shell. The action partial extends this and fills `{% block body %}`.
+Backdrop click empties #modal-root to dismiss.
+{% endcomment %}
+<div class="modal-backdrop"
+     hx-on:click="if (event.target === event.currentTarget) document.getElementById('modal-root').innerHTML='';">
+  <div class="modal-card p-5 text-[13px]" hx-on:click="event.stopPropagation();">
+    <div class="flex items-center mb-3">
+      <h2 class="text-app-ink text-[15px] font-semibold">{{ title }}</h2>
+      <button type="button" class="ml-auto text-app-mute hover:text-app-ink text-[16px] leading-none"
+              hx-on:click="document.getElementById('modal-root').innerHTML='';">✕</button>
+    </div>
+    {% if description %}
+    <p class="text-app-dim text-[12px] mb-3">{{ description }}</p>
+    {% endif %}
+    {% block body %}{% endblock %}
+  </div>
+</div>

@@ -1,0 +1,24 @@
+{% extends "actions/_modal.html" %}
+
+{% block body %}
+<form hx-post="{% url 'records:action_discogs_sync' %}"
+      hx-target="this" hx-swap="none"
+      class="space-y-3">
+  {% csrf_token %}
+  <label class="block">
+    <span class="text-app-dim text-[12px] mb-1 block">Folder (optional, name or id)</span>
+    <input name="folder" placeholder="All" class="field h-8 px-3 w-full text-[13px]" />
+  </label>
+  <label class="block">
+    <span class="text-app-dim text-[12px] mb-1 block">Limit (optional, for testing)</span>
+    <input name="limit" type="number" min="1" placeholder="No limit" class="field h-8 px-3 w-full text-[13px]" />
+  </label>
+  <div class="flex gap-2 justify-end pt-2">
+    <button type="button" class="btn btn-quiet"
+            hx-on:click="document.getElementById('modal-root').innerHTML='';">
+      Cancel
+    </button>
+    <button type="submit" class="btn btn-primary">Start sync</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% comment %}
+One <tr> for the /tracks table. Used by both the initial render and
+the /tracks/sync HTMX swap. ``just_synced`` flashes the BPM/Key cells
+so the user gets visual confirmation even when the value didn't change.
+{% endcomment %}
+<tr class="border-t hairline align-middle hover:bg-app-s2/40">
+  <td class="text-app-dim">
+    <div class="truncate max-w-[14rem] text-app-ink" title="{{ r.release_artist }} – {{ r.release_title }}">
+      {{ r.release_artist }}
+    </div>
+    <div class="truncate max-w-[14rem] text-[11px] text-app-mute">
+      {{ r.release_title }}
+    </div>
+  </td>
+  <td class="font-mono text-app-mute">{{ r.position }}</td>
+  <td>
+    <div class="text-app-ink">{{ r.title }}</div>
+    <div class="text-[11px] text-app-mute">{{ r.artist }}</div>
+  </td>
+  <td class="text-right font-mono {% if just_synced %}flash-sync{% endif %}
+    {% if r.bpm_confidence == 'high' or r.bpm_confidence == 'manual' %}text-emerald-400
+    {% elif r.bpm_confidence == 'octave' %}text-cyan-400
+    {% elif r.bpm_confidence == 'shared' %}text-yellow-400
+    {% elif r.bpm_confidence == 'disputed' %}text-amber-400
+    {% elif r.bpm %}text-app-ink
+    {% else %}text-app-mute{% endif %}"
+    {% if r.bpm_sources %}title="sources: {{ r.bpm_sources|join:', ' }}"{% endif %}>
+    {{ r.bpm|default:"·" }}
+  </td>
+  <td class="font-mono {% if just_synced %}flash-sync{% endif %} {% if r.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">
+    {{ r.key_camelot|default:"·" }}
+  </td>
+  <td class="text-center w-8">
+    <button type="button"
+            class="sync-btn text-app-mute hover:text-app-ink text-[14px] leading-none transition-colors"
+            hx-post="{% url 'records:tracks_sync' %}"
+            hx-vals='{"release_id": {{ r.release_id }}, "position": "{{ r.position|escapejs }}"}'
+            hx-include="closest tr"
+            hx-target="closest tr"
+            hx-swap="outerHTML"
+            title="Re-fetch BPM and key for this track">↻</button>
+  </td>
+  <td class="text-right border-l hairline-2 pl-3">
+    <input name="bpm_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.bpm|default_if_none:'' }}"
+           inputmode="numeric" maxlength="3"
+           class="field w-16 px-2 py-1 font-mono text-right text-app-ink text-[13px]" />
+  </td>
+  <td>
+    <input name="key_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.key_camelot|default:'' }}"
+           maxlength="4"
+           class="field w-16 px-2 py-1 font-mono text-app-ink text-[13px]" />
+  </td>
+  <td>
+    <input name="note_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.note|default:'' }}"
+           class="field w-full px-2 py-1 text-[12px] text-app-dim" />
+  </td>
+  <td class="text-center w-10 border-l hairline-2 pl-3">
+    {% include "_listen_glyph.html" with release_id=r.release_id position=r.position spotify_track_id=r.spotify_track_id %}
+  </td>
+</tr>

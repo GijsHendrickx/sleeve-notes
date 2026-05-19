@@ -1,12 +1,12 @@
-"""Derive ``type`` (musical category) and ``format`` (physical medium) for a release.
+"""Derive ``release_type`` (musical category) and ``format`` (physical medium).
 
 Pure functions over a Discogs ``basic_information`` dict — no DB, no network.
-Called from ``sleeve_notes.ingest.normalize_release`` (fresh fetches) and from
-the connect-time backfill in ``sleeve_notes.db`` (legacy rows).
+Called from ``webapp/records/services/discogs_sync.py`` while ingesting a
+release.
 
 Taxonomies:
-    type   = Album | EP | Single | Compilation | Other
-    format = 12" | 10" | 7" | Other  (non-vinyl falls into Other)
+    release_type = Album | EP | Single | Compilation | Other
+    format       = 12" | 10" | 7" | Other  (non-vinyl falls into Other)
 """
 
 from __future__ import annotations

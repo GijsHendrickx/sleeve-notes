@@ -1,0 +1,60 @@
+{% comment %}
+The outer `.run-toast` element stays in the DOM across polls. We swap its
+innerHTML (not outerHTML) so the CSS `toast-in` entry animation fires only
+once — when the element first appears — instead of re-running every 2s.
+The view returns just this inner content; the `.run-toast` wrapper lives
+in base.html with `:empty { display: none; }` so an empty response hides it.
+{% endcomment %}
+{% if state == 'done' %}
+  <div class="progress-track done"><div class="progress-bar"></div></div>
+{% elif state == 'failed' %}
+  <div class="progress-track failed"><div class="progress-bar"></div></div>
+{% elif progress_pct is not None %}
+  <div class="progress-track determinate" style="--progress: {{ progress_pct }}%;">
+    <div class="progress-bar"></div>
+  </div>
+{% else %}
+  <div class="progress-track"><div class="progress-bar"></div></div>
+{% endif %}
+
+<div class="p-3">
+  <div class="text-app-ink text-[13px] font-medium">
+    {{ title }}{% if state == 'done' %} — complete{% elif state == 'failed' %} — failed{% endif %}
+  </div>
+
+  {% if state == 'running' %}
+    {% if progress_text %}
+      <div class="text-app-dim text-[12px] mt-1">{{ progress_text }}</div>
+    {% endif %}
+    <div class="text-app-mute text-[11px] mt-1">
+      Running for {{ elapsed_s }}s{% if progress_pct is not None %} · {{ progress_pct }}%{% endif %}…
+    </div>
+  {% else %}
+    {% if result_text %}
+      <div class="text-app-dim text-[12px] mt-1">{{ result_text }}</div>
+    {% endif %}
+    <div class="text-app-mute text-[11px] mt-1">Took {{ elapsed_s }}s.</div>
+  {% endif %}
+</div>
+
+{% if state == 'done' and task_id %}
+{% comment %}
+Auto-refresh the page in place once per completed job, so the user sees
+the new BPMs / synced releases without a manual reload. Idempotent across
+the toast's ~5 polls in done state via window.__sn_refreshed_for_task.
+{% endcomment %}
+<script>
+(() => {
+  const taskId = "{{ task_id|escapejs }}";
+  if (window.__sn_refreshed_for_task === taskId) return;
+  window.__sn_refreshed_for_task = taskId;
+  setTimeout(() => {
+    if (window.htmx) {
+      htmx.ajax("GET", window.location.href, {
+        target: "main", swap: "innerHTML", select: "main > *",
+      });
+    }
+  }, 600);
+})();
+</script>
+{% endif %}

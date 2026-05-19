@@ -1,0 +1,26 @@
+{% extends "actions/_modal.html" %}
+
+{% block body %}
+<form hx-post="{% url 'records:action_bpm_cascade' %}"
+      hx-target="this" hx-swap="none"
+      class="space-y-3">
+  {% csrf_token %}
+  <label class="flex items-start gap-2 cursor-pointer">
+    <input name="force" type="checkbox" value="1" class="mt-0.5" />
+    <span class="text-app-dim text-[12px]">
+      Force refetch all
+      <span class="block text-app-mute text-[11px]">
+        Re-query every source for every track, ignoring the cache. Slower but
+        picks up new BPMs / fixed sources for tracks that previously failed.
+      </span>
+    </span>
+  </label>
+  <div class="flex gap-2 justify-end pt-2">
+    <button type="button" class="btn btn-quiet"
+            hx-on:click="document.getElementById('modal-root').innerHTML='';">
+      Cancel
+    </button>
+    <button type="submit" class="btn btn-primary">Start BPM lookup</button>
+  </div>
+</form>
+{% endblock %}

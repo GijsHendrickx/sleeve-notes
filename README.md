@@ -36,27 +36,27 @@ BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm
 │ Discogs collection         │
 │  (API  OR  CSV export)     │
 └────────────┬───────────────┘
-             │  sleeve-notes fetch   →  releases.basic_information + raw_tracklist
+             │  sleeve-notes fetch   →  Release + Track rows
              ▼
         ┌──────────────────────────┐
-        │   data/sleeve_notes.db   │   ← single SQLite file under project root
-        │   ─────────────────      │     replaces every JSON intermediate
-        │   releases / tracks      │
-        │   bpm_cache / source_hits│
-        │   overrides              │
-        │   print_runs / kv        │
+        │   Postgres (Django ORM)  │   ← one DB, Django models in `webapp/`
+        │   ─────────────────      │
+        │   Release / Track        │
+        │   BpmCache               │
+        │   Override               │
+        │   PrintRun               │
         └────────────┬─────────────┘
              │  sleeve-notes fetch   →  ingests releases + tracks in one pass
-             │  sleeve-notes bpm     →  cascade fills bpm_cache + bpm_source_hits
+             │  sleeve-notes bpm     →  cascade fills BpmCache
              │  sleeve-notes render  →  ad-hoc PDF, or replay a saved print run
-             │                          via `--print-run-id N`
+             │                          via `--print-run-id <uuid>`
              ▼
    .tmp/stickers.pdf          ← print this on A4, 100% scale
 ```
 
 All persistent state — the Discogs collection, the BPM cache, your manual
-overrides, the print history — lives in a single SQLite file
-(`data/sleeve_notes.db`) under the project root. `.tmp/` still holds the final
+overrides, the print history — lives in a single Postgres database
+managed by the Django app in `webapp/`. `.tmp/` still holds the final
 `stickers.pdf` (and any debug dumps), but nothing it contains is
 load-bearing — wipe it freely.
 
@@ -96,11 +96,14 @@ pip install -e .               # editable install; sleeve-notes + sleeve_notes/ 
 
 # 3. Create your .env
 cp .env.example .env   # then fill in the values — see next section
+
+# 4. Start a local Postgres (Docker) — the Django app writes here
+docker compose up -d db
 ```
 
-After install, the CLI is available as `sleeve-notes`. All commands resolve state files (`data/sleeve_notes.db`, `.tmp/`, `.env`) against the current working directory by default — so always run `sleeve-notes` from the directory you want those files to live in. Override with `SLEEVE_NOTES_ROOT=/path/to/project sleeve-notes …` if needed.
+After install, the CLI is available as `sleeve-notes`. All commands resolve `.tmp/`, `.env`, and the Postgres connection from `DATABASE_URL` against the project root.
 
-**First run** auto-creates `data/sleeve_notes.db` with an empty schema. Sign in via the web UI to seed your `users` row; the per-user tables (collection, BPM cache, print runs) fill up as you sync.
+**First run** apply migrations once: `cd webapp && python manage.py migrate`. Then sign in via the web UI (`sleeve-notes web`) to create your user row; the per-user tables (collection, BPM cache, print runs) fill up as you sync.
 
 ---
 
@@ -108,7 +111,7 @@ After install, the CLI is available as `sleeve-notes`. All commands resolve stat
 
 All secrets live in `.env` in the repo root. **Never commit this file** — it is already gitignored. A `.env.example` ships with every required key documented.
 
-Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: there's no separate account, no password. Per user, the Discogs access token lives in a signed session cookie on the browser — **never in the server's database**. The server only needs two app-level things in `.env`: the Discogs *consumer* credentials (identifying the app to Discogs) and a session-cookie signing secret. Everything else in `.env` is optional infrastructure for the BPM cascade.
+Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: there's no separate account, no password. Discogs access tokens are stored encrypted-at-rest in Django via `allauth.SocialToken`, so background jobs can call the API on your behalf without you needing to be at the keyboard. The server needs the Discogs *consumer* credentials (identifying the app to Discogs) plus Django's own bootstrap config in `.env`; everything else is optional infrastructure for the BPM cascade.
 
 ### Minimal `.env`
 
@@ -118,10 +121,17 @@ Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: t
 DISCOGS_CONSUMER_KEY=...
 DISCOGS_CONSUMER_SECRET=...
 
-# --- Session cookie signing (required) --------------------------------
+# --- Django config (required) -----------------------------------------
 # Long random string. Generate with:
 #   python -c "import secrets; print(secrets.token_urlsafe(64))"
-SESSION_SECRET=...
+DJANGO_SECRET_KEY=...
+
+# Local Postgres URL — `docker compose up -d db` brings up this database.
+DATABASE_URL=postgres://sleevenotes:dev@localhost:5432/sleevenotes
+
+# Dev convenience: run the Django-Q2 worker on a daemon thread inside
+# runserver so sidebar action buttons work in one terminal.
+DEV_INPROCESS_QCLUSTER=true
 ```
 
 That's enough to start the web app, sign in with your Discogs account and sync your collection. The BPM cascade still works at reduced coverage without the optional creds below — only sources whose creds are present will be queried.
@@ -149,9 +159,6 @@ BEATPORT_PASSWORD=...
 # youtube.com/results instead of resolving to a specific video.
 YOUTUBE_API_KEY=...
 
-# --- Production-only ----------------------------------------------------
-# Refuse the session cookie over plain HTTP. Default false for localhost dev.
-# SESSION_HTTPS_ONLY=true
 ```
 
 **What happens if a source is missing creds?** The tool prints a notice and skips that source for affected tracks. The cascade simply tries the next source. You can add creds later and re-run — only the previously-skipped source will be retried (see [Resumability](#resumability-caches-and-re-runs)).
@@ -161,8 +168,8 @@ YOUTUBE_API_KEY=...
 1. Log in at https://www.discogs.com
 2. Visit **Settings → Developers → Create an Application**
 3. Set the **Callback URL** to:
-   - `http://localhost:8765/auth/callback` for local dev
-   - `https://<your-host>/auth/callback` for a production deploy
+   - `http://127.0.0.1:8000/accounts/discogs/login/callback/` for local dev
+   - `https://<your-host>/accounts/discogs/login/callback/` for a production deploy
 4. Copy the **Consumer Key** and **Consumer Secret** into `DISCOGS_CONSUMER_KEY` / `DISCOGS_CONSUMER_SECRET`.
 
 Each end-user who signs in goes through the standard Discogs OAuth authorize flow in their browser — no extra developer accounts on their side.
@@ -179,7 +186,7 @@ Just the email + password you normally use to log in at beatport.com. No develop
 
 ### Standalone CLI use (advanced)
 
-The web UI is the normal entry point: it runs the OAuth dance and shells out to `sleeve-notes <subcommand>` with the per-user vars (`DISCOGS_USER_ID`, `DISCOGS_USERNAME`, `DISCOGS_OAUTH_TOKEN`, `DISCOGS_OAUTH_TOKEN_SECRET`) injected into the subprocess env. If you want to run CLI commands directly without the web UI, sign in once via the web UI, then paste those four values into `.env` from your session cookie. The CLI subcommands will refuse to run without all four set.
+The web UI is the normal entry point: signing in once persists your Discogs access token + secret in allauth's `SocialToken` table, and all subsequent CLI subcommands resolve the active user via `DISCOGS_USER_ID` (your numeric Discogs id, find it under the Django admin or via `sleeve-notes query users.User`). Set it once in `.env` and you can run `sleeve-notes fetch / bpm / render` directly. The OAuth tokens themselves are read from the DB, not the env — you only need `DISCOGS_USER_ID` to pick the right row.
 
 ---
 
@@ -249,7 +256,7 @@ sleeve-notes render --tile                       # edge-to-edge: exactly 10 stic
 sleeve-notes render --tile --tile-cols 3 --tile-rows 4    # 12-per-A4 tile (70 x 74.2 mm)
 sleeve-notes render --new-only                   # only releases not yet in the print history
 sleeve-notes render --new-only --mark-printed    # render new + save as a new print run (releases + settings)
-sleeve-notes render --print-run-id 7              # re-render a previously-saved print run by id
+sleeve-notes render --print-run-id <uuid>         # re-render a previously-saved print run (UUID — get it from `/print-runs/` or `sleeve-notes query print_runs.PrintRun`)
 sleeve-notes render -o ~/Desktop/crate-2026-05.pdf   # custom output path
 sleeve-notes render -o out/                       # custom dir; filename defaults to stickers.pdf
 ```
@@ -274,7 +281,7 @@ sleeve-notes render --new-only                  # preview new arrivals
 sleeve-notes render --new-only --mark-printed   # ready to print → save as a new print run
 
 # Re-render exactly what was on a previous run (settings and all):
-sleeve-notes render --print-run-id 3 -o /tmp/reprint.pdf
+sleeve-notes render --print-run-id <uuid> -o /tmp/reprint.pdf
 ```
 
 `--print-run-id` is mutually exclusive with `--new-only` / `--mark-printed` — the saved run already pins both the release set and the settings. Releases that drop out of your Discogs collection later are ignored when re-rendering a saved run — the IDs are kept but lossily skipped at render time.
@@ -287,20 +294,17 @@ Inspect history with `sleeve-notes query print_runs` and
 ## Web UI
 
 If you'd rather not live in the terminal, every step above is also exposed
-through a small localhost web app. Launch it with:
+through a localhost web app. Launch it with:
 
 ```bash
-sleeve-notes web                 # http://127.0.0.1:8765, auto-opens your browser
+sleeve-notes web                 # http://127.0.0.1:8000, auto-opens your browser
 sleeve-notes web --port 9000     # change port
 sleeve-notes web --no-browser    # bind only, don't pop a tab
 ```
 
-The app is a thin FastAPI + HTMX layer over the same engine — long jobs
-shell out to the `sleeve-notes` CLI subcommands you already know, so the
-behaviour, caches, overrides and print history are identical whether you
-drive things from the terminal or the browser.
+The app is **Django + Tailwind + HTMX** on top of the same engine. Background jobs (Discogs sync, BPM cascade, CSV import) run through Django-Q2; with `DEV_INPROCESS_QCLUSTER=true` in `.env` the Q2 cluster runs on a daemon thread inside `runserver`, so one terminal is all you need. Caches, overrides and print history are identical whether you drive things from the terminal or the browser.
 
-Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance, and on return Discogs's `user_id` + `username` are written into the session cookie alongside the access token. The session cookie expires 30 days after issue; before then, refreshes are silent. Sign out via the **Sign out** link in the sidebar footer.
+Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance via django-allauth. On return Discogs's user id + username are written into the Django `users.User` row and the access token + secret are persisted in allauth's `SocialToken` so background jobs can call the API on your behalf. Sign out via the **Sign out** link in the sidebar footer.
 
 Once signed in, the sidebar splits into two sections — **Collection** (data views) and **Actions** (one-shot jobs that shell out to the CLI). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
 
@@ -309,52 +313,45 @@ Once signed in, the sidebar splits into two sections — **Collection** (data vi
 | **Dashboard** (`/`) | At-a-glance BPM coverage (high / octave / shared / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
 | **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
 | **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **▶** listen icon (Spotify-green when we have a Spotify ID, YouTube-red otherwise) that opens the track in a new tab, plus a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. The same listen icon also appears in the per-release drawer's tracklist on `/collection`. |
-| **Print runs** (`/print-runs`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with its size, tile mode and content toggles at a glance. The editor (`/print-runs/new`) is a two-step wizard with a clickable indicator: **step 1 · Settings** is the run name plus all layout/content options (sticker size, A4 grid, tile mode, what's on each sticker) with a live sample preview that updates as you change settings; **step 2 · Records** is the full-width release table with **Never printed** (default) and **All records** chips, search-within-list, per-row checkboxes, and a per-row **Preview** button that opens a modal rendering that release at the current settings. **Save & generate** stores the run and takes you to its detail page, where you can re-download the PDF, **Duplicate** it as a starting point for the next print, or delete it. |
+| **Print runs** (`/print-runs/`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with size + a quick `PDF` download button. The editor (`/print-runs/new`) is a single-page release picker: full release table with checkboxes (pre-checked on releases not yet in any print run), client-side search, and **Select new only** / **Select all** / **Clear** quick actions. Save lands you on the detail page where you can hit **Download PDF**. Settings UI (sticker size, tile mode, content toggles) is deferred — runs created from the browser use the defaults; use the CLI for fine-tuned layouts. |
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
 | **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
 
-**Job feedback.** Sidebar actions kick a CLI subprocess in the background; status appears as a small fixed toast in the bottom-right with a real progress bar (parsed from the CLI's `[done/total]` counters) and a friendly summary line. The toast persists across page navigation, can be cancelled (SIGTERM → SIGKILL escalation after a brief grace period), and on success it triggers an in-place refresh of the current page's table so new releases / updated BPMs show up without a full reload.
+**Job feedback.** Sidebar actions enqueue a Django-Q2 task; the worker writes progress into a per-user `UserJobLock` row that the toast polls every 2s. Three states map to three visual styles: running (blue determinate bar + `(N/M) artist - title` live), done (green bar + summary), failed (red bar + error). The toast lingers ~5s after completion, then vanishes. One running job per user is enforced at the DB layer — a second click while one's in-flight returns HTTP 409 and a flash on the modal.
 
-State still lives where it always did — `data/sleeve_notes.db` and `.tmp/`. The web app is purely an alternative front-end; you can mix and match it with CLI invocations freely.
+State lives in Postgres (locally via `docker compose up -d db`) plus `.tmp/` for ad-hoc PDF output. The web app and the CLI are two doors into the same Django ORM; mix and match freely.
 
-**CLI-only commands.** A few subcommands are not surfaced in the web UI and have to be run from the terminal:
+**CLI-only commands.** A few subcommands are not (yet) surfaced in the web UI and have to be run from the terminal:
 
-- `sleeve-notes auth-beatport` — one-time Beatport OAuth (see [Beatport: one-time auth](#beatport-one-time-auth)).
-- `sleeve-notes query …` — ad-hoc SQL / table inspection (see [Inspecting the data](#inspecting-the-data-query--overrides)).
+- `sleeve-notes query …` — Django model listing + first-N row dump (see [Inspecting the data](#inspecting-the-data-query--overrides)). For richer browsing use Django admin at `/admin/`.
 - `sleeve-notes overrides clear --yes` — batch-clear every manual override. Single-row add/remove/edit lives in `/tracks`.
 
 ---
 
 ## Inspecting the data: `query` + `overrides`
 
-Every JSON file from the old layout is now a table in `data/sleeve_notes.db`.
-Two subcommands give you read/write access from the shell:
+All persistent state is in Postgres, managed by the Django app. Two layers
+of inspection:
 
 ```bash
-# List every table with its row count
+# CLI: list every Django model with its row count
 sleeve-notes query
 
-# Dump a table (with --where / --order-by / --cols / --limit / --json)
-sleeve-notes query releases --limit 5 --cols "id,artist,title,year"
-sleeve-notes query tracks --where "release_id = 12345"
-sleeve-notes query bpm_source_hits --where "source = 'beatport'" --order-by "bpm DESC"
+# CLI: dump a model's first N rows
+sleeve-notes query records.Release --limit 5
+sleeve-notes query records.Track --limit 20
 
-# Show the CREATE statements for a table (or all of them)
-sleeve-notes query --schema releases
-sleeve-notes query schema
+# For richer browsing — filtering, sorting, foreign-key traversal — use the
+# Django admin in your browser:
+#   sleeve-notes web   →  http://127.0.0.1:8000/admin/
 
-# Arbitrary read-only SQL (rejected if it's not SELECT / WITH / PRAGMA / EXPLAIN)
-sleeve-notes query --sql "SELECT source, COUNT(*) AS hits FROM bpm_source_hits GROUP BY source"
-sleeve-notes query --sql "SELECT r.artist, r.title, COUNT(t.position) FROM releases r
-                          JOIN tracks t ON t.release_id = r.id GROUP BY r.id ORDER BY 3 DESC LIMIT 5"
-
-# JSON output for piping into jq or another script
-sleeve-notes query releases --limit 0 --json | jq '.[].title'
+# For arbitrary SQL: drop into Django's dbshell (Postgres psql under the hood).
+cd webapp && python manage.py dbshell
 ```
 
 Manual overrides — the only table you typically need to edit by hand —
-get a dedicated subcommand so you don't have to write SQL:
+get a dedicated subcommand:
 
 ```bash
 # Precise: a single track on a specific release
@@ -364,9 +361,11 @@ sleeve-notes overrides add --release-id 123 --position A1 --bpm 128 --key 8A
 sleeve-notes overrides add --artist "Daft Punk" --title "Around the World" --bpm 121 --key Am
 
 sleeve-notes overrides list
-sleeve-notes overrides remove 3
+sleeve-notes overrides remove <id>
 sleeve-notes overrides clear --yes
 ```
+
+Or just edit them inline on `/tracks` — every row has BPM / Key / Note input cells with a single batched **Save** button.
 
 See [Manual overrides](#manual-overrides) for the full schema.
 
@@ -378,27 +377,28 @@ After a complete run, the project layout looks like:
 
 | Location | Purpose |
 |----------|---------|
-| **`data/sleeve_notes.db`** | **The single SQLite file containing all state** — your Discogs collection, the BPM cache, your overrides, your print history. See `sleeve-notes query` for inspection. |
+| **Postgres database** | **All persistent state** — your Discogs collection, the BPM cache, your overrides, your print history. Connection via `DATABASE_URL` in `.env`. See `sleeve-notes query` or Django admin for inspection. |
 | `.tmp/stickers.pdf` | The default printable PDF location (override with `sleeve-notes render -o <path>`). |
+| `.tmp/uploads/*.csv` | Holding pen for browser-uploaded CSV exports; deleted by the worker after import. |
 | `.tmp/debug/*.html` | (Only on songbpm parser failures.) Raw HTML dumped for selector repair. |
 
-`.tmp/` is entirely **disposable** — wipe it freely; only `stickers.pdf`
-ever lives there and that gets rebuilt by `sleeve-notes render`.
-`data/sleeve_notes.db` is **not** disposable: it contains your overrides and
-print history. Back it up like any other source of truth.
+`.tmp/` is entirely **disposable** — wipe it freely.
+Your Postgres database is **not** disposable: it contains your overrides
+and print history. Back it up like any other source of truth (`pg_dump`
+locally, Render's automatic dailies in production).
 
-The DB tables in summary:
+The Django models in summary:
 
-| Table | What's in it |
+| Model | What's in it |
 |-------|--------------|
-| `users` | One row per Discogs user that has signed in. `id` is the Discogs user_id; every other per-user table foreign-keys back to it via `user_id`. No tokens stored here — those live in the session cookie. |
-| `releases` | One row per (user, Discogs release). `basic_information` + `raw_tracklist` are JSON blobs (and double as the per-release cache); `artist`, `title`, `rpm`, `type`, `format` are the normalized columns populated by `fetch` via `sleeve_notes.ingest.normalize_release`. |
-| `tracks` | Normalized track rows. Populated by `fetch` alongside the parent release. |
-| `bpm_cache` | One row per (user, artist, title) hash. Tracks which sources have been queried. |
-| `bpm_source_hits` | One row per (user, cache_key, source) — the raw BPM/key/url returned by each source. |
-| `overrides` | Manual BPM/key overrides. Managed via `sleeve-notes overrides`. Per-user. |
-| `print_runs` + `print_run_releases` | First-class print runs: each row holds a timestamp, optional name and `settings_json` blob, with the join table linking it to the release IDs that were on it. Backs both the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the web Print runs page. Per-user. |
-| `kv` | Tiny key/value table — Beatport tokens, schema version. **App-wide**, not per-user. |
+| `users.User` | One row per Discogs user that has signed in. `discogs_user_id` is the Discogs id; `username` mirrors Discogs. allauth's `SocialToken` (a separate table) holds the OAuth1 access token + secret. |
+| `records.Release` | One row per (user, Discogs release). `basic_information` + `raw_tracklist` are JSONFields (per-release cache); `artist`, `title`, `rpm`, `release_type`, `format` are the normalized fields populated by sync via `sleeve_notes.ingest`. UUID PK. |
+| `records.Track` | Normalized track rows. Populated by sync alongside the parent release. UUID PK. |
+| `records.BpmCache` | One row per (user, artist+title hash). Tracks which sources have been queried in `sources_tried` and the raw per-source hits in `source_hits` (JSONField). |
+| `records.Override` | Manual BPM/key overrides — either precise (`release` + `position`) or broad (`artist` + `title`). Per-user. |
+| `print_runs.PrintRun` | First-class print runs: name + `settings` JSONField + `release_ids` array. Backs the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the `/print-runs/` UI. UUID PK. |
+| `core.UserJobLock` | OneToOne with user; enforces "one running background job per user". State + progress text + result message. The toast reads this. |
+| `audit.AuditEvent` | Append-only history of user actions. Future-proofing for print-fulfillment orders. |
 
 ---
 
@@ -419,24 +419,29 @@ Folder filtering in `--csv` mode matches `--folder "NAME"` case-insensitively ag
 
 ## Resumability, caches and re-runs
 
-Every cache lives in `data/sleeve_notes.db` so you can interrupt and resume safely.
+Every cache lives in Postgres so you can interrupt and resume safely.
 
-- **`releases.raw_tracklist`** — the per-release Discogs detail. Rows where this is non-NULL are served from the DB and never re-fetched. This is the equivalent of the old `release_cache/<id>.json` files.
-- **`bpm_cache` + `bpm_source_hits`** — one `bpm_cache` row per (user, artist, title) hash, with `sources_tried` listing which sources have been queried. Each source that returned something gets one `bpm_source_hits` row with the raw `bpm`/`key_camelot`/`url`. Re-runs only call sources that have not yet been queried for that track; consensus is recomputed on the fly so you never re-fetch. Every cache table is scoped to the signed-in user — two users querying the same track each maintain their own lookup history.
-- **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other four sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run. Same applies when you authenticate Beatport for the first time.
+- **`Release.raw_tracklist`** — the per-release Discogs detail. Rows where this is non-NULL are served from the DB and never re-fetched.
+- **`BpmCache`** — one row per (user, artist+title hash). `sources_tried` lists which sources have been queried; `source_hits` (JSONField) holds the raw `{bpm, key_camelot, score, url}` per source. Re-runs only call sources that haven't been queried for that track; consensus is recomputed on the fly. Per-user.
+- **Adding a source later:** if you add `SPOTIFY_CLIENT_ID` after a previous run already queried the other sources, those entries are automatically re-cascaded **only for the newly-available source** on the next run.
 - **Re-running steps:** `fetch` is cache-aware (rows with a stored `raw_tracklist` skip the network call but still re-normalize). `bpm` and `render` are cache-aware too.
-- **Commit granularity:** `fetch` commits to the DB every 25 releases; `bpm` commits cache rows every 5 cascade runs. So `Ctrl-C` mid-run loses at most a handful of seconds' worth of work.
+- **Commit granularity:** sync commits per release; cascade saves each track's cache row inside the thread pool. `Ctrl-C` mid-run loses at most one track's worth of work.
 
-To start a step clean, drop the relevant table — e.g. for a fresh BPM
+To start a step clean, drop the relevant rows — e.g. for a fresh BPM
 lookup:
 
 ```bash
-sqlite3 data/sleeve_notes.db "DELETE FROM bpm_source_hits; DELETE FROM bpm_cache;"
+cd webapp && python manage.py dbshell <<< "DELETE FROM records_bpmcache;"
 sleeve-notes bpm
 ```
 
-To start completely fresh: `rm -rf data/` and re-run the pipeline.
-Your overrides go too — back up with `sleeve-notes query overrides --limit 0 --json` first if needed.
+Or just trigger the "BPM lookup" action with the **Force refetch all**
+checkbox in the browser — same effect.
+
+To start completely fresh: drop and re-create the Postgres database
+(`docker compose down -v && docker compose up -d db && cd webapp &&
+python manage.py migrate`).
+Your overrides go too — export them first via Django admin if needed.
 
 ---
 
@@ -522,26 +527,26 @@ Re-run `sleeve-notes bpm` (or `sleeve-notes render` if the cache is already popu
 
 **Validation:** parsing errors, out-of-range BPMs, and entries that match no track in your collection are reported as warnings — never fatal. The unmatched-entry warning is the one to watch for: a typo'd `--release-id` produces no override and would otherwise be silent.
 
-**Bulk imports:** if you have a list of needle-drops, the cleanest path is a small shell loop over `sleeve-notes overrides add …`. For direct SQL surgery on an existing set, drop into `sqlite3 data/sleeve_notes.db` and edit the `overrides` table directly — read-only `sleeve-notes query overrides` still works either way.
+**Bulk imports:** if you have a list of needle-drops, the cleanest path is a small shell loop over `sleeve-notes overrides add …`. For direct SQL surgery on an existing set, drop into `cd webapp && python manage.py dbshell` and edit the `records_override` table directly — read-only `sleeve-notes query records.Override` still works either way.
 
 ---
 
 ## Beatport: one-time auth
 
-Beatport coverage is opt-in. To enable it:
+> **Currently disabled in the Django port.** The original Beatport flow
+> stored tokens in a SQLite kv table that no longer exists, and the
+> Selenium-driven auth helper has been removed (`sleeve-notes
+> auth-beatport` no longer exists). The cascade silently skips Beatport
+> and runs with four sources. Re-enabling it requires porting the
+> token storage to a Django model and re-implementing the auth flow —
+> tracked as future work.
 
-```bash
-# 1. Add to .env:
-#    BEATPORT_USERNAME=your.beatport.email@example.com
-#    BEATPORT_PASSWORD=your-password
-
-# 2. Mint the initial tokens (no browser, no popup):
-sleeve-notes auth-beatport
-```
-
-This writes the access + refresh tokens to `kv['beatport_tokens']` in the DB. From then on, `sleeve-notes bpm` refreshes access tokens automatically via the refresh token. If the refresh token is ever revoked, the cascade silently falls back to a fresh login using the credentials in `.env` — you never have to touch this again.
-
-Under the hood, the script uses the same fully-scripted authorization_code flow as the `beets-beatport4` plugin: POSTs your creds to `/auth/login/` for a session cookie, GETs `/auth/o/authorize/` to extract the code from the redirect's `Location` header, then exchanges the code at `/auth/o/token/`. The client_id is the public Swagger one (`0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd`), scraped from Beatport's own Swagger UI JS bundle. If Beatport ever rotates it, re-extract from `api.beatport.com/v4/docs/` → `/static/btprt/*.js` (grep for `API_CLIENT_ID`).
+Once Beatport is re-enabled, the original on-boarding will be: add
+`BEATPORT_USERNAME` + `BEATPORT_PASSWORD` to `.env`, run a one-time
+auth command to mint tokens, and `sleeve-notes bpm` picks them up
+on the next cascade. Underlying flow is the same authorization_code
+dance as `beets-beatport4` against the public Swagger client_id
+(`0GIvkCltVIuPkkwSJHp6NDb3s0potTjLBQr388Dd`).
 
 ---
 
@@ -577,16 +582,17 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 
 | Symptom | What to do |
 |---|---|
-| `ERROR: DISCOGS_USER_ID, DISCOGS_USERNAME, DISCOGS_OAUTH_TOKEN and DISCOGS_OAUTH_TOKEN_SECRET must all be set` | You're running a CLI subcommand without the per-user OAuth env vars. The web UI injects these automatically — sign in via the browser and trigger the job from there. For standalone CLI use, paste the four values from your session cookie into `.env`. |
-| `ERROR: set DISCOGS_CONSUMER_KEY and DISCOGS_CONSUMER_SECRET in .env` | Your Discogs **app** isn't registered or its consumer credentials aren't in `.env`. Register an application at https://www.discogs.com/settings/developers, set its Callback URL to `<host>/auth/callback`, and paste the consumer key/secret. |
-| `SESSION_SECRET must be set in .env` | The web app refuses to start without a session-cookie signing secret. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. |
+| `DISCOGS_USER_ID must be set` from a CLI subcommand | Set `DISCOGS_USER_ID=<your numeric Discogs id>` in `.env`. Find it via `sleeve-notes query users.User` or the Django admin once you've signed in via the web UI. |
+| `No Discogs OAuth token found for this user` | You've never signed in via the browser (allauth hasn't created a SocialToken row), or you signed in before `SOCIALACCOUNT_STORE_TOKENS` was enabled. Sign out and back in via the web UI. |
+| `ERROR: set DISCOGS_CONSUMER_KEY and DISCOGS_CONSUMER_SECRET in .env` | Your Discogs **app** isn't registered or its consumer credentials aren't in `.env`. Register an application at https://www.discogs.com/settings/developers, set its Callback URL to `<host>/accounts/discogs/login/callback/`, and paste the consumer key/secret. |
+| `DJANGO_SECRET_KEY must be set` | Generate one with `python -c "import secrets; print(secrets.token_urlsafe(64))"` and put it in `.env`. |
 | `Folder 'X' not found` | Pass an existing folder name (case-insensitive). In CSV mode the tool prints the folders present in the CSV; in API mode it prints the folders on your Discogs account. |
 | `401 Unauthorized` from Discogs | Your OAuth access token was revoked on the Discogs side. Sign out and back in to refresh. |
 | `401 Unauthorized` from Spotify | Spotify app credentials wrong or expired. Re-issue and update `.env`. |
-| `401 Unauthorized` from Beatport during BPM lookup | Refresh token expired or revoked. `sleeve-notes bpm` retries automatically with a fresh password grant; if that fails, re-run `sleeve-notes auth-beatport`. |
+| `401 Unauthorized` from Beatport during BPM lookup | Beatport is currently disabled in the Django port (see [Beatport: one-time auth](#beatport-one-time-auth)). If you somehow get this error anyway, it means the auth flow needs re-implementation. |
 | HTTP 429 (rate limited) | `tenacity` retries with exponential backoff. Persistent 429s usually mean a misconfigured rate-limit — wait a minute, or lower concurrency with `sleeve-notes bpm --workers 4` and try again. |
 | Release shows in `/collection` but is skipped by the renderer | Discogs returned no tracklist for it. List the affected releases with: `sleeve-notes query releases --cols "id,artist,title,type,format" --where "NOT EXISTS (SELECT 1 FROM tracks t WHERE t.release_id = releases.id)"`. Usually a Discogs submission gap — adding the tracklist on discogs.com and re-running `sleeve-notes fetch` for that release fixes it. |
-| SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `sleeve_notes/fetch_bpm.py`, drop the affected rows with `sqlite3 data/sleeve_notes.db "DELETE FROM bpm_source_hits WHERE source='songbpm'; DELETE FROM bpm_cache WHERE cache_key NOT IN (SELECT cache_key FROM bpm_source_hits);"` (or just wipe both tables), and re-run `sleeve-notes bpm`. |
+| SongBPM parser returns nothing (HTML changed) | The tool dumps the offending HTML into `.tmp/debug/<slug>.html`. Open it, find the new BPM markup, adjust the selectors in `sleeve_notes/fetch_bpm.py`, drop the affected cache rows (`cd webapp && python manage.py dbshell <<< "DELETE FROM records_bpmcache WHERE source_hits ? 'songbpm';"`), and re-run `sleeve-notes bpm`. |
 | Sticker text overflows / looks wrong on a release | Fonts auto-shrink to fit, but for releases with very long titles or many tracks per side, results can still get tight. Inspect via `sleeve-notes query tracks --where "release_id = X"` and confirm the data is correct first; the PDF is a faithful render of that data. If you chose very small stickers via `--sticker-w/--sticker-h`, try a larger size — vertical space is the limiting factor for >6-track sides. |
 | `Sticker WxH mm doesn't fit on A4` | The requested `--sticker-w` / `--sticker-h` leaves no room for the 4 mm page edge on A4. Pick a smaller size, or stick to the default 96 × 50.8 mm. |
 
@@ -598,33 +604,49 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 .
 ├── README.md                              ← you are here
 ├── CLAUDE.md                              ← codebase conventions for AI agents working on the repo
+├── RUNBOOK.md                             ← incident response + pause/resume Render staging
+├── migration_plan.md                      ← the Django port plan (mostly historical now)
 ├── pyproject.toml                         ← packaging + `sleeve-notes` entry point
-├── requirements.txt                       ← Python deps (for `pip install -r` mode)
+├── docker-compose.yml                     ← local Postgres
+├── render.yaml                            ← Render Blueprint (web + worker + db)
 ├── .env                                   ← your secrets (gitignored)
-├── data/                                  ← all persistent state (gitignored)
-│   └── sleeve_notes.db                    ← single SQLite file: collection, cache, overrides, print history
-├── overrides.example.json                 ← legacy JSON shape for reference only
-├── sleeve_notes/
+├── sleeve_notes/                          ← pure engine package (no DB code, no Django imports)
 │   ├── __init__.py                        ← package marker + project_root() helper
 │   ├── cli.py                             ← `sleeve-notes` subcommand dispatcher
-│   ├── db.py                              ← SQLite schema + connection (declarative, SCHEMA-driven)
-│   ├── fetch_discogs_collection.py        ← Step 1: collect releases (API or CSV), OAuth1-signed
+│   ├── django_setup.py                    ← Django bootstrap shim for the delegators
+│   ├── fetch_discogs_collection.py        ← delegator → manage.py sync_discogs
+│   ├── fetch_bpm.py                       ← Step 2 pure cascade (HTTP + parsing + consensus)
+│   ├── generate_sticker_pdf.py            ← Step 3 pure ReportLab adapter (PdfDrawer + delegator)
+│   ├── preview.py                         ← SvgDrawer (pure SVG adapter) for the detail drawer + previews
+│   ├── sticker_layout.py                  ← geometry, fonts, draw_sticker — the Drawer protocol
 │   ├── ingest.py                          ← per-release normalize: extract fields + tracks
 │   ├── classify.py                        ← derive `type` and `format` from Discogs metadata
-│   ├── fetch_bpm.py                       ← Step 2: 5-source BPM cascade
-│   ├── generate_sticker_pdf.py            ← Step 3: render the PDF
-│   ├── query.py                           ← `sleeve-notes query` (browse the DB)
-│   ├── overrides.py                       ← `sleeve-notes overrides` (manage overrides)
-│   └── beatport_auth.py                   ← one-time Beatport OAuth bootstrap
-├── sleeve_notes_web/                      ← localhost web UI (FastAPI + HTMX)
-│   ├── app.py                             ← `sleeve-notes web` entry point, SessionMiddleware + auth handlers
-│   ├── routes/                            ← auth / collection / tracks / print_runs / run / dashboard / actions handlers
-│   ├── services/                          ← OAuth helpers (auth.py), Depends shims (deps.py),
-│   │                                        JobRunner (jobs.py), stats, sticker preview
-│   ├── templates/                         ← Jinja templates (base.html + landing + per-page partials)
-│   └── static/                            ← app.js + assets served at /static
+│   ├── query.py                           ← delegator → manage.py query
+│   └── overrides.py                       ← delegator → manage.py overrides
+├── webapp/                                ← Django project
+│   ├── manage.py
+│   ├── sleevenotes_app/                   ← project settings + root urls
+│   ├── core/                              ← UserJobLock + shared abstract models
+│   ├── users/                             ← AbstractUser subclass (custom AUTH_USER_MODEL)
+│   ├── records/                           ← Release, Track, BpmCache, Override
+│   │   ├── models.py
+│   │   ├── services/                      ← discogs_sync, bpm_cascade — ORM-bound wrappers around sleeve_notes/
+│   │   ├── management/commands/           ← sync_discogs, lookup_bpm, query, overrides — CLI entry points
+│   │   ├── jobs.py                        ← enqueue_* + _run_* worker functions for Django-Q2
+│   │   ├── action_views.py                ← /actions/<name> POST endpoints (sidebar modals)
+│   │   └── views.py                       ← /collection, /collection/<uuid>, /tracks, /tracks/save, /tracks/sync
+│   ├── print_runs/                        ← PrintRun + render service + PDF download
+│   │   ├── models.py
+│   │   ├── services/render.py             ← releases_by_ids, build_bpm_lookup, render_pdf
+│   │   ├── management/commands/           ← render_print_run
+│   │   └── views.py                       ← /print-runs/, /print-runs/<uuid>, /print-runs/<uuid>/pdf, /print-runs/new
+│   ├── audit/                             ← AuditEvent (append-only history)
+│   ├── discogs_provider/                  ← custom allauth OAuth1 provider for Discogs
+│   ├── templates/                         ← Django templates (base.html + per-page + partials)
+│   └── middleware/staging_gate.py         ← HTTP Basic Auth for ENVIRONMENT=staging
 └── .tmp/                                  ← disposable cache + final PDF (gitignored)
     ├── stickers.pdf                       ← the only file you actually need to print
+    ├── uploads/                           ← browser-uploaded CSV exports, cleaned by the worker after import
     └── debug/                             ← (only on songbpm parser failure) raw HTML
 ```
 

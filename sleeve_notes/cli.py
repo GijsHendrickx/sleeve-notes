@@ -2,14 +2,13 @@
 
 Dispatches to the per-step modules in this package. Each subcommand's flags
 are owned by its underlying module — `sleeve-notes fetch --csv x.csv` is the
-same as `python sleeve_notes/fetch_discogs_collection.py --csv x.csv`. The `run`
+same as `python webapp/manage.py sync_discogs --csv x.csv`. The `run`
 subcommand chains the three steps in order with a small allow-list of the
 flags most commonly customised end-to-end.
 
-Inspection: every JSON file from the old layout has moved into a single
-SQLite DB at `sleeve_notes.db` in the project root. Use `sleeve-notes query`
-to browse any of its tables (and `sleeve-notes overrides` for the only
-table you typically need to edit by hand).
+Inspection: use `sleeve-notes query` for a quick model listing, the Django
+admin at `/admin/` for browsing, and `sleeve-notes overrides` for editing
+manual BPM/key overrides.
 """
 
 from __future__ import annotations
@@ -29,12 +28,11 @@ Pipeline:
   run            Chain steps 1→3 with common defaults
 
 Inspection / data:
-  query          Browse the SQLite DB: tables, schema, arbitrary SELECT
+  query          List Django models + dump a model's first rows
   overrides      Add/list/remove manual BPM/key overrides
-  auth-beatport  One-time Beatport OAuth bootstrap
 
 Interactive:
-  web            Launch the localhost web UI (dashboard, overrides, print runs)
+  web            Launch the localhost Django web UI (dashboard, overrides, print runs)
 
 Pass -h/--help to any subcommand for its own options.
 """
@@ -51,9 +49,6 @@ def _resolve(name: str) -> Callable[[list[str] | None], int]:
     if name == "render":
         from sleeve_notes import generate_sticker_pdf
         return generate_sticker_pdf.main
-    if name == "auth-beatport":
-        from sleeve_notes import beatport_auth
-        return beatport_auth.main
     if name == "query":
         from sleeve_notes import query
         return query.main
@@ -66,26 +61,49 @@ def _resolve(name: str) -> Callable[[list[str] | None], int]:
 
 
 def _web_main(argv: list[str] | None) -> int:
-    """Launch the localhost web UI."""
+    """Launch the localhost web UI via Django's runserver.
+
+    Background jobs (Discogs sync, BPM cascade) run in an in-process
+    Django-Q2 cluster when DEV_INPROCESS_QCLUSTER=true in .env — so one
+    process, one Ctrl-C, one log stream.
+    """
+    import subprocess
+    import threading
+    import time
+    import webbrowser
+
+    from sleeve_notes import project_root
+
     parser = argparse.ArgumentParser(
         prog="sleeve-notes web",
-        description="Run the localhost web UI (FastAPI + HTMX). The CLI subcommands "
-                    "remain the engine; the web app shells out to them for long jobs.",
+        description="Run the localhost Django web UI. Background jobs use the "
+                    "in-process Django-Q2 cluster (DEV_INPROCESS_QCLUSTER=true).",
     )
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
-    parser.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765).")
+    parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000).")
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open the browser.")
     args = parser.parse_args(argv or [])
-    try:
-        from sleeve_notes_web.app import serve
-    except ImportError as e:
+
+    webapp_dir = project_root() / "webapp"
+    manage_py = webapp_dir / "manage.py"
+    if not manage_py.exists():
         sys.stderr.write(
-            f"sleeve-notes web: web extras not installed ({e}). "
-            "Reinstall with `pip install -e .` after pulling the latest pyproject.toml.\n"
+            f"sleeve-notes web: webapp/manage.py not found at {manage_py}. "
+            "Run from the project root.\n"
         )
         return 2
-    serve(host=args.host, port=args.port, open_browser=not args.no_browser)
-    return 0
+
+    if not args.no_browser:
+        def _open():
+            time.sleep(1.2)
+            webbrowser.open(f"http://{args.host}:{args.port}/")
+        threading.Thread(target=_open, daemon=True).start()
+
+    cmd = [sys.executable, str(manage_py), "runserver", f"{args.host}:{args.port}"]
+    try:
+        return subprocess.run(cmd, cwd=str(webapp_dir)).returncode
+    except KeyboardInterrupt:
+        return 0
 
 
 def _run(argv: list[str]) -> int:

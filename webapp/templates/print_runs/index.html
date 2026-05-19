@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Print runs — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Print runs{% endblock %}
+
+{% block content %}
+<div class="flex items-center mb-4">
+  <p class="text-app-dim text-[13px]">
+    {{ run_count }} saved run{{ run_count|pluralize }}.
+  </p>
+  <a href="{% url 'print_runs:editor' %}" class="btn btn-primary ml-auto">
+    Create print run
+  </a>
+</div>
+
+{% if rows %}
+<div class="card overflow-hidden">
+  <table class="dense w-full text-[13px]">
+    <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute">
+      <tr class="border-b hairline">
+        <th class="text-left">Name</th>
+        <th class="text-left w-44">Created</th>
+        <th class="text-right w-24">Releases</th>
+        <th class="text-left">Settings</th>
+        <th class="w-24"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in rows %}
+      <tr class="border-t hairline align-middle hover:bg-app-s2/40">
+        <td>
+          <a href="{% url 'print_runs:detail' run.id %}" class="text-app-ink hover:text-sky-300">
+            {{ run.name|default:"Untitled run" }}
+          </a>
+        </td>
+        <td class="font-mono text-app-mute text-[12px]">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+        <td class="text-right font-mono text-app-dim">{{ run.release_count }}</td>
+        <td class="text-app-dim text-[12px]">{{ run.settings_summary }}</td>
+        <td class="text-right whitespace-nowrap">
+          <a href="{% url 'print_runs:pdf_download' run.id %}"
+             class="btn btn-quiet h-7 px-2 text-[12px]" title="Download PDF">PDF</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card p-10 text-center">
+  <div class="text-app-dim text-[14px] mb-2">No print runs yet.</div>
+  <div class="text-app-mute text-[12px] mb-5">
+    A print run remembers the exact releases and settings you used, so you can re-download later.
+  </div>
+  <a href="{% url 'print_runs:editor' %}" class="btn btn-primary">Create your first print run →</a>
+</div>
+{% endif %}
+{% endblock %}
