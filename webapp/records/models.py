@@ -17,7 +17,7 @@ class Release(TimestampedModel):
     labels = models.JSONField(null=True, blank=True)
     genres = models.JSONField(null=True, blank=True)
     styles = models.JSONField(null=True, blank=True)
-    rpm = models.CharField(max_length=10, blank=True)
+    rpm = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True)
     basic_information = models.JSONField(null=True, blank=True)
     raw_tracklist = models.JSONField(null=True, blank=True)
