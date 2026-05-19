@@ -21,6 +21,11 @@
       <option value="{{ f }}" {% if format_filter == f %}selected{% endif %}>{{ f }}</option>
       {% endfor %}
     </select>
+    <select name="bpm" class="field h-8 px-2.5 text-[13px]">
+      <option value="">BPM · any</option>
+      <option value="missing" {% if bpm_filter == 'missing' %}selected{% endif %}>Has missing</option>
+      <option value="complete" {% if bpm_filter == 'complete' %}selected{% endif %}>Fully covered</option>
+    </select>
     <button type="submit" class="btn btn-ghost h-8">Filter</button>
     <span class="text-app-mute ml-auto text-[12px] tracking-tight">
       {{ shown_count }} of {{ total }} release{{ total|pluralize }}
@@ -38,6 +43,7 @@
           <th class="text-right w-16">Year</th>
           <th class="text-left w-20">Type</th>
           <th class="text-left w-20">Format</th>
+          <th class="text-right w-24">BPM</th>
         </tr>
       </thead>
       <tbody>
@@ -56,10 +62,19 @@
           <td class="text-right text-app-mute font-mono">{{ r.year|default:"" }}</td>
           <td class="text-app-dim">{{ r.release_type|default:"" }}</td>
           <td class="text-app-mute font-mono">{{ r.format|default:"" }}</td>
+          <td class="text-right font-mono">
+            {% if r.tracks_total > 0 %}
+              <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-app-mute{% else %}text-amber-400{% endif %}">
+                {{ r.tracks_with_bpm }}/{{ r.tracks_total }}
+              </span>
+            {% else %}
+              <span class="text-app-mute">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="6" class="text-center py-12 text-app-mute">
+          <td colspan="7" class="text-center py-12 text-app-mute">
             {% if total == 0 %}
               No releases yet. Run <code>sleeve-notes fetch</code> to sync your Discogs collection.
             {% else %}

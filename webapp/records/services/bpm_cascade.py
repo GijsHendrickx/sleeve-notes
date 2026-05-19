@@ -100,6 +100,22 @@ def load_overrides(user) -> tuple[dict, dict, list[str]]:
 # ─── BPM cache I/O ───────────────────────────────────────────────────────────
 
 
+def load_all_cache_entries(user) -> dict[str, dict]:
+    """Pre-fetch every BpmCache row for the user into a `cache_key → entry` dict.
+
+    Lets per-track callers in tight loops avoid an N+1 round-trip. The shape
+    matches `load_cache_entry` so it's a drop-in for `derive_track_result`'s
+    `cache_entries` kwarg.
+    """
+    out: dict[str, dict] = {}
+    for row in BpmCache.objects.filter(user=user).only("cache_key", "sources_tried", "source_hits"):
+        out[row.cache_key] = {
+            "sources": dict(row.source_hits or {}),
+            "sources_tried": list(row.sources_tried or []),
+        }
+    return out
+
+
 def load_cache_entry(user, ck: str) -> dict | None:
     try:
         row = BpmCache.objects.only("sources_tried", "source_hits").get(
@@ -171,7 +187,14 @@ def derive_track_result(
     title: str,
     overrides_rp: dict,
     overrides_tk: dict,
+    cache_entries: dict[str, dict] | None = None,
 ) -> dict:
+    """Derive the per-track BPM/key result. Override > cache > nothing.
+
+    ``cache_entries`` is an optional pre-fetched ``{cache_key: entry}`` map
+    (from :func:`load_all_cache_entries`). Callers in tight loops pass it
+    to avoid one DB round-trip per track.
+    """
     base = {"position": position, "artist": artist, "title": title}
     override = overrides_rp.get((discogs_release_id, position))
     if override is None:
@@ -181,13 +204,52 @@ def derive_track_result(
     if override is not None:
         return {**base, **override_to_result(override)}
 
-    entry = load_cache_entry(user, cache_key(artist, title))
+    ck = cache_key(artist, title)
+    if cache_entries is not None:
+        entry = cache_entries.get(ck)
+    else:
+        entry = load_cache_entry(user, ck)
     if entry is None:
         entry = {"sources": {}, "sources_tried": []}
     return build_track_result(
         position, artist, title, entry,
         share_counts=url_share_counts(user),
     )
+
+
+# ─── Coverage helpers (used by listing views) ────────────────────────────────
+
+
+def bpm_coverage_for_releases(user, releases) -> dict:
+    """Return ``{release.id: (tracks_total, tracks_with_bpm)}`` for the given
+    Release objects. ``releases`` must already have ``tracks`` prefetched.
+
+    Reuses :func:`derive_track_result` for parity with the legacy listing,
+    but loads overrides + the full BpmCache once up front so a 500-release
+    page is O(tracks) in-memory work instead of O(tracks) DB round-trips.
+    """
+    by_rp, by_tk, _ = load_overrides(user)
+    cache_entries = load_all_cache_entries(user)
+    out: dict = {}
+    for rel in releases:
+        total = 0
+        with_bpm = 0
+        release_artist = rel.artist or "V/A"
+        rid = rel.discogs_release_id
+        for t in rel.tracks.all():
+            total += 1
+            result = derive_track_result(
+                user, rid,
+                t.position or "",
+                t.artist or release_artist,
+                t.title or "",
+                by_rp, by_tk,
+                cache_entries=cache_entries,
+            )
+            if result.get("bpm"):
+                with_bpm += 1
+        out[rel.id] = (total, with_bpm)
+    return out
 
 
 # ─── Top-level orchestrator ──────────────────────────────────────────────────
