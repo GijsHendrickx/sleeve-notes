@@ -47,7 +47,7 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 1. Skelet & deploy | ✓ klaar | Django 5.2 + Postgres + Sentry + Basic Auth gate + healthz + RUNBOOK; `git push` deployt |
 | 2. Auth | ✓ klaar | django-allauth + custom Discogs OAuth1 provider; sign-in werkt end-to-end op staging |
 | 3. Models | ✓ klaar | Records / PrintRun / AuditEvent / BpmCache + admin; UUID PKs op user-facing, TimestampedModel base |
-| 4. Engine integratie | gedeeltelijk | 4A + 4B klaar (alle DB-rakende modules geport; Django-Q2 + per-user lock + worker service). 4C (PDF render command) staat nog open. |
+| 4. Engine integratie | ✓ klaar | 4A + 4B + 4C klaar (ORM-port van alle modules; Django-Q2 + per-user lock + worker service; render service + management command). |
 | 5. Web UI port | ✗ niet begonnen | Volledige FastAPI → Django UI; komt na 4 |
 | 6. Productie cut-over | ✗ niet begonnen | Pas wanneer 5 klaar is + staging een week stabiel |
 | 7. Operationeel | n.v.t. | Doorlopend |
@@ -61,8 +61,8 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 4A.3 Port `query.py` + `fetch_discogs_collection.py` | ✓ | `3024322` |
 | 4A.4 Port `fetch_bpm.py` | ✓ | `f529b92` |
 | 4A.5 Port `query.py` CLI naar delegator | ✓ | `54ddf44` |
-| 4B Django-Q2 voor async tasks + per-user lock + worker service | ✓ | (HEAD) |
-| 4C PDF render management command | TODO (~30m) | — |
+| 4B Django-Q2 voor async tasks + per-user lock + worker service | ✓ | `b571991` |
+| 4C PDF render management command + render service | ✓ | (HEAD) |
 
 ### Architectuur-beslissingen die tijdens de port zijn gewijzigd
 
@@ -104,18 +104,29 @@ Concrete voorbeelden: `webapp/records/services/discogs_sync.py` (sync) en `webap
 - **CSRF_TRUSTED_ORIGINS moet per environment gezet** zijn voor HTTPS POSTs (sign-out, forms). Staging heeft het al; productie moet later toegevoegd worden.
 - **Custom domein nog niet ingezet.** Staging draait op `*.onrender.com`. Bij custom domein: Cloudflare Access voor staging i.p.v. HTTP Basic Auth + DNS records voor Resend (DKIM/SPF/DMARC).
 
-### Volgende stappen — concreet starten met 4C
+### Volgende stappen — concreet starten met fase 5
 
-Voor wie 4C (PDF render management command) oppakt:
+Fase 4 is rond. Volgende blok is de Django UI port (fase 5). Concrete eerste stappen:
 
-- Lees `sleeve_notes/generate_sticker_pdf.py` — pure-helpers (sticker_layout, qrcode, reportlab) blijven 1:1.
-- Port `main()` naar een Django management command `render_print_run` in `webapp/print_runs/management/commands/`.
-- Input: `--print-run-id <uuid>`. Vul `PrintRun.pdf_hash` (SHA256-hex van de gerenderde PDF bytes).
-- Output gaat naar stdout (bytes) of `--output PATH`. Op Render's ephemeral disk schrijft de web-view straks rechtstreeks naar de response.
-- Voor lange runs: `enqueue_print_render(user, print_run_id)` in `webapp/print_runs/jobs.py` met dezelfde lock-pattern als 4B (zie `records/jobs.py`).
-- Daarna: laatste imports van `sleeve_notes/db.py` opruimen (alleen `generate_sticker_pdf.py` en `beatport_auth.py` raken het nog) en het bestand verwijderen.
+1. **Routing-skelet.** Vervang `sleevenotes_app/urls.py`'s placeholders door named routes per pagina (`dashboard`, `collection`, `tracks`, `print_runs:index`, `print_runs:detail`, `actions:sync`, `actions:bpm`, `actions:print`). Mirror de URL-shape uit fase 1 (zie [Vroege architectuur-beslissingen § D](#d-url--toekomstige-optionality)).
+2. **Base template + sidebar.** Port `sleeve_notes_web/templates/base.html` naar `webapp/templates/base.html` — Jinja → Django syntax is grotendeels mechanisch. Sidebar conditional op `request.user.is_authenticated` (was: `request.session.user_id`).
+3. **Records page eerst.** Port `/collection` (records listing) en `/tracks` met de bestaande filter-row conventie uit CLAUDE.md. Eén pagina per commit; sticker preview drawer + density toggle komen daarna.
+4. **Actions als toast-gedreven flows.** Sidebar-knoppen openen modals die `enqueue_discogs_sync` / `enqueue_bpm_cascade` / `enqueue_print_render`-equivalenten triggeren via een POST. Status-polling endpoint leest `django_q.models.Task` op `task_id` uit `UserJobLock` / response.
+5. **Render-endpoint.** `print_runs/views.py` `pdf_download(request, run_id)` roept `print_runs.services.render.render_pdf` synchroon aan, streamt bytes met `FileResponse(...).set_headers(...)`. Geen disk-persistence — ephemeral.
+6. **Cut-over voor `sleeve-notes web`.** Wanneer de Django UI minimaal werkt: laat `sleeve-notes web` Django launchen (gunicorn lokaal of `manage.py runserver` met flag), niet meer de FastAPI app. Daarna `sleeve_notes_web/` weghalen.
 
-### Wat 4B opleverde (referentie voor 4C / 5)
+### Wat 4C opleverde (referentie voor fase 5)
+
+- **`webapp/print_runs/services/render.py`** — pure ORM-bound functies: `releases_for_render(user)`, `releases_by_ids(user, ids)`, `build_bpm_lookup(user, releases)`, `already_printed_ids(user)`, `create_print_run(user, ids, settings)`, `render_pdf(user, *, releases, settings, output_path) -> RenderResult`. De web-view gaat deze straks direct aanroepen voor synchrone PDF-download.
+- **`webapp/print_runs/management/commands/render_print_run.py`** — Django-side CLI met alle legacy flags (`--sticker-w`, `--tile`, `--new-only`, `--mark-printed`, `--print-run-id`, alle `--no-*` toggles). `--print-run-id` neemt een UUID (niet meer int).
+- **`sleeve_notes/generate_sticker_pdf.py`** is nu twee dingen: (a) pure helpers (`PdfDrawer`, `DEFAULT_SETTINGS`, `normalize_settings`) die de render service hergebruikt, (b) een dunne delegator `main()` voor `sleeve-notes render` → `manage.py render_print_run`. De legacy SQLite helpers (`list_print_runs`, `build_bpm_lookup`, etc.) blijven 1:1 staan tot fase 5 omdat `sleeve_notes_web/` ze nog importeert — zelfde patroon als `fetch_bpm.py`'s legacy `derive_track_result` / `load_overrides`.
+- **Smoke-test bevestigde** dat default-render, `--mark-printed`, en `--print-run-id <uuid>` alle drie werken end-to-end tegen de Postgres-DB.
+
+### Bekende gotcha — `pdf_hash` is niet content-stabiel
+
+ReportLab embedt `CreationDate` / `ModDate` in elke PDF, dus twee renders van dezelfde print-run produceren verschillende bytes en dus verschillende `PrintRun.pdf_hash`-waarden. Voor v1 is dat OK — het veld dient als "hash van de laatste render" niet als "hash van de input". Voor het toekomstige reproducibility/dispute-verification use-case (zie [roadmap.md print fulfillment](./roadmap.md#print-fulfillment--monetisatie)) moet de PDF-metadata gecanonicaliseerd worden (vaste creation-date, deterministische ID). Niet blokkend voor fase 5 of cut-over.
+
+### Wat 4B opleverde (referentie voor fase 5)
 
 - **`core.UserJobLock`** — OneToOne(user), kind, task_id, started_at. `acquire(user, kind)` raised `LockHeld` als er al een actieve job is; `release(user)` verwijdert de rij. Tasks gebruiken `try/finally` zodat crashes ook unlocken.
 - **`records/jobs.py`** — `enqueue_discogs_sync(user, source=...)` en `enqueue_bpm_cascade(user)` zijn de publieke API. Workers krijgen alleen `user_id` mee (geen request state); OAuth tokens worden uit `SocialToken` gehaald op de worker.
