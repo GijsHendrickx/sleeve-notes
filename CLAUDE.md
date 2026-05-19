@@ -11,14 +11,16 @@ The engine in `sleeve_notes/` is the source of truth: deterministic Python that 
 ## Directory layout
 
 ```
-.tmp/             # Disposable: stickers.pdf output, debug HTML dumps. Wipe freely.
-data/             # NOT disposable: sleeve_notes.db (collection, BPM cache, overrides, print history).
-sleeve_notes/     # Engine (Python package). CLI subcommands dispatch into these modules.
-sleeve_notes_web/ # FastAPI + HTMX + Jinja web UI. See "Web UI conventions" below.
-roadmap.md        # Feature ideas / future work. See "Capturing feature ideas" below.
-MIGRATION_PLAN.md # Plan for porting to Django + Render. Lives here as long as the migration is in flight.
-.env              # Discogs consumer creds, SESSION_SECRET, Spotify/Beatport/YT keys. NEVER commit.
-.env.example      # Documents every required + optional key; safe to commit.
+.tmp/              # Disposable: stickers.pdf output, debug HTML dumps. Wipe freely.
+data/              # NOT disposable: sleeve_notes.db (collection, BPM cache, overrides, print history).
+sleeve_notes/      # Engine (Python package). CLI subcommands dispatch into these modules.
+sleeve_notes_web/  # Legacy FastAPI + HTMX + Jinja web UI. Being replaced by webapp/.
+webapp/            # Django port (in-progress on django-port branch). See migration_plan.md.
+roadmap.md         # Feature ideas / future work. See "Capturing feature ideas" below.
+migration_plan.md  # Plan for porting to Django + Render. Lives here as long as the migration is in flight.
+docker-compose.yml # Local Postgres for the Django port. `docker compose up -d db` to start.
+.env               # Discogs creds, SESSION_SECRET, Spotify/Beatport/YT keys, Django config. NEVER commit.
+.env.example       # Documents every required + optional key; safe to commit.
 ```
 
 ## Auth & multi-tenancy
