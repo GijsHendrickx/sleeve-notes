@@ -136,6 +136,51 @@
     /* Sticker preview canvas — borrow paper colour for visual contrast. */
     .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
 
+    /* Modal — centered dialog with frosted backdrop. Sidebar actions inject here. */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 40;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: saturate(140%) blur(4px);
+      -webkit-backdrop-filter: saturate(140%) blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 1.5rem;
+    }
+    .modal-card {
+      width: 100%; max-width: 28rem;
+      background: var(--s1); border: 1px solid var(--line2); border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    /* Run toast — fixed bottom-right with indeterminate progress bar. */
+    .run-toast {
+      position: fixed; right: 20px; bottom: 20px; z-index: 50;
+      width: 320px; max-width: calc(100vw - 40px);
+      background: rgba(22,22,24,0.92);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border: 1px solid var(--line2);
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+      overflow: hidden;
+      animation: toast-in 200ms ease-out;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .progress-track {
+      position: relative; height: 3px; background: var(--s3); overflow: hidden;
+    }
+    .progress-bar {
+      position: absolute; top: 0; bottom: 0; width: 40%;
+      background: linear-gradient(90deg, transparent, #0a84ff 50%, transparent);
+      animation: progress-slide 1.4s ease-in-out infinite;
+    }
+    @keyframes progress-slide {
+      0%   { left: -45%; }
+      100% { left: 100%; }
+    }
+
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
@@ -166,18 +211,18 @@
         <a href="{% url 'records:tracks' %}" class="nav-item{% if active == 'tracks' %} active{% endif %}">Tracks</a>
 
         <div class="nav-section mt-4">Actions</div>
-        {# Stubs during fase 5: visible to communicate the final shape, disabled
-           until the enqueue routes + HTMX modals are wired. #}
-        <button type="button" class="nav-item nav-action w-full text-left" disabled
-                title="Wiring up in fase 5">
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="{% url 'records:action_discogs_sync' %}"
+                hx-target="#modal-root" hx-swap="innerHTML">
           <span class="nav-glyph">⟳</span> Discogs sync
         </button>
         <button type="button" class="nav-item nav-action w-full text-left" disabled
-                title="Wiring up in fase 5">
+                title="File upload flow lands in a follow-up commit">
           <span class="nav-glyph">⬇</span> Import Discogs csv
         </button>
-        <button type="button" class="nav-item nav-action w-full text-left" disabled
-                title="Wiring up in fase 5">
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="{% url 'records:action_bpm_cascade' %}"
+                hx-target="#modal-root" hx-swap="innerHTML">
           <span class="nav-glyph">♪</span> BPM lookup
         </button>
         <a href="{% url 'print_runs:index' %}" class="nav-item nav-action{% if active == 'print_runs' %} active{% endif %}">
@@ -209,9 +254,13 @@
   </div>
 
   {% if user.is_authenticated %}
-  {# Slots for the (future) action modals + run-status toast. Empty in fase 5.x. #}
-  <div id="modal-root"></div>
-  <div id="run-banner"></div>
+  <div id="modal-root"
+       hx-on:close-modal="this.innerHTML='';"></div>
+
+  <div id="run-banner"
+       hx-get="{% url 'run_banner' %}"
+       hx-trigger="load, run-status from:body"
+       hx-swap="innerHTML"></div>
   {% endif %}
 </body>
 </html>

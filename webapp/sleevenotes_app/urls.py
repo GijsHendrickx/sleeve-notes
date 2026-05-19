@@ -11,5 +11,6 @@ urlpatterns = [
     path("print-runs/", include("print_runs.urls")),
     path("admin/", admin.site.urls),
     path("healthz", core_views.healthz),
+    path("run/banner", core_views.run_banner, name="run_banner"),
     path("accounts/", include("allauth.urls")),
 ]

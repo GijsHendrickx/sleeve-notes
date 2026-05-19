@@ -1,0 +1,21 @@
+{% extends "actions/_modal.html" %}
+
+{% block body %}
+<form hx-post="{% url 'records:action_bpm_cascade' %}"
+      hx-target="this" hx-swap="none"
+      class="space-y-3">
+  {% csrf_token %}
+  <label class="block">
+    <span class="text-app-dim text-[12px] mb-1 block">Workers (parallel tracks)</span>
+    <input name="workers" type="number" min="1" max="32" value="8"
+           class="field h-8 px-3 w-full text-[13px]" />
+  </label>
+  <div class="flex gap-2 justify-end pt-2">
+    <button type="button" class="btn btn-quiet"
+            hx-on:click="document.getElementById('modal-root').innerHTML='';">
+      Cancel
+    </button>
+    <button type="submit" class="btn btn-primary">Start BPM lookup</button>
+  </div>
+</form>
+{% endblock %}
