@@ -136,6 +136,28 @@
     /* Sticker preview canvas — borrow paper colour for visual contrast. */
     .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
 
+    /* /tracks per-row sync button — spins while the HTMX request is in flight. */
+    .sync-btn.htmx-request {
+      color: #0a84ff;
+      pointer-events: none;
+      animation: sync-spin 0.9s linear infinite;
+      transform-origin: 50% 50%;
+      display: inline-block;
+    }
+    @keyframes sync-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* Flash applied to BPM/Key cells after a successful per-row sync,
+       so the user gets visual confirmation even when the value didn't change. */
+    .flash-sync { animation: cell-flash 1.6s ease-out; }
+    @keyframes cell-flash {
+      0%   { background-color: rgba(10,132,255,0.45); }
+      30%  { background-color: rgba(10,132,255,0.30); }
+      100% { background-color: transparent; }
+    }
+
     /* Modal — centered dialog with frosted backdrop. Sidebar actions inject here. */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 40;

@@ -3,25 +3,72 @@ from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
+from django.http import HttpResponseBadRequest, HttpResponseNotFound
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from sleeve_notes import sticker_layout as L
-from sleeve_notes.fetch_bpm import BPM_MAX, BPM_MIN, parse_key_to_camelot
+from sleeve_notes.fetch_bpm import (
+    BPM_MAX,
+    BPM_MIN,
+    RateLimiter,
+    cache_key,
+    cascade_all,
+    parse_key_to_camelot,
+)
 from sleeve_notes.preview import render_release_stickers_svg
 
-from records.models import Override, Release, Track
+from records.models import BpmCache, Override, Release, Track
 from records.services.bpm_cascade import (
     bpm_coverage_for_releases,
     derive_track_result,
     load_all_cache_entries,
     load_overrides,
+    save_cache_entry,
 )
 from print_runs.services.render import build_bpm_lookup, releases_by_ids
 
 
 LIST_LIMIT = 500
 TRACKS_LIMIT = 2000
+
+
+def _build_track_row(
+    user, track, *, by_rp, by_tk, cache_entries, precise,
+    override_display=None,
+):
+    """Build the row dict for one Track. ``override_display`` lets callers
+    (sync endpoint) preserve in-progress form edits across a re-render."""
+    rel = track.release
+    release_artist = rel.artist or "V/A"
+    result = derive_track_result(
+        user, rel.discogs_release_id,
+        track.position or "",
+        track.artist or release_artist,
+        track.title or "",
+        by_rp, by_tk,
+        cache_entries=cache_entries,
+    )
+    if override_display is None:
+        ovr = precise.get((rel.discogs_release_id, track.position or ""))
+        override_display = {
+            "bpm": ovr.bpm if ovr else None,
+            "key_camelot": ovr.key_camelot if ovr else "",
+            "note": ovr.note if ovr else "",
+        }
+    return {
+        "release_id": rel.discogs_release_id,
+        "release_artist": release_artist,
+        "release_title": rel.title,
+        "position": track.position,
+        "artist": track.artist or release_artist,
+        "title": track.title,
+        "bpm": result.get("bpm"),
+        "bpm_confidence": result.get("bpm_confidence"),
+        "bpm_sources": result.get("bpm_sources"),
+        "key_camelot": result.get("key_camelot"),
+        "override": override_display,
+    }
 
 
 def _load_precise_overrides(user) -> dict[tuple[int, str], Override]:
@@ -136,39 +183,17 @@ def tracks(request):
 
     rows = []
     for t in tracks_db:
-        rel = t.release
-        release_artist = rel.artist or "V/A"
-        result = derive_track_result(
-            request.user, rel.discogs_release_id,
-            t.position or "",
-            t.artist or release_artist,
-            t.title or "",
-            by_rp, by_tk,
-            cache_entries=cache_entries,
+        row = _build_track_row(
+            request.user, t,
+            by_rp=by_rp, by_tk=by_tk,
+            cache_entries=cache_entries, precise=precise,
         )
-        bpm = result.get("bpm")
-        ovr = precise.get((rel.discogs_release_id, t.position or ""))
-        if filter_key == "needs_attention" and (bpm or ovr):
+        if filter_key == "needs_attention" and (row["bpm"] or row["override"]["bpm"]):
             continue
-        if filter_key == "has_override" and not ovr:
+        if filter_key == "has_override" and not row["override"]["bpm"] and \
+                not row["override"]["key_camelot"] and not row["override"]["note"]:
             continue
-        rows.append({
-            "release_id": rel.discogs_release_id,
-            "release_artist": release_artist,
-            "release_title": rel.title,
-            "position": t.position,
-            "artist": t.artist or release_artist,
-            "title": t.title,
-            "bpm": bpm,
-            "bpm_confidence": result.get("bpm_confidence"),
-            "bpm_sources": result.get("bpm_sources"),
-            "key_camelot": result.get("key_camelot"),
-            "override": {
-                "bpm": ovr.bpm if ovr else None,
-                "key_camelot": ovr.key_camelot if ovr else "",
-                "note": ovr.note if ovr else "",
-            },
-        })
+        rows.append(row)
 
     return render(request, "records/tracks.html", {
         "active": "tracks",
@@ -363,4 +388,72 @@ def release_detail(request, release_id):
         },
         "svgs": svgs,
         "svg_error": svg_error,
+    })
+
+
+@login_required
+@require_POST
+def tracks_sync(request):
+    """Re-fetch BPM/key for one track from every source, return the new row.
+
+    The current row's override inputs are submitted with the request (via
+    HTMX hx-include="closest tr") so any unsaved edits survive the swap.
+    """
+    try:
+        rid = int((request.POST.get("release_id") or "").strip())
+    except ValueError:
+        return HttpResponseBadRequest("invalid release_id")
+    pos = (request.POST.get("position") or "").strip()
+
+    track = (
+        Track.objects.filter(
+            release__user=request.user,
+            release__discogs_release_id=rid,
+            position=pos,
+        )
+        .select_related("release")
+        .first()
+    )
+    if track is None:
+        return HttpResponseNotFound(f"track {rid}/{pos} not found")
+
+    release_artist = track.release.artist or "V/A"
+    track_artist = track.artist or release_artist
+    title = track.title or ""
+
+    # Force-refetch: drop any cached row so cascade_all re-queries every source.
+    ck = cache_key(track_artist, title)
+    BpmCache.objects.filter(user=request.user, cache_key=ck).delete()
+
+    rl = RateLimiter()
+    entry = cascade_all(track_artist, title, prev=None, rl=rl)
+    save_cache_entry(request.user, ck, track_artist, title, entry)
+
+    spot_id = entry.get("spotify_track_id")
+    if spot_id and not track.spotify_track_id:
+        track.spotify_track_id = spot_id
+        track.save(update_fields=["spotify_track_id"])
+
+    # Preserve any unsaved override edits from the submitted form.
+    bpm_raw = (request.POST.get(f"bpm_{rid}_{pos}") or "").strip()
+    key_raw = (request.POST.get(f"key_{rid}_{pos}") or "").strip()
+    note_raw = (request.POST.get(f"note_{rid}_{pos}") or "").strip()
+    override_display = {
+        "bpm": bpm_raw or None,
+        "key_camelot": key_raw,
+        "note": note_raw,
+    }
+
+    by_rp, by_tk, _ = load_overrides(request.user)
+    cache_entries = load_all_cache_entries(request.user)
+    precise = _load_precise_overrides(request.user)
+    row = _build_track_row(
+        request.user, track,
+        by_rp=by_rp, by_tk=by_tk,
+        cache_entries=cache_entries, precise=precise,
+        override_display=override_display,
+    )
+
+    return render(request, "records/_track_row.html", {
+        "r": row, "just_synced": True,
     })
