@@ -36,6 +36,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "middleware.staging_gate.StagingGateMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -43,6 +44,10 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# Staging gate credentials (only required when ENVIRONMENT=staging).
+STAGING_BASIC_AUTH_USER = env("STAGING_BASIC_AUTH_USER", default="")
+STAGING_BASIC_AUTH_PASSWORD = env("STAGING_BASIC_AUTH_PASSWORD", default="")
 
 ROOT_URLCONF = "sleevenotes_app.urls"
 
@@ -97,3 +102,17 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@example.com")
 
 # ─── Default primary-key type ────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ─── Error & performance monitoring (Sentry) ─────────────────────────────────
+SENTRY_DSN = env("SENTRY_DSN", default="")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=ENVIRONMENT,
+        integrations=[DjangoIntegration()],
+        send_default_pii=True,
+        traces_sample_rate=1.0 if ENVIRONMENT in ("local", "staging") else 0.1,
+    )

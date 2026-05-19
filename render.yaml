@@ -1,7 +1,7 @@
 databases:
   - name: sleeve-notes-db-staging
     plan: basic-256mb
-    postgresMajorVersion: 16
+    postgresMajorVersion: "16"
     region: frankfurt
 
 services:
@@ -36,4 +36,10 @@ services:
       - key: DISCOGS_CONSUMER_KEY
         sync: false
       - key: DISCOGS_CONSUMER_SECRET
+        sync: false
+      - key: STAGING_BASIC_AUTH_USER
+        sync: false
+      - key: STAGING_BASIC_AUTH_PASSWORD
+        sync: false
+      - key: SENTRY_DSN
         sync: false
