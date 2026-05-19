@@ -133,7 +133,7 @@ def _run_discogs_sync(
         session = make_oauth_session(ck, cs, tok, tok_sec)
         if source == "csv":
             assert csv_path, "csv source requires csv_path"
-            return sync_via_csv(
+            result = sync_via_csv(
                 user=user,
                 session=session,
                 csv_path=Path(csv_path),
@@ -141,9 +141,9 @@ def _run_discogs_sync(
                 limit=limit,
                 log=progress,
             )
-        if source == "api":
+        elif source == "api":
             uname = username or user.username
-            return sync_via_api(
+            result = sync_via_api(
                 user=user,
                 session=session,
                 username=uname,
@@ -151,18 +151,39 @@ def _run_discogs_sync(
                 limit=limit,
                 log=progress,
             )
-        raise ValueError(f"unknown sync source: {source!r}")
-    finally:
-        UserJobLock.release(user)
+        else:
+            raise ValueError(f"unknown sync source: {source!r}")
+    except Exception as e:
+        UserJobLock.mark_failed(user, f"Sync failed: {e}")
+        raise
+    UserJobLock.mark_done(
+        user,
+        f"Synced {len(result.get('release_ids', []))} releases "
+        f"({result.get('fetched_this_run', 0)} new this run).",
+    )
+    return result
 
 
 def _run_bpm_cascade(user_id: int, *, workers: int = 8) -> dict:
     user = User.objects.get(pk=user_id)
     progress = _make_progress_logger(user)
     try:
-        return run_bpm_cascade(user, workers=workers, log=progress)
-    finally:
-        UserJobLock.release(user)
+        result = run_bpm_cascade(user, workers=workers, log=progress)
+    except Exception as e:
+        UserJobLock.mark_failed(user, f"BPM lookup failed: {e}")
+        raise
+    found = result.get("found_bpm", 0)
+    total = result.get("total_tracks", 0)
+    cascaded = result.get("cascaded", 0)
+    if total:
+        UserJobLock.mark_done(
+            user,
+            f"Found BPM for {found} of {total} tracks "
+            f"({cascaded} cascaded this run).",
+        )
+    else:
+        UserJobLock.mark_done(user, result.get("error", "BPM lookup complete."))
+    return result
 
 
 # ─── Enqueue helpers (called from routes / commands) ─────────────────────────

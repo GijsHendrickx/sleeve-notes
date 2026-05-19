@@ -37,15 +37,25 @@ def healthz(_request):
 def run_banner(request):
     """HTMX partial for the fixed bottom-right toast.
 
-    Renders empty when the user has no active job; renders a "running for Ns"
-    card while UserJobLock exists. The card re-polls itself every 2s so the
-    toast vanishes within 2s of the worker's `finally` releasing the lock.
+    Three render paths:
+    - no lock: empty body, toast vanishes
+    - state=running: live progress, re-polls every 2s
+    - state=done/failed: completion message; after COMPLETION_LINGER_S the
+      lock row is lazy-deleted and the next poll returns empty
     """
     try:
         lock = request.user.job_lock
     except UserJobLock.DoesNotExist:
         return HttpResponse("")
-    elapsed_s = int((timezone.now() - lock.started_at).total_seconds())
+
+    now = timezone.now()
+    if lock.state != UserJobLock.STATE_RUNNING and lock.finished_at:
+        age = (now - lock.finished_at).total_seconds()
+        if age >= UserJobLock.COMPLETION_LINGER_S:
+            lock.delete()
+            return HttpResponse("")
+
+    elapsed_s = int((now - lock.started_at).total_seconds())
     pct = (
         int(100 * lock.progress_done / lock.progress_total)
         if lock.progress_total else None
@@ -55,4 +65,6 @@ def run_banner(request):
         "elapsed_s": elapsed_s,
         "progress_text": lock.progress_text,
         "progress_pct": pct,
+        "state": lock.state,
+        "result_text": lock.result_text,
     })

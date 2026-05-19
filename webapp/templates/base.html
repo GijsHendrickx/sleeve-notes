@@ -187,6 +187,13 @@
       animation: none;
       transition: width 300ms ease-out;
     }
+    /* Completion states — full bar in green / red. */
+    .progress-track.done .progress-bar {
+      left: 0; width: 100%; background: #30d158; animation: none;
+    }
+    .progress-track.failed .progress-bar {
+      left: 0; width: 100%; background: #ff453a; animation: none;
+    }
 
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
