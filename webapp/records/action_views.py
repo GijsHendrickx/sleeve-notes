@@ -68,8 +68,9 @@ def bpm_cascade(request):
         workers = int(workers_raw)
     except ValueError:
         return _trigger_response(f"Invalid workers: {workers_raw!r}", status=400)
+    force = (request.POST.get("force") or "").strip() in ("1", "true", "on", "yes")
     try:
-        enqueue_bpm_cascade(request.user, workers=workers)
+        enqueue_bpm_cascade(request.user, workers=workers, force=force)
     except LockHeld as e:
         return _trigger_response(f"Already running: {e}", status=409)
     return _trigger_response()

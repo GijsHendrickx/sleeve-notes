@@ -255,11 +255,14 @@ def bpm_coverage_for_releases(user, releases) -> dict:
 # ─── Top-level orchestrator ──────────────────────────────────────────────────
 
 
-def run_bpm_cascade(user, *, workers: int = 8, log: Logger = print) -> dict:
+def run_bpm_cascade(
+    user, *, workers: int = 8, force: bool = False, log: Logger = print,
+) -> dict:
     """Cascade BPM/key lookups for every track in the user's collection.
 
     Returns a stats dict. Idempotent: tracks whose BPM cache already has
-    every source attempted are skipped.
+    every source attempted are skipped, unless ``force=True`` re-queries
+    every source from scratch (existing rows are overwritten).
     """
     rl = RateLimiter()
 
@@ -315,9 +318,9 @@ def run_bpm_cascade(user, *, workers: int = 8, log: Logger = print) -> dict:
                 continue
 
             ck = cache_key(artist, title)
-            cached = load_cache_entry(user, ck)
+            cached = None if force else load_cache_entry(user, ck)
             tried = set((cached or {}).get("sources_tried") or [])
-            if cached and set(ALL_SOURCES).issubset(tried):
+            if not force and cached and set(ALL_SOURCES).issubset(tried):
                 cached_hits += 1
                 continue
 

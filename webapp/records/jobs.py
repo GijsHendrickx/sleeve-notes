@@ -164,11 +164,11 @@ def _run_discogs_sync(
     return result
 
 
-def _run_bpm_cascade(user_id: int, *, workers: int = 8) -> dict:
+def _run_bpm_cascade(user_id: int, *, workers: int = 8, force: bool = False) -> dict:
     user = User.objects.get(pk=user_id)
     progress = _make_progress_logger(user)
     try:
-        result = run_bpm_cascade(user, workers=workers, log=progress)
+        result = run_bpm_cascade(user, workers=workers, force=force, log=progress)
     except Exception as e:
         UserJobLock.mark_failed(user, f"BPM lookup failed: {e}")
         raise
@@ -228,13 +228,14 @@ def enqueue_discogs_sync(
     return task_id
 
 
-def enqueue_bpm_cascade(user, *, workers: int = 8) -> str:
+def enqueue_bpm_cascade(user, *, workers: int = 8, force: bool = False) -> str:
     lock = UserJobLock.acquire(user, kind="bpm_cascade")
     try:
         task_id = async_task(
             _BPM_CASCADE_TASK,
             user.id,
             workers=workers,
+            force=force,
             task_name=f"bpm_cascade:{user.id}",
         )
     except Exception:

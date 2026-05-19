@@ -10,6 +10,16 @@
     <input name="workers" type="number" min="1" max="32" value="8"
            class="field h-8 px-3 w-full text-[13px]" />
   </label>
+  <label class="flex items-start gap-2 cursor-pointer">
+    <input name="force" type="checkbox" value="1" class="mt-0.5" />
+    <span class="text-app-dim text-[12px]">
+      Force refetch all
+      <span class="block text-app-mute text-[11px]">
+        Re-query every source for every track, ignoring the cache. Slower but
+        picks up new BPMs / fixed sources for tracks that previously failed.
+      </span>
+    </span>
+  </label>
   <div class="flex gap-2 justify-end pt-2">
     <button type="button" class="btn btn-quiet"
             hx-on:click="document.getElementById('modal-root').innerHTML='';">
