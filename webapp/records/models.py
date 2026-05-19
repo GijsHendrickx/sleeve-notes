@@ -51,9 +51,6 @@ class Track(TimestampedModel):
     duration_s = models.IntegerField(null=True, blank=True)
     spotify_track_id = models.CharField(max_length=64, blank=True)
     youtube_video_id = models.CharField(max_length=64, blank=True)
-    bpm = models.FloatField(null=True, blank=True)
-    bpm_sources_tried = models.JSONField(default=list)
-    bpm_resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["release", "position"]
@@ -61,6 +58,33 @@ class Track(TimestampedModel):
 
     def __str__(self):
         return f"{self.position} {self.title}".strip()
+
+
+class BpmCache(TimestampedModel):
+    """Per-(user, song) BPM/key cache.
+
+    Keyed by a normalized artist+title hash so the same song on multiple
+    releases (single + LP, single + compilation) shares a single cache row.
+    The cascade writes here after consulting each source; the render layer
+    reads from here to populate sticker BPMs.
+    """
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    cache_key = models.CharField(max_length=64)
+    artist = models.CharField(max_length=500)
+    title = models.CharField(max_length=500)
+    sources_tried = models.JSONField(default=list)
+    source_hits = models.JSONField(default=dict)
+
+    class Meta:
+        unique_together = [("user", "cache_key")]
+        indexes = [
+            models.Index(fields=["user", "cache_key"]),
+            models.Index(fields=["user", "artist", "title"]),
+        ]
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"{self.artist} — {self.title}"
 
 
 class Override(TimestampedModel):
