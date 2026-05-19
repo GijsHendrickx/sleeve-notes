@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Tracks — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Tracks{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+  <p class="text-app-dim mb-4">
+    {{ track_count }} track{{ track_count|pluralize }} across your collection.
+  </p>
+  <p class="text-sm text-app-dim">
+    The tracks listing UI (per-row BPM/key, manual override + per-row sync)
+    lands in a follow-up commit.
+  </p>
+</div>
+{% endblock %}

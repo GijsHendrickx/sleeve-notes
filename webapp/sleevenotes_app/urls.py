@@ -1,16 +1,15 @@
 from django.contrib import admin
-from django.http import HttpResponse
 from django.urls import include, path
-from django.views.generic import TemplateView
 
-
-def healthz(request):
-    return HttpResponse("ok", content_type="text/plain")
+from core import views as core_views
 
 
 urlpatterns = [
-    path("", TemplateView.as_view(template_name="landing.html"), name="landing"),
+    path("", core_views.landing, name="landing"),
+    path("dashboard", core_views.dashboard, name="dashboard"),
+    path("", include("records.urls")),
+    path("print-runs/", include("print_runs.urls")),
     path("admin/", admin.site.urls),
-    path("healthz", healthz),
+    path("healthz", core_views.healthz),
     path("accounts/", include("allauth.urls")),
 ]

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}{{ run.name|default:"Print run" }} — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}{{ run.name|default:"Print run" }}{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl space-y-4">
+  <div class="text-sm text-app-dim">
+    <div>ID: <span class="text-app-ink font-mono">{{ run.id }}</span></div>
+    <div>Created: {{ run.created_at|date:"Y-m-d H:i" }}</div>
+    <div>Releases: {{ run.release_ids|length }}</div>
+    {% if run.pdf_hash %}
+    <div>Last PDF hash: <span class="font-mono text-xs">{{ run.pdf_hash|slice:":16" }}…</span></div>
+    {% endif %}
+  </div>
+
+  <p class="text-sm text-app-dim">
+    Re-render via <code>sleeve-notes render --print-run-id {{ run.id }}</code>.
+    A PDF-download endpoint + sticker preview drawer land in a follow-up commit.
+  </p>
+</div>
+{% endblock %}

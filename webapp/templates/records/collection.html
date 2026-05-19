@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Records — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Records{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+  <p class="text-app-dim mb-4">
+    {{ release_count }} release{{ release_count|pluralize }} in your collection.
+  </p>
+  <p class="text-sm text-app-dim">
+    The records listing UI (filter row, table, sticker preview drawer) lands
+    in a follow-up commit.
+  </p>
+</div>
+{% endblock %}

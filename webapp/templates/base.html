@@ -6,47 +6,165 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ APP_NAME }}{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"SF Pro Display"', 'ui-sans-serif', 'system-ui', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+            mono: ['"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+          colors: {
+            app: {
+              bg:    '#0c0c0e',
+              s1:    '#161618',
+              s2:    '#1d1d1f',
+              s3:    '#2a2a2c',
+              line:  'rgba(255,255,255,0.07)',
+              line2: 'rgba(255,255,255,0.12)',
+              ink:   '#f5f5f7',
+              dim:   '#98989d',
+              mute:  '#6e6e73',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <style>
     :root {
-      --bg: #0c0c0e;
+      --app-bg: #0c0c0e;
+      --s1: #161618;
+      --s2: #1d1d1f;
+      --s3: #2a2a2c;
+      --line: rgba(255,255,255,0.07);
+      --line2: rgba(255,255,255,0.12);
       --ink: #f5f5f7;
       --dim: #98989d;
-      --line: rgba(255,255,255,0.07);
+      --mute: #6e6e73;
     }
-    html, body { background: var(--bg); color: var(--ink); }
-    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+    html, body { font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
+    body { background: var(--app-bg); color: var(--ink); letter-spacing: -0.005em; }
+
+    .hairline   { border-color: var(--line); }
+    .hairline-2 { border-color: var(--line2); }
+
+    .surface-1 { background: var(--s1); }
+    .surface-2 { background: var(--s2); }
+    .surface-3 { background: var(--s3); }
+
+    .vibrancy-strong {
+      background: rgba(12,12,14,0.72);
+      backdrop-filter: saturate(180%) blur(28px);
+      -webkit-backdrop-filter: saturate(180%) blur(28px);
+    }
+
+    .nav-item {
+      display: block;
+      margin: 1px 8px;
+      padding: 6px 10px;
+      border-radius: 7px;
+      font-size: 13px;
+      color: var(--ink);
+      transition: background-color 120ms ease, color 120ms ease;
+    }
+    .nav-item:hover { background: var(--s2); color: var(--ink); }
+    .nav-item.active { background: var(--s3); color: var(--ink); }
+    .nav-item[disabled] { color: var(--mute); cursor: not-allowed; }
+    .nav-item[disabled]:hover { background: transparent; color: var(--mute); }
+    .nav-section {
+      margin: 0 16px;
+      padding: 6px 0 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--mute);
+    }
+    .nav-action { display: flex; align-items: center; gap: 8px; }
+    .nav-glyph {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; color: var(--dim); font-size: 13px;
+    }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); background-clip: padding-box; border: 2px solid transparent; }
   </style>
 </head>
-<body class="min-h-screen">
+<body class="min-h-screen font-sans antialiased">
   {% if ENVIRONMENT == "staging" %}
     <div class="bg-rose-700 text-white text-center py-1 text-xs tracking-wide">
       STAGING — niet productie
     </div>
   {% endif %}
-  <header class="border-b border-white/10">
-    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center">
-      <a href="/" class="text-lg font-semibold">{{ APP_NAME }}</a>
-      <div class="ml-auto text-sm">
-        {% if user.is_authenticated %}
-          <span class="text-zinc-400">Signed in as</span>
-          <span class="ml-1">{{ user.username }}</span>
-          <form method="post" action="{% url 'account_logout' %}" class="inline ml-3">
-            {% csrf_token %}
-            <button type="submit" class="text-zinc-400 hover:text-white underline">
-              Sign out
-            </button>
-          </form>
-        {% else %}
-          <a href="{% provider_login_url 'discogs' %}"
-             class="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 transition">
-            Sign in with Discogs
-          </a>
-        {% endif %}
+
+  <div class="flex min-h-screen">
+    {% if user.is_authenticated %}
+    <!-- Sidebar -->
+    <nav class="w-60 border-r hairline flex flex-col shrink-0 surface-1">
+      <div class="px-4 pt-5 pb-4">
+        <a href="{% url 'dashboard' %}" class="flex items-baseline gap-1.5">
+          <span class="text-[20px] font-semibold tracking-tight text-app-ink">{{ APP_NAME }}</span>
+        </a>
+        <div class="text-[11px] text-app-mute mt-0.5 tracking-wide">v0.3 (django-port)</div>
       </div>
+
+      <div class="flex-1 py-1 overflow-y-auto">
+        <div class="nav-section">Collection</div>
+        <a href="{% url 'records:collection' %}" class="nav-item{% if active == 'collection' %} active{% endif %}">Records</a>
+        <a href="{% url 'records:tracks' %}" class="nav-item{% if active == 'tracks' %} active{% endif %}">Tracks</a>
+
+        <div class="nav-section mt-4">Actions</div>
+        {# Stubs during fase 5: visible to communicate the final shape, disabled
+           until the enqueue routes + HTMX modals are wired. #}
+        <button type="button" class="nav-item nav-action w-full text-left" disabled
+                title="Wiring up in fase 5">
+          <span class="nav-glyph">⟳</span> Discogs sync
+        </button>
+        <button type="button" class="nav-item nav-action w-full text-left" disabled
+                title="Wiring up in fase 5">
+          <span class="nav-glyph">⬇</span> Import Discogs csv
+        </button>
+        <button type="button" class="nav-item nav-action w-full text-left" disabled
+                title="Wiring up in fase 5">
+          <span class="nav-glyph">♪</span> BPM lookup
+        </button>
+        <a href="{% url 'print_runs:index' %}" class="nav-item nav-action{% if active == 'print_runs' %} active{% endif %}">
+          <span class="nav-glyph">▦</span> Print runs
+        </a>
+      </div>
+
+      <div class="px-4 py-3 border-t hairline text-[11px] text-app-mute">
+        <div class="truncate text-app-ink" title="Signed in as {{ user.username }}">{{ user.username }}</div>
+        <form method="post" action="{% url 'account_logout' %}" class="mt-2">
+          {% csrf_token %}
+          <button type="submit" class="text-app-mute hover:text-app-ink transition-colors">Sign out</button>
+        </form>
+      </div>
+    </nav>
+    {% endif %}
+
+    <!-- Main -->
+    <div class="flex-1 flex flex-col min-w-0">
+      {% if user.is_authenticated %}
+      <header class="h-14 shrink-0 flex items-center justify-between px-7 border-b hairline vibrancy-strong sticky top-0 z-20">
+        <div class="text-[19px] text-app-ink font-semibold tracking-tight">{% block breadcrumb %}{% endblock %}</div>
+      </header>
+      {% endif %}
+      <main class="flex-1 {% if user.is_authenticated %}px-7 py-6{% endif %} overflow-x-hidden">
+        {% block content %}{% endblock %}
+      </main>
     </div>
-  </header>
-  <main class="max-w-5xl mx-auto px-6 py-10">
-    {% block content %}{% endblock %}
-  </main>
+  </div>
+
+  {% if user.is_authenticated %}
+  {# Slots for the (future) action modals + run-status toast. Empty in fase 5.x. #}
+  <div id="modal-root"></div>
+  <div id="run-banner"></div>
+  {% endif %}
 </body>
 </html>

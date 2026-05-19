@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+  <p class="text-app-dim mb-6">
+    Signed in as <span class="text-app-ink">{{ user.username }}</span>.
+  </p>
+
+  <div class="space-y-3 text-sm text-app-dim">
+    <p>
+      The Django port is live. The records / tracks / print-runs pages and the
+      action modals (Discogs sync, BPM lookup, CSV import) wire up over the
+      next few commits of fase 5.
+    </p>
+    <p>
+      Use the sidebar to navigate. CLI subcommands still work for any
+      long-running job until the action buttons are enabled.
+    </p>
+  </div>
+</div>
+{% endblock %}
