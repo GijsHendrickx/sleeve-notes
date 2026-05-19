@@ -22,6 +22,12 @@ ENVIRONMENT = env("ENVIRONMENT", default="local")  # local | staging | productio
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+
+# HTTPS-only cookies in any non-local environment.
+SESSION_COOKIE_SECURE = ENVIRONMENT != "local"
+CSRF_COOKIE_SECURE = ENVIRONMENT != "local"
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if ENVIRONMENT != "local" else None
 
 # ─── Applications ────────────────────────────────────────────────────────────
 INSTALLED_APPS = [

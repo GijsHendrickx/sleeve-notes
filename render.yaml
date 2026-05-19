@@ -23,6 +23,8 @@ services:
         value: "false"
       - key: DJANGO_ALLOWED_HOSTS
         value: .onrender.com
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: https://sleeve-notes-web-staging.onrender.com
       - key: DEFAULT_FROM_EMAIL
         value: noreply@example.com
       - key: DATABASE_URL
