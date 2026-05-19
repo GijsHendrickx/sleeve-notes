@@ -37,7 +37,7 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 - **Branch:** `django-port` (op origin, auto-deploy naar Render staging)
 - **Laatste commit:** zie `git log --oneline` voor actuele lijst
 - **Staging URL:** `https://sleeve-notes-web-staging.onrender.com` — Basic Auth gate actief; achter de gate werkt Discogs OAuth login + logout
-- **Lokaal:** `docker compose up -d db` voor Postgres; `cd webapp && ../.venv/bin/python manage.py runserver` voor Django; legacy FastAPI app draait nog via `sleeve-notes web` (zie waarschuwing onder *Transitional state*)
+- **Lokaal:** `docker compose up -d db` voor Postgres; `sleeve-notes web` (= subprocess naar `manage.py runserver` + in-process Q2 cluster + browser-open). Eén commando volstaat voor full-stack dev.
 
 ### Fase-status
 
@@ -48,8 +48,8 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 2. Auth | ✓ klaar | django-allauth + custom Discogs OAuth1 provider; sign-in werkt end-to-end op staging |
 | 3. Models | ✓ klaar | Records / PrintRun / AuditEvent / BpmCache + admin; UUID PKs op user-facing, TimestampedModel base |
 | 4. Engine integratie | ✓ klaar | 4A + 4B + 4C klaar (ORM-port van alle modules; Django-Q2 + per-user lock + worker service; render service + management command). |
-| 5. Web UI port | ✗ niet begonnen | Volledige FastAPI → Django UI; komt na 4 |
-| 6. Productie cut-over | ✗ niet begonnen | Pas wanneer 5 klaar is + staging een week stabiel |
+| 5. Web UI port | ✓ klaar | Routing, base + sidebar, /collection met BPM-kolom + detail-drawer + sticker preview, /tracks met overrides + per-row sync, /print-runs editor + PDF download, action modals + run-toast met live progress + done/failed states, CSV-import upload, cut-over `sleeve-notes web` → Django + delete legacy FastAPI. |
+| 6. Productie cut-over | ⏸ on hold | Render staging staat gepauzeerd (zie [RUNBOOK § Pause staging](RUNBOOK.md#pause-staging-to-save-costs)) tot er bewijs is dat dit een product is. Klikpath om te resumen staat in RUNBOOK. |
 | 7. Operationeel | n.v.t. | Doorlopend |
 
 ### Sub-blok status binnen fase 4
@@ -95,14 +95,16 @@ webapp/<app>/management/commands/<command>.py         ← entry point
 
 Concrete voorbeelden: `webapp/records/services/discogs_sync.py` (sync) en `webapp/records/services/bpm_cascade.py` (BPM cascade). Eerst port-pattern volgen, daarna naar Django-Q2 tillen in fase 4B.
 
-### Transitional state — gotchas voor de volgende sessie
+### State na fase 5 (cut-over compleet)
 
-- **`sleeve-notes web` start nog de oude FastAPI app.** Dat is fine zolang we de Django web UI niet hebben gebouwd (fase 5). Maar: gebruikers die de oude FastAPI gebruiken zien een SQLite-wereld; de CLI subcommands (`fetch`, `bpm`, `query`, `overrides`) schrijven nu naar Postgres. **De twee datasets zijn ontkoppeld.** Dit is OK voor nu (alleen de developer test) maar moet worden opgelost vóór fase 6.
-- **Beatport in de BPM cascade leest nog uit het SQLite kv-tabel** via `sleeve_notes/db.py`. Wanneer het SQLite-bestand niet bestaat (bv. op Render) faalt `_load_beatport_tokens` netjes; cascade slaat Beatport over. Wanneer we Beatport echt willen gebruiken na de port: app-wide kv mechanism nodig (kv-model in `core/` of `audit/` app, of env-var fallback).
-- **`sleeve_notes/db.py` bestaat nog.** Andere engine modules (`generate_sticker_pdf.py`, `beatport_auth.py`, dood gemaakte legacy code in `fetch_bpm.py`) importeren het. Verwijderen kan zodra die laatste callers ook geport zijn (fase 4C en daarna).
+- **`sleeve_notes_web/` is verwijderd.** Eén web app: Django (`webapp/`).
+- **`sleeve_notes/db.py` en `sleeve_notes/beatport_auth.py` zijn verwijderd.** Het `sleeve_notes/` package is nu puur — geen DB code, geen Django imports (behalve `django_setup.py` + de delegators).
+- **Beatport is silent-disabled.** `_load_beatport_tokens()` returnt altijd None; de cascade slaat Beatport over en draait verder met 4 sources (songbpm, Deezer, ReccoBeats/Spotify, AcousticBrainz). Re-implementatie vergt een Django KV model + nieuwe `beatport_auth` flow (deferred).
+- **pyproject.toml is opgeschoond.** FastAPI / uvicorn / jinja2 / python-multipart / itsdangerous zijn weg.
+- **`sleeve-notes web` launcht Django runserver via subprocess.** In dev runt de Q2 cluster in-process op een daemon thread (gated op `DEV_INPROCESS_QCLUSTER=true`), dus één terminal volstaat.
 - **`sleeve_notes/ingest.normalize_release` is dode code** sinds 4A.3. De pure helpers eromheen (`join_artists`, `transform_tracks`, `extract_rpms`) worden wél gebruikt door `webapp/records/services/discogs_sync.py`.
-- **CSRF_TRUSTED_ORIGINS moet per environment gezet** zijn voor HTTPS POSTs (sign-out, forms). Staging heeft het al; productie moet later toegevoegd worden.
-- **Custom domein nog niet ingezet.** Staging draait op `*.onrender.com`. Bij custom domein: Cloudflare Access voor staging i.p.v. HTTP Basic Auth + DNS records voor Resend (DKIM/SPF/DMARC).
+- **CSRF_TRUSTED_ORIGINS moet per environment gezet** zijn voor HTTPS POSTs. Bij staging-resume: bestaande waarde herstellen.
+- **Custom domein nog niet ingezet.** Bij staging-resume + custom domein: Cloudflare Access voor staging i.p.v. HTTP Basic Auth + DNS records voor Resend.
 
 ### Volgende stappen — concreet starten met fase 5
 
