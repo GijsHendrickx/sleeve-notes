@@ -129,39 +129,44 @@ def _run_discogs_sync(
     user = User.objects.get(pk=user_id)
     progress = _make_progress_logger(user)
     try:
-        ck, cs, tok, tok_sec = _resolve_oauth(user)
-        session = make_oauth_session(ck, cs, tok, tok_sec)
-        if source == "csv":
-            assert csv_path, "csv source requires csv_path"
-            result = sync_via_csv(
-                user=user,
-                session=session,
-                csv_path=Path(csv_path),
-                folder_filter=folder,
-                limit=limit,
-                log=progress,
-            )
-        elif source == "api":
-            uname = username or user.username
-            result = sync_via_api(
-                user=user,
-                session=session,
-                username=uname,
-                folder=folder,
-                limit=limit,
-                log=progress,
-            )
-        else:
-            raise ValueError(f"unknown sync source: {source!r}")
-    except Exception as e:
-        UserJobLock.mark_failed(user, f"Sync failed: {e}")
-        raise
-    UserJobLock.mark_done(
-        user,
-        f"Synced {len(result.get('release_ids', []))} releases "
-        f"({result.get('fetched_this_run', 0)} new this run).",
-    )
-    return result
+        try:
+            ck, cs, tok, tok_sec = _resolve_oauth(user)
+            session = make_oauth_session(ck, cs, tok, tok_sec)
+            if source == "csv":
+                assert csv_path, "csv source requires csv_path"
+                result = sync_via_csv(
+                    user=user,
+                    session=session,
+                    csv_path=Path(csv_path),
+                    folder_filter=folder,
+                    limit=limit,
+                    log=progress,
+                )
+            elif source == "api":
+                uname = username or user.username
+                result = sync_via_api(
+                    user=user,
+                    session=session,
+                    username=uname,
+                    folder=folder,
+                    limit=limit,
+                    log=progress,
+                )
+            else:
+                raise ValueError(f"unknown sync source: {source!r}")
+        except Exception as e:
+            UserJobLock.mark_failed(user, f"Sync failed: {e}")
+            raise
+        UserJobLock.mark_done(
+            user,
+            f"Synced {len(result.get('release_ids', []))} releases "
+            f"({result.get('fetched_this_run', 0)} new this run).",
+        )
+        return result
+    finally:
+        # Clean up any temp CSV upload so .tmp/uploads/ doesn't grow forever.
+        if source == "csv" and csv_path:
+            Path(csv_path).unlink(missing_ok=True)
 
 
 def _run_bpm_cascade(user_id: int, *, workers: int = 8, force: bool = False) -> dict:

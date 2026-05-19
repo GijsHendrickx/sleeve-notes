@@ -257,8 +257,9 @@
                 hx-target="#modal-root" hx-swap="innerHTML">
           <span class="nav-glyph">⟳</span> Discogs sync
         </button>
-        <button type="button" class="nav-item nav-action w-full text-left" disabled
-                title="File upload flow lands in a follow-up commit">
+        <button type="button" class="nav-item nav-action w-full text-left"
+                hx-get="{% url 'records:action_discogs_import' %}"
+                hx-target="#modal-root" hx-swap="innerHTML">
           <span class="nav-glyph">⬇</span> Import Discogs csv
         </button>
         <button type="button" class="nav-item nav-action w-full text-left"
