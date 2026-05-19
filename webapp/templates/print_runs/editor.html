@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}New print run — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}<a href="{% url 'print_runs:index' %}" class="text-app-dim hover:text-app-ink">Print runs</a> · New{% endblock %}
+
+{% block content %}
+<form method="post" class="flex flex-col h-[calc(100vh-7.5rem)]">
+  {% csrf_token %}
+
+  <div class="flex flex-wrap items-center gap-2 mb-3 text-sm">
+    <input name="name" value="{{ name }}" placeholder="Run name (optional)"
+           class="field h-8 px-3 w-72 text-[13px]" />
+    <button type="button" data-action="select-new" class="btn btn-quiet h-8">Select new only</button>
+    <button type="button" data-action="select-all" class="btn btn-quiet h-8">Select all</button>
+    <button type="button" data-action="clear" class="btn btn-quiet h-8">Clear</button>
+    <span class="text-app-mute text-[12px] ml-1">
+      <span id="run-editor-count">0</span> selected
+    </span>
+    {% if error %}
+      <span class="text-amber-400 text-[12px] ml-2">{{ error }}</span>
+    {% endif %}
+    <button type="submit" class="btn btn-primary h-8 ml-auto">Save</button>
+  </div>
+
+  <input id="run-editor-search" type="search" placeholder="Search artist or title…"
+         class="field h-8 px-3 w-72 text-[13px] mb-3" />
+
+  <div class="flex-1 overflow-auto card">
+    <table class="dense w-full text-[13px]">
+      <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+        <tr class="border-b hairline">
+          <th class="w-8"></th>
+          <th class="text-left w-14"></th>
+          <th class="text-left">Artist</th>
+          <th class="text-left">Title</th>
+          <th class="text-right w-16">Year</th>
+          <th class="text-left w-20">Type</th>
+          <th class="text-left w-20">Format</th>
+          <th class="text-left w-16">Status</th>
+        </tr>
+      </thead>
+      <tbody id="run-editor-rows">
+        {% for r in rows %}
+        <tr class="border-t hairline align-middle"
+            data-search="{{ r.artist|default:'' }} {{ r.title|default:'' }}">
+          <td class="text-center">
+            <input type="checkbox" name="release_id" value="{{ r.discogs_release_id }}"
+                   data-new="{% if r.is_new %}1{% else %}0{% endif %}"
+                   {% if r.checked %}checked{% endif %} />
+          </td>
+          <td>
+            {% if r.thumb_url %}
+              <img src="{{ r.thumb_url }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+                   class="w-10 h-10 object-cover rounded-md border hairline" />
+            {% else %}
+              <div class="w-10 h-10 rounded-md border hairline surface-2"></div>
+            {% endif %}
+          </td>
+          <td class="text-app-ink">{{ r.artist|default:"—" }}</td>
+          <td class="text-app-dim">{{ r.title|default:"—" }}</td>
+          <td class="text-right text-app-mute font-mono">{{ r.year|default:"" }}</td>
+          <td class="text-app-dim">{{ r.release_type|default:"" }}</td>
+          <td class="text-app-mute font-mono">{{ r.format|default:"" }}</td>
+          <td>
+            {% if r.is_new %}
+              <span class="text-emerald-400 text-[11px]">new</span>
+            {% else %}
+              <span class="text-app-mute text-[11px]">printed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center py-12 text-app-mute">
+          No releases. Run a Discogs sync first.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+(() => {
+  const tbody = document.getElementById('run-editor-rows');
+  if (!tbody) return;
+  const counter = document.getElementById('run-editor-count');
+  const search = document.getElementById('run-editor-search');
+  const boxes = () => tbody.querySelectorAll('input[type=checkbox][name=release_id]');
+
+  const recount = () => {
+    let n = 0;
+    boxes().forEach(b => { if (b.checked) n++; });
+    counter.textContent = n;
+  };
+
+  tbody.addEventListener('change', e => {
+    if (e.target.matches('input[type=checkbox]')) recount();
+  });
+
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = btn.dataset.action;
+      boxes().forEach(b => {
+        if (a === 'select-all') b.checked = true;
+        else if (a === 'select-new') b.checked = b.dataset.new === '1';
+        else if (a === 'clear') b.checked = false;
+      });
+      recount();
+    });
+  });
+
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    tbody.querySelectorAll('tr[data-search]').forEach(tr => {
+      const hay = tr.dataset.search.toLowerCase();
+      tr.style.display = (!q || hay.includes(q)) ? '' : 'none';
+    });
+  });
+
+  recount();
+})();
+</script>
+{% endblock %}

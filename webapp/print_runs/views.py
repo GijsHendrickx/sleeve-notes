@@ -1,14 +1,21 @@
-"""Print runs app views — index, detail, PDF download."""
+"""Print runs app views — index, detail, editor, PDF download."""
 from __future__ import annotations
 
 import re
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+
+from records.models import Release
 
 from print_runs.models import PrintRun
-from print_runs.services.render import releases_by_ids, render_pdf
+from print_runs.services.render import (
+    already_printed_ids,
+    create_print_run,
+    releases_by_ids,
+    render_pdf,
+)
 
 
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -31,6 +38,62 @@ def detail(request, run_id):
         "active": "print_runs",
         "run": run,
     })
+
+
+@login_required
+def editor(request):
+    """Pick releases and create a new PrintRun.
+
+    GET: render a checkbox table over every release in the user's
+    collection. Already-printed releases are tagged so a "Select new
+    only" JS button can match the legacy --new-only flag.
+
+    POST: create a PrintRun with the selected discogs_release_ids and
+    redirect to its detail page so the user can download immediately.
+    """
+    if request.method == "POST":
+        ids = [
+            int(x) for x in request.POST.getlist("release_id")
+            if str(x).isdigit()
+        ]
+        if not ids:
+            return render(request, "print_runs/editor.html", {
+                "active": "print_runs",
+                "error": "Select at least one release.",
+                "name": (request.POST.get("name") or "").strip(),
+                "rows": _editor_rows(request.user, preselected=set()),
+            })
+        name = (request.POST.get("name") or "").strip()
+        run = create_print_run(request.user, ids, settings={}, name=name)
+        return redirect("print_runs:detail", run_id=run.id)
+
+    return render(request, "print_runs/editor.html", {
+        "active": "print_runs",
+        "name": "",
+        "rows": _editor_rows(request.user),
+    })
+
+
+def _editor_rows(request_user, preselected: set[int] | None = None) -> list[dict]:
+    """Build the editor's release rows. ``preselected`` lets the POST
+    handler re-render with the user's last selection on validation error."""
+    printed = already_printed_ids(request_user)
+    qs = (
+        Release.objects.filter(user=request_user, tracks__isnull=False)
+        .distinct()
+        .order_by("artist", "title")
+        .values("discogs_release_id", "artist", "title", "year",
+                "release_type", "format", "thumb_url")
+    )
+    rows = []
+    for r in qs:
+        rid = r["discogs_release_id"]
+        rows.append({
+            **r,
+            "is_new": rid not in printed,
+            "checked": rid in preselected if preselected is not None else rid not in printed,
+        })
+    return rows
 
 
 @login_required

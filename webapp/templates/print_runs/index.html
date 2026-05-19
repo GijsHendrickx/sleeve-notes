@@ -5,28 +5,35 @@
 
 {% block content %}
 <div class="max-w-3xl">
-  <p class="text-app-dim mb-4">
-    {{ run_count }} saved run{{ run_count|pluralize }}.
-  </p>
+  <div class="flex items-center mb-4">
+    <p class="text-app-dim">
+      {{ run_count }} saved run{{ run_count|pluralize }}.
+    </p>
+    <a href="{% url 'print_runs:editor' %}" class="btn btn-primary ml-auto">
+      Create print run
+    </a>
+  </div>
 
   {% if runs %}
   <ul class="space-y-2">
     {% for run in runs %}
     <li class="card p-3 flex items-center gap-3">
-      <a href="{% url 'print_runs:detail' run.id %}" class="flex-1">
-        <div class="text-app-ink">{{ run.name|default:"(unnamed run)" }}</div>
+      <a href="{% url 'print_runs:detail' run.id %}" class="flex-1 min-w-0">
+        <div class="text-app-ink truncate">{{ run.name|default:"(unnamed run)" }}</div>
         <div class="text-xs text-app-mute">
           {{ run.created_at|date:"Y-m-d H:i" }} ·
           {{ run.release_ids|length }} release{{ run.release_ids|length|pluralize }}
         </div>
       </a>
+      <a href="{% url 'print_runs:pdf_download' run.id %}"
+         class="btn btn-quiet shrink-0" title="Download PDF">PDF</a>
     </li>
     {% endfor %}
   </ul>
   {% else %}
   <p class="text-sm text-app-dim">
-    No print runs yet. Create one via <code>sleeve-notes render --mark-printed</code>
-    or the (coming) Print runs editor.
+    No print runs yet. Click <strong>Create print run</strong> above, or use
+    <code>sleeve-notes render --mark-printed</code> from the CLI.
   </p>
   {% endif %}
 </div>

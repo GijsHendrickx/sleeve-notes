@@ -7,6 +7,7 @@ app_name = "print_runs"
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("new", views.editor, name="editor"),
     path("<uuid:run_id>", views.detail, name="detail"),
     path("<uuid:run_id>/pdf", views.pdf_download, name="pdf_download"),
 ]
