@@ -32,6 +32,7 @@ dependencies = [
     "psycopg[binary]>=3.1,<4",
     "gunicorn>=22,<23",
     "sentry-sdk[django]>=2,<3",
+    "django-allauth[socialaccount]>=65,<66",
 ]
 
 [project.scripts]

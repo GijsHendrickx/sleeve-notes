@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-2xl">
+  {% if user.is_authenticated %}
+    <h1 class="text-3xl font-semibold mb-3">Welcome back, {{ user.username }}.</h1>
+    <p class="text-zinc-400">
+      Django port is alive. Collection, BPM lookup, and print runs land in fase 5.
+    </p>
+  {% else %}
+    <h1 class="text-3xl font-semibold mb-3">{{ APP_NAME }}</h1>
+    <p class="text-zinc-400 mb-6">
+      Generate printable BPM stickers for your Discogs collection.
+    </p>
+    <p class="text-sm text-zinc-500">
+      Sign in with your Discogs account to get started.
+    </p>
+  {% endif %}
+</div>
+{% endblock %}

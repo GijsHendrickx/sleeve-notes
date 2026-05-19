@@ -30,7 +30,12 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "django.contrib.sites",
     "django.contrib.staticfiles",
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "discogs_provider",
     "users",
 ]
 
@@ -42,6 +47,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -79,6 +85,30 @@ CONN_MAX_AGE = env.int("DJANGO_CONN_MAX_AGE", default=60)
 # Custom user model from day 1: retrofitting AUTH_USER_MODEL onto an existing
 # database is famously painful in Django.
 AUTH_USER_MODEL = "users.User"
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
+SITE_ID = 1
+
+# ─── allauth / Discogs OAuth1 ────────────────────────────────────────────────
+LOGIN_REDIRECT_URL = "/"
+ACCOUNT_LOGOUT_REDIRECT_URL = "/"
+ACCOUNT_EMAIL_VERIFICATION = "none"
+ACCOUNT_SIGNUP_FIELDS = ["username*"]  # Discogs doesn't return email; only username required
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_LOGIN_ON_GET = True
+SOCIALACCOUNT_ADAPTER = "discogs_provider.adapter.DiscogsSocialAccountAdapter"
+SOCIALACCOUNT_PROVIDERS = {
+    "discogs": {
+        "APP": {
+            "client_id": env("DISCOGS_CONSUMER_KEY", default=""),
+            "secret": env("DISCOGS_CONSUMER_SECRET", default=""),
+        },
+    },
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
