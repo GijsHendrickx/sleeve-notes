@@ -52,6 +52,8 @@ sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluste
 
 **Background jobs use `enqueue_*` helpers + `UserJobLock`.** Views POST to `/actions/<thing>`, the action view calls `enqueue_discogs_sync(user, ...)` or `enqueue_bpm_cascade(user, ...)` from `webapp/records/jobs.py`, which atomically acquires a `UserJobLock` row (OneToOne with user) and hands the task to `async_task`. **One running job per user**; a second click while one's in-flight returns HTTP 409. The worker's `finally` calls `UserJobLock.mark_done(user, summary)` or `.mark_failed(user, err)` so the toast can show the result for ~5s before lazy-deletion.
 
+**Never delete a `UserJobLock` row while its worker is still running.** The Q2 worker holds the cascade state in memory (subprocess); deleting the lock from the outside leaves that worker orphaned but still consuming sources, AND lets `acquire()` succeed for a new click → two cascades fighting over the same `BpmCache` rows and `progress_text` column. The smoke-test that taught us this is documented in commit history. If you need to stop a running worker, restart `sleeve-notes web` (kills the subprocess); the lock then releases on next acquire.
+
 **The toast is the universal job-status surface.** Fixed bottom-right, lives in `#run-banner` (base.html), polls `/run/banner` every 2s. Three states: running (blue determinate bar + live progress text), done (green bar + summary), failed (red bar + error). New batch actions get this for free as long as they go through `enqueue_*` and write progress via `records.jobs._make_progress_logger(user)`.
 
 **Beatport is currently disabled.** The original SQLite kv-store kept Beatport's OAuth tokens; the Django port hasn't re-implemented that yet. The cascade silently skips Beatport — see `sleeve_notes/fetch_bpm.py:_load_beatport_tokens`. The other four sources (songbpm, Deezer, ReccoBeats/Spotify, AcousticBrainz) work normally.
@@ -84,6 +86,8 @@ sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluste
 - `{% extends "..." %}` MUST be the first tag (load tags after extends if needed).
 - `{# ... #}` is single-line only — use `{% comment %}...{% endcomment %}` for multi-line, otherwise tags inside the "comment" get parsed and you get cryptic "block X appears more than once" errors.
 - Use `{% if x is not None %}` (not `{% if x %}`) when 0 is a valid value — Django evaluates `0` as falsy.
+
+**Custom HTMX events use kebab-case.** Server-sent `HX-Trigger` values and matching `hx-on:*` / `hx-trigger=`... `from:body` listeners must use `kebab-case` event names (e.g. `run-status`, `close-modal`). Browsers lowercase HTML attribute names, so `hx-on:closeModal` becomes `hx-on:closemodal` in the DOM, which silently never matches a JS event named `closeModal`. Kebab-case survives the lowercase round-trip.
 
 ## Engine conventions
 

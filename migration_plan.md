@@ -48,7 +48,7 @@ Stand van zaken voor wie net dit document opent in een nieuw context window.
 | 2. Auth | ✓ klaar | django-allauth + custom Discogs OAuth1 provider; sign-in werkt end-to-end op staging |
 | 3. Models | ✓ klaar | Records / PrintRun / AuditEvent / BpmCache + admin; UUID PKs op user-facing, TimestampedModel base |
 | 4. Engine integratie | ✓ klaar | 4A + 4B + 4C klaar (ORM-port van alle modules; Django-Q2 + per-user lock + worker service; render service + management command). |
-| 5. Web UI port | ✓ klaar | Routing, base + sidebar, /collection met BPM-kolom + detail-drawer + sticker preview, /tracks met overrides + per-row sync, /print-runs editor + PDF download, action modals + run-toast met live progress + done/failed states, CSV-import upload, cut-over `sleeve-notes web` → Django + delete legacy FastAPI. |
+| 5. Web UI port | ✓ klaar | Routing, base + sidebar, /collection met BPM-kolom + detail-drawer + sticker preview, /tracks met overrides + per-row sync, /print-runs editor + PDF download + settings panel + delete, action modals + run-toast met live progress + done/failed states + auto-refresh on done, CSV-import upload, cut-over `sleeve-notes web` → Django + delete legacy FastAPI. |
 | 6. Productie cut-over | ⏸ on hold | Render staging staat gepauzeerd (zie [RUNBOOK § Pause staging](RUNBOOK.md#pause-staging-to-save-costs)) tot er bewijs is dat dit een product is. Klikpath om te resumen staat in RUNBOOK. |
 | 7. Operationeel | n.v.t. | Doorlopend |
 
