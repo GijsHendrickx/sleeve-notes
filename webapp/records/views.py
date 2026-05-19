@@ -6,10 +6,16 @@ from django.db.models import Count, Q
 from django.shortcuts import render
 
 from records.models import Release, Track
-from records.services.bpm_cascade import bpm_coverage_for_releases
+from records.services.bpm_cascade import (
+    bpm_coverage_for_releases,
+    derive_track_result,
+    load_all_cache_entries,
+    load_overrides,
+)
 
 
 LIST_LIMIT = 500
+TRACKS_LIMIT = 2000
 
 
 @login_required
@@ -88,8 +94,61 @@ def collection(request):
 
 @login_required
 def tracks(request):
-    count = Track.objects.filter(release__user=request.user).count()
+    q = (request.GET.get("q") or "").strip()
+    filter_key = (request.GET.get("filter") or "all").strip()
+
+    qs = (
+        Track.objects.filter(release__user=request.user)
+        .select_related("release")
+    )
+    total = qs.count()
+    if q:
+        qs = qs.filter(Q(title__icontains=q) | Q(artist__icontains=q))
+
+    tracks_db = list(
+        qs.order_by("release__artist", "release__title", "position")[:TRACKS_LIMIT]
+    )
+
+    by_rp, by_tk, _ = load_overrides(request.user)
+    cache_entries = load_all_cache_entries(request.user)
+
+    rows = []
+    for t in tracks_db:
+        rel = t.release
+        release_artist = rel.artist or "V/A"
+        result = derive_track_result(
+            request.user, rel.discogs_release_id,
+            t.position or "",
+            t.artist or release_artist,
+            t.title or "",
+            by_rp, by_tk,
+            cache_entries=cache_entries,
+        )
+        bpm = result.get("bpm")
+        if filter_key == "needs_attention" and bpm:
+            continue
+        rows.append({
+            "release_id": rel.discogs_release_id,
+            "release_artist": release_artist,
+            "release_title": rel.title,
+            "position": t.position,
+            "artist": t.artist or release_artist,
+            "title": t.title,
+            "bpm": bpm,
+            "bpm_confidence": result.get("bpm_confidence"),
+            "bpm_sources": result.get("bpm_sources"),
+            "key_camelot": result.get("key_camelot"),
+        })
+
     return render(request, "records/tracks.html", {
         "active": "tracks",
-        "track_count": count,
+        "rows": rows,
+        "shown_count": len(rows),
+        "total": total,
+        "q": q,
+        "filter": filter_key,
+        "filter_presets": [
+            ("all", "All"),
+            ("needs_attention", "Without BPM"),
+        ],
     })
