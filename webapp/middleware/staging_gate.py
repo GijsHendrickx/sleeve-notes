@@ -7,6 +7,7 @@ import base64
 import secrets
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponse
 
 
@@ -20,6 +21,12 @@ class StagingGateMiddleware:
         if self.enabled:
             self.username = settings.STAGING_BASIC_AUTH_USER
             self.password = settings.STAGING_BASIC_AUTH_PASSWORD
+            if not (self.username and self.password):
+                raise ImproperlyConfigured(
+                    "ENVIRONMENT=staging but STAGING_BASIC_AUTH_USER or "
+                    "STAGING_BASIC_AUTH_PASSWORD is empty. Set both in Render's "
+                    "environment tab before deploying."
+                )
 
     def __call__(self, request):
         if not self.enabled or request.path in HEALTHCHECK_PATHS:
