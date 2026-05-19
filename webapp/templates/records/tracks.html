@@ -4,12 +4,22 @@
 {% block breadcrumb %}Tracks{% endblock %}
 
 {% block content %}
-<div class="flex flex-col h-[calc(100vh-7.5rem)]">
-  <form method="get" action="{% url 'records:tracks' %}"
-        class="flex flex-wrap gap-2 items-center mb-4 text-sm">
-    <input name="q" value="{{ q }}" placeholder="Search track or artist…"
+{# Empty GET form: the search input + filter chip <a>s bind to it via
+   form="tracks-search" so they share a row with the POST form's buttons
+   without nesting. #}
+<form id="tracks-search" method="get" action="{% url 'records:tracks' %}"></form>
+
+<form method="post" action="{% url 'records:tracks_save' %}{% if q or filter and filter != 'all' %}?{% if q %}q={{ q|urlencode }}{% endif %}{% if filter and filter != 'all' %}{% if q %}&{% endif %}filter={{ filter }}{% endif %}{% endif %}"
+      class="flex flex-col h-[calc(100vh-7.5rem)]">
+  {% csrf_token %}
+
+  <div class="flex flex-wrap gap-2 items-center mb-4 text-sm">
+    <input form="tracks-search" name="q" value="{{ q }}" placeholder="Search track or artist…"
            class="field h-8 px-3 w-64 text-[13px]" />
-    <button type="submit" class="btn btn-ghost h-8">Search</button>
+    {% if filter and filter != 'all' %}
+      <input form="tracks-search" type="hidden" name="filter" value="{{ filter }}" />
+    {% endif %}
+    <button form="tracks-search" type="submit" class="btn btn-ghost h-8">Search</button>
 
     <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium mx-2">Filter</div>
     {% for key, label in filter_presets %}
@@ -19,10 +29,17 @@
                 {% else %}border-app-line text-app-dim hover:bg-app-s2 hover:text-app-ink{% endif %}">{{ label }}</a>
     {% endfor %}
 
-    <span class="ml-auto text-[12px] text-app-mute">
-      {{ shown_count }} of {{ total }} track{{ total|pluralize }}
-    </span>
-  </form>
+    {% if saved %}
+      <span class="ml-auto text-[12px] text-emerald-400">
+        Saved {{ saved }} change{{ saved|pluralize }}.
+      </span>
+    {% else %}
+      <span class="ml-auto text-[12px] text-app-mute">
+        {{ shown_count }} of {{ total }} track{{ total|pluralize }}
+      </span>
+    {% endif %}
+    <button type="submit" class="btn btn-primary h-8">Save</button>
+  </div>
 
   <div class="flex-1 overflow-auto card">
     <table class="dense w-full text-[13px]">
@@ -33,6 +50,9 @@
           <th class="text-left">Track</th>
           <th class="text-right w-16">BPM</th>
           <th class="text-left w-14">Key</th>
+          <th class="text-right w-24 border-l hairline-2 pl-3">Override BPM</th>
+          <th class="text-left w-24">Override key</th>
+          <th class="text-left w-44">Note</th>
         </tr>
       </thead>
       <tbody>
@@ -64,10 +84,24 @@
           <td class="font-mono {% if r.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">
             {{ r.key_camelot|default:"·" }}
           </td>
+          <td class="text-right border-l hairline-2 pl-3">
+            <input name="bpm_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.bpm|default_if_none:'' }}"
+                   inputmode="numeric" maxlength="3"
+                   class="field w-16 px-2 py-1 font-mono text-right text-app-ink text-[13px]" />
+          </td>
+          <td>
+            <input name="key_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.key_camelot|default:'' }}"
+                   maxlength="4"
+                   class="field w-16 px-2 py-1 font-mono text-app-ink text-[13px]" />
+          </td>
+          <td>
+            <input name="note_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.note|default:'' }}"
+                   class="field w-full px-2 py-1 text-[12px] text-app-dim" />
+          </td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="5" class="text-center py-12 text-app-mute">
+          <td colspan="8" class="text-center py-12 text-app-mute">
             {% if total == 0 %}
               No tracks yet. Sync your Discogs collection first.
             {% else %}
@@ -79,5 +113,5 @@
       </tbody>
     </table>
   </div>
-</div>
+</form>
 {% endblock %}
