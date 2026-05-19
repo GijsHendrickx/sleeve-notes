@@ -5,8 +5,6 @@ from allauth.socialaccount.providers.oauth.views import (
     OAuthLoginView,
 )
 
-from .provider import DiscogsProvider
-
 
 REQUEST_TOKEN_URL = "https://api.discogs.com/oauth/request_token"
 ACCESS_TOKEN_URL = "https://api.discogs.com/oauth/access_token"
@@ -21,7 +19,7 @@ class DiscogsAPI(OAuth):
 
 
 class DiscogsOAuthAdapter(OAuthAdapter):
-    provider_id = DiscogsProvider.id
+    provider_id = "discogs"
     request_token_url = REQUEST_TOKEN_URL
     access_token_url = ACCESS_TOKEN_URL
     authorize_url = AUTHORIZE_URL
