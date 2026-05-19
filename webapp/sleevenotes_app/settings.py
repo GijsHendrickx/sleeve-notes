@@ -37,6 +37,9 @@ INSTALLED_APPS = [
     "allauth.socialaccount",
     "discogs_provider",
     "users",
+    "records",
+    "print_runs",
+    "audit",
 ]
 
 MIDDLEWARE = [
