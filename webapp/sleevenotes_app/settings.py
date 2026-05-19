@@ -165,6 +165,12 @@ Q_CLUSTER = {
     "label": "Sleeve Notes Q",
 }
 
+# Dev convenience: run a Django-Q2 cluster on a daemon thread inside the
+# `runserver` process so the developer only needs one terminal. Never enabled
+# in production — on Render the worker service runs `manage.py qcluster`
+# as its own process and this stays False.
+DEV_INPROCESS_QCLUSTER = env.bool("DEV_INPROCESS_QCLUSTER", default=False)
+
 # ─── Error & performance monitoring (Sentry) ─────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")
 if SENTRY_DSN:
