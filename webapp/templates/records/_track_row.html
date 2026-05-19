@@ -1,6 +1,8 @@
-{# One <tr> for the /tracks table. Used by both the initial render and
-   the /tracks/sync HTMX swap. ``just_synced`` flashes the BPM/Key cells
-   so the user gets visual confirmation even when the value didn't change. #}
+{% comment %}
+One <tr> for the /tracks table. Used by both the initial render and
+the /tracks/sync HTMX swap. ``just_synced`` flashes the BPM/Key cells
+so the user gets visual confirmation even when the value didn't change.
+{% endcomment %}
 <tr class="border-t hairline align-middle hover:bg-app-s2/40">
   <td class="text-app-dim">
     <div class="truncate max-w-[14rem] text-app-ink" title="{{ r.release_artist }} – {{ r.release_title }}">
@@ -51,5 +53,8 @@
   <td>
     <input name="note_{{ r.release_id }}_{{ r.position }}" value="{{ r.override.note|default:'' }}"
            class="field w-full px-2 py-1 text-[12px] text-app-dim" />
+  </td>
+  <td class="text-center w-10 border-l hairline-2 pl-3">
+    {% include "_listen_glyph.html" with release_id=r.release_id position=r.position spotify_track_id=r.spotify_track_id %}
   </td>
 </tr>

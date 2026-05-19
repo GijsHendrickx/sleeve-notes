@@ -4,9 +4,11 @@
 {% block breadcrumb %}Tracks{% endblock %}
 
 {% block content %}
-{# Empty GET form: the search input + filter chip <a>s bind to it via
-   form="tracks-search" so they share a row with the POST form's buttons
-   without nesting. #}
+{% comment %}
+Empty GET form: the search input + filter chip <a>s bind to it via
+form="tracks-search" so they share a row with the POST form's buttons
+without nesting.
+{% endcomment %}
 <form id="tracks-search" method="get" action="{% url 'records:tracks' %}"></form>
 
 <form method="post" action="{% url 'records:tracks_save' %}{% if q or filter and filter != 'all' %}?{% if q %}q={{ q|urlencode }}{% endif %}{% if filter and filter != 'all' %}{% if q %}&{% endif %}filter={{ filter }}{% endif %}{% endif %}"
@@ -54,6 +56,7 @@
           <th class="text-right w-24 border-l hairline-2 pl-3">Override BPM</th>
           <th class="text-left w-24">Override key</th>
           <th class="text-left w-44">Note</th>
+          <th class="w-10 border-l hairline-2 pl-3"></th>
         </tr>
       </thead>
       <tbody>
@@ -61,7 +64,7 @@
           {% include "records/_track_row.html" %}
         {% empty %}
         <tr>
-          <td colspan="9" class="text-center py-12 text-app-mute">
+          <td colspan="10" class="text-center py-12 text-app-mute">
             {% if total == 0 %}
               No tracks yet. Sync your Discogs collection first.
             {% else %}

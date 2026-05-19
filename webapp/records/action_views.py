@@ -6,7 +6,6 @@ responds with HX-Trigger so the run-toast refreshes immediately.
 """
 from __future__ import annotations
 
-import shutil
 import uuid
 
 from django.contrib.auth.decorators import login_required
@@ -103,14 +102,9 @@ def bpm_cascade(request):
                 "collection. Fully-cached tracks are skipped."
             ),
         })
-    workers_raw = (request.POST.get("workers") or "8").strip()
-    try:
-        workers = int(workers_raw)
-    except ValueError:
-        return _trigger_response(f"Invalid workers: {workers_raw!r}", status=400)
     force = (request.POST.get("force") or "").strip() in ("1", "true", "on", "yes")
     try:
-        enqueue_bpm_cascade(request.user, workers=workers, force=force)
+        enqueue_bpm_cascade(request.user, force=force)
     except LockHeld as e:
         return _trigger_response(f"Already running: {e}", status=409)
     return _trigger_response()

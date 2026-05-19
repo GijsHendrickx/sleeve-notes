@@ -252,6 +252,58 @@ def bpm_coverage_for_releases(user, releases) -> dict:
     return out
 
 
+def bpm_coverage_breakdown(user) -> dict:
+    """Per-confidence breakdown of every track in the user's collection.
+
+    Returns counts for: high, octave, shared, single (other confidences with
+    a BPM), disputed, missing, plus total + with_bpm. Powers the dashboard
+    coverage card. O(tracks) in-memory work; one query for overrides, one
+    for the cache, one for releases+tracks.
+    """
+    by_rp, by_tk, _ = load_overrides(user)
+    cache_entries = load_all_cache_entries(user)
+    counts = {
+        "total": 0, "with_bpm": 0, "missing": 0,
+        "high": 0, "octave": 0, "shared": 0,
+        "single": 0, "disputed": 0,
+    }
+    releases = (
+        Release.objects.filter(user=user, tracks__isnull=False)
+        .distinct()
+        .prefetch_related("tracks")
+    )
+    for rel in releases:
+        release_artist = rel.artist or "V/A"
+        rid = rel.discogs_release_id
+        for t in rel.tracks.all():
+            counts["total"] += 1
+            result = derive_track_result(
+                user, rid,
+                t.position or "",
+                t.artist or release_artist,
+                t.title or "",
+                by_rp, by_tk,
+                cache_entries=cache_entries,
+            )
+            bpm = result.get("bpm")
+            if bpm is None:
+                counts["missing"] += 1
+                continue
+            counts["with_bpm"] += 1
+            conf = result.get("bpm_confidence")
+            if conf in ("high", "manual"):
+                counts["high"] += 1
+            elif conf == "octave":
+                counts["octave"] += 1
+            elif conf == "shared":
+                counts["shared"] += 1
+            elif conf == "disputed":
+                counts["disputed"] += 1
+            else:
+                counts["single"] += 1
+    return counts
+
+
 # ─── Top-level orchestrator ──────────────────────────────────────────────────
 
 

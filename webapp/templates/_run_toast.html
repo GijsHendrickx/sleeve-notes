@@ -38,9 +38,11 @@ in base.html with `:empty { display: none; }` so an empty response hides it.
 </div>
 
 {% if state == 'done' and task_id %}
-{# Auto-refresh the page in place once per completed job, so the user sees
-   the new BPMs / synced releases without a manual reload. Idempotent across
-   the toast's ~5 polls in done state via window.__sn_refreshed_for_task. #}
+{% comment %}
+Auto-refresh the page in place once per completed job, so the user sees
+the new BPMs / synced releases without a manual reload. Idempotent across
+the toast's ~5 polls in done state via window.__sn_refreshed_for_task.
+{% endcomment %}
 <script>
 (() => {
   const taskId = "{{ task_id|escapejs }}";

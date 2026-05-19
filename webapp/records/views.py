@@ -1,9 +1,11 @@
 """Records app views — collection (records list), tracks list, release detail."""
 from __future__ import annotations
 
+from urllib.parse import quote_plus
+
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
-from django.http import HttpResponseBadRequest, HttpResponseNotFound
+from django.http import HttpResponseBadRequest, HttpResponseNotFound, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -17,6 +19,7 @@ from sleeve_notes.fetch_bpm import (
     parse_key_to_camelot,
 )
 from sleeve_notes.preview import render_release_stickers_svg
+from sleeve_notes.youtube import resolve_video_id
 
 from records.models import BpmCache, Override, Release, Track
 from records.services.bpm_cascade import (
@@ -67,6 +70,7 @@ def _build_track_row(
         "bpm_confidence": result.get("bpm_confidence"),
         "bpm_sources": result.get("bpm_sources"),
         "key_camelot": result.get("key_camelot"),
+        "spotify_track_id": track.spotify_track_id,
         "override": override_display,
     }
 
@@ -342,6 +346,7 @@ def release_detail(request, release_id):
             cache_entries=cache_entries,
         )
         tracks_out.append({
+            "release_id": rel.discogs_release_id,
             "position": t.position,
             "artist": t.artist or release_artist,
             "title": t.title,
@@ -350,6 +355,7 @@ def release_detail(request, release_id):
             "bpm_confidence": result.get("bpm_confidence"),
             "bpm_sources": result.get("bpm_sources"),
             "key_camelot": result.get("key_camelot"),
+            "spotify_track_id": t.spotify_track_id,
         })
 
     # Build sticker preview SVGs by reusing the print_runs render service.
@@ -457,3 +463,60 @@ def tracks_sync(request):
     return render(request, "records/_track_row.html", {
         "r": row, "just_synced": True,
     })
+
+
+@login_required
+def listen_redirect(request):
+    """Resolve a track to a Spotify or YouTube URL and 302 to it.
+
+    Spotify wins when we have a cached track id (captured opportunistically
+    by the BPM cascade via ReccoBeats). Otherwise lazily resolve the top
+    YouTube hit on first click, persist the video id on the Track row, and
+    redirect there. Falls back to a YouTube search URL when the YouTube API
+    is unavailable or returns nothing, so the click always lands somewhere.
+    """
+    try:
+        rid = int((request.GET.get("release_id") or "").strip())
+    except ValueError:
+        return HttpResponseBadRequest("invalid release_id")
+    pos = (request.GET.get("position") or "").strip()
+
+    track = (
+        Track.objects.filter(
+            release__user=request.user,
+            release__discogs_release_id=rid,
+            position=pos,
+        )
+        .select_related("release")
+        .first()
+    )
+
+    if track and track.spotify_track_id:
+        return HttpResponseRedirect(
+            f"https://open.spotify.com/track/{track.spotify_track_id}"
+        )
+    if track and track.youtube_video_id:
+        return HttpResponseRedirect(
+            f"https://www.youtube.com/watch?v={track.youtube_video_id}"
+        )
+
+    if track is None:
+        return HttpResponseRedirect(
+            "https://www.youtube.com/results?search_query="
+            + quote_plus(pos or "")
+        )
+
+    release_artist = track.release.artist or ""
+    artist = track.artist or release_artist
+    title = track.title or ""
+
+    video_id = resolve_video_id(artist, title)
+    if video_id:
+        track.youtube_video_id = video_id
+        track.save(update_fields=["youtube_video_id"])
+        return HttpResponseRedirect(f"https://www.youtube.com/watch?v={video_id}")
+
+    q = f"{artist} {title}".strip() or title or pos
+    return HttpResponseRedirect(
+        "https://www.youtube.com/results?search_query=" + quote_plus(q)
+    )

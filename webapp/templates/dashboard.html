@@ -4,21 +4,129 @@
 {% block breadcrumb %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="max-w-3xl">
-  <p class="text-app-dim mb-6">
-    Signed in as <span class="text-app-ink">{{ user.username }}</span>.
-  </p>
+<div class="space-y-6">
 
-  <div class="space-y-3 text-sm text-app-dim">
-    <p>
-      The Django port is live. The records / tracks / print-runs pages and the
-      action modals (Discogs sync, BPM lookup, CSV import) wire up over the
-      next few commits of fase 5.
-    </p>
-    <p>
-      Use the sidebar to navigate. CLI subcommands still work for any
-      long-running job until the action buttons are enabled.
-    </p>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+    {# BPM coverage #}
+    <a href="{% url 'records:tracks' %}?filter=needs_attention" class="card block p-6 hover:bg-app-s2/30 transition-colors">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">BPM coverage</div>
+      <div class="mt-3 flex items-baseline gap-2">
+        <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ coverage.with_bpm }}</div>
+        <div class="text-app-dim text-sm">of {{ coverage.total }} tracks</div>
+      </div>
+      <div class="mt-5 h-1.5 surface-2 rounded-full overflow-hidden flex">
+        {% for seg in coverage_segments %}
+          <div title="{{ seg.label }}: {{ seg.n }}"
+               style="width: {{ seg.pct }}%"
+               class="{{ seg.color }}"></div>
+        {% endfor %}
+      </div>
+      <dl class="mt-4 grid grid-cols-3 gap-1 text-[11px] text-app-dim">
+        {% for seg in coverage_segments %}
+        <div><span class="{{ seg.color }} inline-block w-2 h-2 rounded-full align-middle mr-1"></span>
+          {{ seg.n }} {{ seg.label }}</div>
+        {% endfor %}
+      </dl>
+      <div class="mt-4 text-[11px] text-app-mute">Open tracks needing attention →</div>
+    </a>
+
+    {# New since last print #}
+    <a href="{% url 'print_runs:editor' %}" class="card block p-6 hover:bg-app-s2/30 transition-colors">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">New since last print</div>
+      <div class="mt-3 flex items-baseline gap-2">
+        <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ new_count }}</div>
+        <div class="text-app-dim text-sm">releases unprinted</div>
+      </div>
+      <div class="mt-5 text-[11px] text-app-mute">
+        {% if last_print_ts %}
+          Last print · <span class="font-mono text-app-dim">{{ last_print_ts|date:"Y-m-d" }}</span>
+        {% else %}
+          No print runs recorded yet.
+        {% endif %}
+      </div>
+      <div class="mt-5 inline-flex items-center gap-1 text-[12px] text-sky-400">Start a print run →</div>
+    </a>
+
+    {# Print runs total #}
+    <a href="{% url 'print_runs:index' %}" class="card block p-6 hover:bg-app-s2/30 transition-colors">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Print runs</div>
+      <div class="mt-3 flex items-baseline gap-2">
+        <div class="text-[34px] leading-none font-semibold text-app-ink tracking-tight">{{ run_count }}</div>
+        <div class="text-app-dim text-sm">saved</div>
+      </div>
+      <div class="mt-5 text-[11px] text-app-mute">
+        {% if run_count %}
+          Each run remembers its releases + layout settings — re-download any time.
+        {% else %}
+          No print runs yet. Create one to save your favourite layout for next time.
+        {% endif %}
+      </div>
+      <div class="mt-5 inline-flex items-center gap-1 text-[12px] text-sky-400">
+        {% if run_count %}Browse all print runs →{% else %}Create your first run →{% endif %}
+      </div>
+    </a>
+
   </div>
+
+  {# Collection totals strip #}
+  <div class="card p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Collection</div>
+      <a href="{% url 'records:collection' %}" class="text-[12px] text-sky-400 hover:text-sky-300">Browse →</a>
+    </div>
+    <div class="flex flex-wrap gap-x-10 gap-y-5">
+      <div>
+        <div class="text-[26px] font-semibold text-app-ink tracking-tight leading-none">{{ totals_total }}</div>
+        <div class="text-[11px] text-app-mute mt-1.5 uppercase tracking-wide">total releases</div>
+      </div>
+      {% for row in totals_by_type %}
+      <a href="{% url 'records:collection' %}?type={{ row.release_type }}" class="block group">
+        <div class="text-[26px] font-semibold text-app-ink tracking-tight leading-none group-hover:text-sky-400 transition-colors">{{ row.n }}</div>
+        <div class="text-[11px] text-app-mute mt-1.5 uppercase tracking-wide">{{ row.release_type|lower }}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Recent print runs #}
+  {% if recent_runs %}
+  <div class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 pt-4 pb-3 border-b hairline">
+      <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium">Recent print runs</div>
+      <a href="{% url 'print_runs:index' %}" class="text-[12px] text-sky-400 hover:text-sky-300">View all →</a>
+    </div>
+    <table class="dense w-full text-[13px]">
+      <thead class="surface-2 text-[10px] uppercase tracking-[0.06em] text-app-mute">
+        <tr class="border-b hairline">
+          <th class="text-left">Name</th>
+          <th class="text-left w-44">Created</th>
+          <th class="text-right w-24">Releases</th>
+          <th class="text-left">Settings</th>
+          <th class="w-20"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in recent_runs %}
+        <tr class="border-t hairline align-middle hover:bg-app-s2/40">
+          <td>
+            <a href="{% url 'print_runs:detail' run.id %}" class="text-app-ink hover:text-sky-300">
+              {{ run.name|default:"Untitled run" }}
+            </a>
+          </td>
+          <td class="font-mono text-app-mute text-[12px]">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="text-right font-mono text-app-dim">{{ run.release_count }}</td>
+          <td class="text-app-dim text-[12px]">{{ run.settings_summary }}</td>
+          <td class="text-right whitespace-nowrap">
+            <a href="{% url 'print_runs:pdf_download' run.id %}"
+               class="btn btn-quiet h-7 px-2 text-[12px]">PDF</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}

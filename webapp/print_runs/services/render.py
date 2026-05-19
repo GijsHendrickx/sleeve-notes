@@ -66,6 +66,27 @@ def get_print_run(user, run_id):
     return PrintRun.objects.get(pk=run_id, user=user)
 
 
+def settings_summary(settings: dict | None) -> str:
+    """Short human-readable description of a PrintRun.settings dict."""
+    s = normalize_settings(settings or {})
+    if s["tile"]:
+        head = f"Tile {s['tile_cols']}×{s['tile_rows']}"
+    else:
+        head = f"{s['sticker_w']:g}×{s['sticker_h']:g} mm"
+    flags = []
+    if not s["qr"]:
+        flags.append("no QR")
+    if not s["show_artist"]:
+        flags.append("no artist")
+    if not s["show_title"]:
+        flags.append("no title")
+    if not s["show_bpm"]:
+        flags.append("no BPM")
+    if not s["show_key"]:
+        flags.append("no key")
+    return head + (" · " + ", ".join(flags) if flags else "")
+
+
 # ─── DB → renderer-shaped release dicts ──────────────────────────────────────
 
 
@@ -250,4 +271,5 @@ __all__ = (
     "releases_by_ids",
     "releases_for_render",
     "render_pdf",
+    "settings_summary",
 )

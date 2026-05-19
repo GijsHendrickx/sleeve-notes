@@ -25,14 +25,15 @@
 
   {% if release.tracks %}
   <div class="card overflow-hidden">
-    <table class="dense w-full text-[12px]">
+    <table class="dense drawer-table w-full text-[12px]">
       <thead class="surface-2 text-[10px] uppercase tracking-[0.06em] text-app-mute">
         <tr class="border-b hairline">
-          <th class="text-left w-12">Pos</th>
+          <th class="text-left w-10">Pos</th>
           <th class="text-left">Track</th>
           <th class="text-right w-12">Dur</th>
           <th class="text-right w-12">BPM</th>
           <th class="text-left w-10">Key</th>
+          <th class="w-8"></th>
         </tr>
       </thead>
       <tbody>
@@ -56,6 +57,9 @@
           </td>
           <td class="font-mono {% if t.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">
             {{ t.key_camelot|default:"·" }}
+          </td>
+          <td class="text-center">
+            {% include "_listen_glyph.html" with release_id=t.release_id position=t.position spotify_track_id=t.spotify_track_id %}
           </td>
         </tr>
         {% endfor %}

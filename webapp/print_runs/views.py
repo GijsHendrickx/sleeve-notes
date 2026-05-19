@@ -14,9 +14,11 @@ from print_runs.models import PrintRun
 from print_runs.services.render import (
     DEFAULT_SETTINGS,
     already_printed_ids,
+    build_bpm_lookup,
     create_print_run,
     releases_by_ids,
     render_pdf,
+    settings_summary,
 )
 
 
@@ -51,20 +53,44 @@ _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 @login_required
 def index(request):
-    runs = PrintRun.objects.filter(user=request.user)
+    runs = list(PrintRun.objects.filter(user=request.user))
+    rows = [
+        {
+            "id": r.id,
+            "name": r.name,
+            "created_at": r.created_at,
+            "release_count": len(r.release_ids or []),
+            "settings_summary": settings_summary(r.settings),
+        }
+        for r in runs
+    ]
     return render(request, "print_runs/index.html", {
         "active": "print_runs",
-        "runs": runs,
-        "run_count": runs.count(),
+        "rows": rows,
+        "run_count": len(rows),
     })
 
 
 @login_required
 def detail(request, run_id):
     run = get_object_or_404(PrintRun, pk=run_id, user=request.user)
+    requested_ids = [int(r) for r in (run.release_ids or [])]
+    releases = releases_by_ids(request.user, requested_ids)
+    present_ids = {r["id"] for r in releases}
+    missing_ids = [rid for rid in requested_ids if rid not in present_ids]
+
+    bpm_lookup = build_bpm_lookup(request.user, releases) if releases else {}
+    show = run.settings or {}
+
     return render(request, "print_runs/detail.html", {
         "active": "print_runs",
         "run": run,
+        "settings_summary": settings_summary(run.settings),
+        "releases": releases,
+        "missing_ids": missing_ids,
+        "bpm_lookup": bpm_lookup,
+        "show_bpm": show.get("show_bpm", True) if "show_bpm" in show else True,
+        "show_key": show.get("show_key", True) if "show_key" in show else True,
     })
 
 

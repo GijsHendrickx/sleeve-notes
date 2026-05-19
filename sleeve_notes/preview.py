@@ -14,7 +14,6 @@ from __future__ import annotations
 from html import escape
 
 import qrcode
-from reportlab.lib.units import mm
 
 from sleeve_notes import sticker_layout as L
 
@@ -122,8 +121,8 @@ class SvgDrawer:
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'viewBox="0 0 {self.width:.2f} {self.height:.2f}" '
-            f'width="{self.width / mm:.2f}mm" height="{self.height / mm:.2f}mm" '
-            f'style="display:block;background:#fff">'
+            f'preserveAspectRatio="xMidYMid meet" '
+            f'style="display:block;width:100%;height:auto;background:#fff">'
             + "".join(self.elements)
             + "</svg>"
         )
