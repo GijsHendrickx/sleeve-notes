@@ -49,4 +49,5 @@ def run_banner(request):
     return render(request, "_run_toast.html", {
         "title": _KIND_LABEL.get(lock.kind, lock.kind),
         "elapsed_s": elapsed_s,
+        "progress_text": lock.progress_text,
     })

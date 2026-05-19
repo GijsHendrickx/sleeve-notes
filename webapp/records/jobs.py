@@ -36,6 +36,22 @@ User = get_user_model()
 log = logging.getLogger(__name__)
 
 
+def _make_progress_logger(user):
+    """Return a log callable that mirrors lines to stdlib logging *and*
+    persists the latest line to UserJobLock.progress_text so the toast
+    can read it. Each line is trimmed + truncated to the column limit.
+    """
+    def progress(msg: str) -> None:
+        log.info(msg)
+        trimmed = (msg or "").strip().lstrip("·-•").strip()
+        if not trimmed:
+            return
+        UserJobLock.objects.filter(user=user).update(
+            progress_text=trimmed[:200],
+        )
+    return progress
+
+
 # ─── Credential resolution ───────────────────────────────────────────────────
 
 
@@ -69,6 +85,7 @@ def _run_discogs_sync(
 ) -> dict:
     """Worker-side runner. Q2 invokes this with the args from enqueue_*."""
     user = User.objects.get(pk=user_id)
+    progress = _make_progress_logger(user)
     try:
         ck, cs, tok, tok_sec = _resolve_oauth(user)
         session = make_oauth_session(ck, cs, tok, tok_sec)
@@ -80,7 +97,7 @@ def _run_discogs_sync(
                 csv_path=Path(csv_path),
                 folder_filter=folder,
                 limit=limit,
-                log=log.info,
+                log=progress,
             )
         if source == "api":
             uname = username or user.username
@@ -90,7 +107,7 @@ def _run_discogs_sync(
                 username=uname,
                 folder=folder,
                 limit=limit,
-                log=log.info,
+                log=progress,
             )
         raise ValueError(f"unknown sync source: {source!r}")
     finally:
@@ -99,8 +116,9 @@ def _run_discogs_sync(
 
 def _run_bpm_cascade(user_id: int, *, workers: int = 8) -> dict:
     user = User.objects.get(pk=user_id)
+    progress = _make_progress_logger(user)
     try:
-        return run_bpm_cascade(user, workers=workers, log=log.info)
+        return run_bpm_cascade(user, workers=workers, log=progress)
     finally:
         UserJobLock.release(user)
 
