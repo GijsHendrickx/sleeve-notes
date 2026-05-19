@@ -4,13 +4,72 @@
 {% block breadcrumb %}Records{% endblock %}
 
 {% block content %}
-<div class="max-w-3xl">
-  <p class="text-app-dim mb-4">
-    {{ release_count }} release{{ release_count|pluralize }} in your collection.
-  </p>
-  <p class="text-sm text-app-dim">
-    The records listing UI (filter row, table, sticker preview drawer) lands
-    in a follow-up commit.
-  </p>
+<div class="flex flex-col h-[calc(100vh-7.5rem)]">
+  <form method="get" action="{% url 'records:collection' %}"
+        class="flex flex-wrap gap-2 items-center mb-4 text-sm">
+    <input name="q" value="{{ q }}" placeholder="Search artist or title…"
+           class="field h-8 px-3 w-72 text-[13px]" />
+    <select name="type" class="field h-8 px-2.5 text-[13px]">
+      <option value="">Type · any</option>
+      {% for t in type_options %}
+      <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+    <select name="format" class="field h-8 px-2.5 text-[13px]">
+      <option value="">Format · any</option>
+      {% for f in format_options %}
+      <option value="{{ f }}" {% if format_filter == f %}selected{% endif %}>{{ f }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-ghost h-8">Filter</button>
+    <span class="text-app-mute ml-auto text-[12px] tracking-tight">
+      {{ shown_count }} of {{ total }} release{{ total|pluralize }}
+      {% if shown_count == 500 and total > 500 %}· first 500 shown{% endif %}
+    </span>
+  </form>
+
+  <div class="flex-1 overflow-auto card">
+    <table class="dense w-full text-[13px]">
+      <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+        <tr class="border-b hairline">
+          <th class="text-left w-14"></th>
+          <th class="text-left">Artist</th>
+          <th class="text-left">Title</th>
+          <th class="text-right w-16">Year</th>
+          <th class="text-left w-20">Type</th>
+          <th class="text-left w-20">Format</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="border-t hairline hover:bg-app-s2">
+          <td>
+            {% if r.thumb_url %}
+              <img src="{{ r.thumb_url }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+                   class="w-10 h-10 object-cover rounded-md border hairline" />
+            {% else %}
+              <div class="w-10 h-10 rounded-md border hairline surface-2"></div>
+            {% endif %}
+          </td>
+          <td class="text-app-ink">{{ r.artist|default:"—" }}</td>
+          <td class="text-app-dim">{{ r.title|default:"—" }}</td>
+          <td class="text-right text-app-mute font-mono">{{ r.year|default:"" }}</td>
+          <td class="text-app-dim">{{ r.release_type|default:"" }}</td>
+          <td class="text-app-mute font-mono">{{ r.format|default:"" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center py-12 text-app-mute">
+            {% if total == 0 %}
+              No releases yet. Run <code>sleeve-notes fetch</code> to sync your Discogs collection.
+            {% else %}
+              No releases match the current filters.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

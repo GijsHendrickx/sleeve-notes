@@ -89,6 +89,50 @@
       width: 14px; color: var(--dim); font-size: 13px;
     }
 
+    /* Cards — primary container for listing tables and detail panels. */
+    .card {
+      background: var(--s1);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      transition: border-color 160ms ease;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.4rem 0.85rem; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+      border: 1px solid transparent;
+    }
+    .btn-primary { background: #0a84ff; color: #fff; }
+    .btn-primary:hover { background: #2393ff; }
+    .btn-ghost   { background: transparent; color: var(--ink); border-color: var(--line2); }
+    .btn-ghost:hover { background: var(--s2); }
+    .btn-quiet   { background: transparent; color: var(--ink); border-color: var(--line); }
+    .btn-quiet:hover { background: var(--s2); color: var(--ink); }
+
+    /* Form fields — inputs + selects share the same shape and focus ring. */
+    .field {
+      background: var(--s2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ink);
+      transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+    }
+    .field:focus, .field:focus-visible {
+      outline: none;
+      border-color: rgba(10,132,255,0.6);
+      box-shadow: 0 0 0 3px rgba(10,132,255,0.18);
+      background: var(--s3);
+    }
+    .field::placeholder { color: var(--mute); }
+
+    /* Listing tables — borders + header weight. Padding lives in density rules. */
+    table.dense thead th { font-weight: 500; padding: 0.4rem 0.7rem; }
+    table.dense tbody td { padding: 0.4rem 0.7rem; }
+    table.dense tbody tr { transition: background-color 120ms ease; }
+
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }

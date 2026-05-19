@@ -1,23 +1,66 @@
-"""Records app views — collection (records list) and tracks list.
-
-Both are placeholder stubs during fase 5: the URL resolves, the page
-renders within the sidebar layout, and a "coming soon" body explains
-that the listing UI lands in a follow-up commit.
-"""
+"""Records app views — collection (records list) and tracks list."""
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count, Q
 from django.shortcuts import render
 
 from records.models import Release, Track
 
 
+LIST_LIMIT = 500
+
+
 @login_required
 def collection(request):
-    count = Release.objects.filter(user=request.user).count()
+    q = (request.GET.get("q") or "").strip()
+    type_filter = (request.GET.get("type") or "").strip()
+    format_filter = (request.GET.get("format") or "").strip()
+
+    qs = Release.objects.filter(user=request.user)
+    total = qs.count()
+
+    if q:
+        qs = qs.filter(Q(artist__icontains=q) | Q(title__icontains=q))
+    if type_filter:
+        qs = qs.filter(release_type=type_filter)
+    if format_filter:
+        qs = qs.filter(format=format_filter)
+
+    rows = list(
+        qs.order_by("artist", "title").values(
+            "id", "discogs_release_id", "artist", "title", "year",
+            "release_type", "format", "thumb_url",
+        )[:LIST_LIMIT]
+    )
+
+    type_options = list(
+        Release.objects.filter(user=request.user)
+        .exclude(release_type="")
+        .values_list("release_type", flat=True)
+        .annotate(n=Count("id"))
+        .order_by("-n")
+        .distinct()
+    )
+    format_options = list(
+        Release.objects.filter(user=request.user)
+        .exclude(format="")
+        .values_list("format", flat=True)
+        .annotate(n=Count("id"))
+        .order_by("-n")
+        .distinct()
+    )
+
     return render(request, "records/collection.html", {
         "active": "collection",
-        "release_count": count,
+        "rows": rows,
+        "shown_count": len(rows),
+        "total": total,
+        "q": q,
+        "type_filter": type_filter,
+        "format_filter": format_filter,
+        "type_options": type_options,
+        "format_options": format_options,
     })
 
 
