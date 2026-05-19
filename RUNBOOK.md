@@ -44,3 +44,35 @@ production. The point is: in a 3 AM panic, you read this file, not your terminal
 ### Find a specific user
 - Django admin: `https://<host>/admin/` → Users → search by username or email.
 - Render shell access (paid plans): `render ssh <service> "python manage.py shell"`.
+
+## Pause staging to save costs
+
+Use this when you're working only locally for an extended period (weeks+) and
+don't need staging up. Local dev is unaffected — `docker compose up -d db` +
+`manage.py runserver` keep working with no Render touchpoint.
+
+Three billable resources, ~$7/mo each on starter:
+
+1. **Web service** `sleeve-notes-web-staging` → dashboard → Settings → **Suspend Service**. Stops billing for compute. Auto-deploys are blocked while suspended; `render.yaml` and env vars are preserved.
+2. **Worker service** `sleeve-notes-worker-staging` → same as above.
+3. **Database** `sleeve-notes-db-staging` — there is no "suspend" for Postgres, only "delete":
+   - **Keep paying** (~$7/mo) to preserve all staging data, OR
+   - **Delete** the database (Settings → Delete Database). Staging only holds dev test data, so this is usually fine. Saves the full $7/mo. The `render.yaml` `databases:` block re-creates an empty one on resume.
+
+To prevent surprise resurrections from pushes while suspended: the suspend
+state already blocks deploys, so no additional action needed. `render.yaml`
+can stay as-is.
+
+## Resume staging
+
+After pause, when you want to deploy again:
+
+1. **If the DB was deleted:** dashboard → Blueprints → **Sync Blueprint** (re-reads `render.yaml`, re-creates the DB). Wait until the database row shows "Available".
+2. **Web service** → Resume. On first start after resume, the Dockerfile's `CMD` runs `manage.py migrate --noinput` which (re-)creates the schema if it's empty.
+3. **Worker service** → Resume (only when you have routes wired to `enqueue_*` — until then leave the worker suspended; the web alone is enough for fase 5 development).
+4. **Re-paste secrets** *only if* you also deleted the services: env vars survive suspend but die with delete. The values live in Bitwarden under `Sleeve Notes / staging-secrets`.
+5. Push (or "Manual Deploy → Latest Commit" in the dashboard) to trigger the first build after resume.
+
+Sanity check after resume:
+- Web `/healthz` returns 200.
+- Behind Basic Auth gate, sign in via Discogs works (the staging Discogs OAuth app's callback URL has not changed, so no reconfiguration needed).
