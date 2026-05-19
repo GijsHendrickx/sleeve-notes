@@ -46,8 +46,13 @@ def run_banner(request):
     except UserJobLock.DoesNotExist:
         return HttpResponse("")
     elapsed_s = int((timezone.now() - lock.started_at).total_seconds())
+    pct = (
+        int(100 * lock.progress_done / lock.progress_total)
+        if lock.progress_total else None
+    )
     return render(request, "_run_toast.html", {
         "title": _KIND_LABEL.get(lock.kind, lock.kind),
         "elapsed_s": elapsed_s,
         "progress_text": lock.progress_text,
+        "progress_pct": pct,
     })

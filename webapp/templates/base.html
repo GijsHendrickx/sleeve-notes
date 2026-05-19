@@ -180,6 +180,13 @@
       0%   { left: -45%; }
       100% { left: 100%; }
     }
+    /* Determinate mode — bar fills left to right based on --progress (0-100%). */
+    .progress-track.determinate .progress-bar {
+      left: 0; width: var(--progress, 0%);
+      background: #0a84ff;
+      animation: none;
+      transition: width 300ms ease-out;
+    }
 
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }

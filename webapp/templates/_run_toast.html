@@ -2,12 +2,20 @@
      hx-get="{% url 'run_banner' %}"
      hx-trigger="every 2s"
      hx-swap="outerHTML">
-  <div class="progress-track"><div class="progress-bar"></div></div>
+  {% if progress_pct is not None %}
+    <div class="progress-track determinate" style="--progress: {{ progress_pct }}%;">
+      <div class="progress-bar"></div>
+    </div>
+  {% else %}
+    <div class="progress-track"><div class="progress-bar"></div></div>
+  {% endif %}
   <div class="p-3">
     <div class="text-app-ink text-[13px] font-medium">{{ title }}</div>
     {% if progress_text %}
       <div class="text-app-dim text-[12px] mt-1">{{ progress_text }}</div>
     {% endif %}
-    <div class="text-app-mute text-[11px] mt-1">Running for {{ elapsed_s }}s…</div>
+    <div class="text-app-mute text-[11px] mt-1">
+      Running for {{ elapsed_s }}s{% if progress_pct is not None %} · {{ progress_pct }}%{% endif %}…
+    </div>
   </div>
 </div>

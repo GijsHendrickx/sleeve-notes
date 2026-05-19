@@ -35,8 +35,10 @@ class UserJobLock(models.Model):
     task_id = models.CharField(max_length=128, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     # Latest progress line from the worker. The Q2 worker runs in a subprocess
-    # and shares no memory with the web request — this column is the bridge.
+    # and shares no memory with the web request — these columns are the bridge.
     progress_text = models.CharField(max_length=200, blank=True)
+    progress_done = models.IntegerField(default=0)
+    progress_total = models.IntegerField(default=0)
 
     def __str__(self):
         return f"{self.user_id}:{self.kind}"

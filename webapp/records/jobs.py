@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -36,19 +37,60 @@ User = get_user_model()
 log = logging.getLogger(__name__)
 
 
+# `[done/total]` at the start of a progress line. Both the sync and the
+# cascade emit this — we strip the brackets, swap for parens, and update
+# UserJobLock.progress_done / _total so the toast can render a determinate
+# bar with a percentage.
+_PROGRESS_COUNTER_RE = re.compile(r"^\[(\d+)/(\d+)\]\s*")
+
+# The BPM cascade appends confidence markers + the resolved BPM/key/sources
+# after the artist — title. The user only wants to see the position +
+# track name in the toast, so we strip both ends.
+_CONFIDENCE_MARKERS_RE = re.compile(r"^[●○?≈]+\s*")
+_BPM_SUFFIX_RE = re.compile(r"\s*->\s*\d+.*?sources=\[.*?\]\s*$")
+
+
+def _prettify(msg: str) -> tuple[str, int, int]:
+    """Clean a worker log line for display + extract (done, total) counters.
+
+    Examples:
+      "  [10/381] ●○ Madonna - Holiday -> 118 key=9B  sources=['beatport', ...]"
+        → ("(10/381) Madonna - Holiday", 10, 381)
+
+      "  page 2/2: 116 releases so far"
+        → ("page 2/2: 116 releases so far", 0, 0)
+    """
+    trimmed = (msg or "").strip().lstrip("·-•").strip()
+    if not trimmed:
+        return "", 0, 0
+
+    done = total = 0
+    m = _PROGRESS_COUNTER_RE.match(trimmed)
+    if m:
+        done, total = int(m.group(1)), int(m.group(2))
+        trimmed = trimmed[m.end():]
+        trimmed = _CONFIDENCE_MARKERS_RE.sub("", trimmed)
+        trimmed = _BPM_SUFFIX_RE.sub("", trimmed)
+        trimmed = f"({done}/{total}) {trimmed}".rstrip()
+    return trimmed[:200], done, total
+
+
 def _make_progress_logger(user):
     """Return a log callable that mirrors lines to stdlib logging *and*
-    persists the latest line to UserJobLock.progress_text so the toast
-    can read it. Each line is trimmed + truncated to the column limit.
+    persists progress to UserJobLock so the toast can render it. Each line
+    is prettified (confidence markers stripped, [N/M] → (N/M), BPM suffix
+    dropped) and the counters are extracted for the determinate progress bar.
     """
     def progress(msg: str) -> None:
         log.info(msg)
-        trimmed = (msg or "").strip().lstrip("·-•").strip()
-        if not trimmed:
+        text, done, total = _prettify(msg)
+        if not text:
             return
-        UserJobLock.objects.filter(user=user).update(
-            progress_text=trimmed[:200],
-        )
+        updates = {"progress_text": text}
+        if total:
+            updates["progress_done"] = done
+            updates["progress_total"] = total
+        UserJobLock.objects.filter(user=user).update(**updates)
     return progress
 
 
