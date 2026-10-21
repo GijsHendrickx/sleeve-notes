@@ -12,7 +12,7 @@ Randvoorwaarden die boven de losse ideeën hieronder staan. Elke feature die hie
 
 Voorstel op basis van afhankelijkheden, okt 2026. Kernidee: **eerst de app veilig genoeg maken om andermans data te bewaren, dan pas testers binnenlaten.** Elke tester zet zijn Discogs-token in onze database.
 
-1. **Hardening vóór testers**: Discogs-tokens versleutelen, Sentry `send_default_pii` uit, tenant-isolatietest. Zie "Hardening & onderhoudslast".
+1. ~~**Hardening vóór testers**~~ — **gedaan (21 okt 2026)**: Discogs-tokens versleuteld, Sentry zonder PII, tenant-isolatietest. Wat overblijft (backups + restore-oefening, workercheck, Dependabot) staat onder "Hardening & onderhoudslast → Uitvoeringsstatus" en hoort bij het herstellen van staging in stap 2.
 2. **Staging herstellen + feedbackformulier.** Staging deployt nog van de verdwenen branch `django-port`. Zie "Feedback van testers".
 3. **BPM-kwaliteit**: de genummerde lijst onder "BPM-bronnen onderzoek → Uitvoeringsstatus", items 1–5, in die volgorde.
 4. **Gedeelde BPM-cache** (item 7 in diezelfde lijst). Pas zinvol zodra er meer dan één gebruiker is, en pas na stap 1.
@@ -364,9 +364,22 @@ Wat ontbreekt is de **merklaag**: wordmark, een eigen typeface, één herkenbaar
 
 Drie items uit het stack-gesprek van 21 okt 2026. De conclusie van dat gesprek was dat de stack-keuze (Django 5.2 LTS + Postgres + één worker, server-rendered met HTMX) de juiste is — de reden is dat de renderlaag Python *is en blijft* (ReportLab-typografie heeft in JS geen gelijkwaardige tegenhanger) en dat Discogs **OAuth 1.0a** gebruikt. Bij geen van de gangbare auth-vendors (Supabase, Clerk, Auth0, Firebase) staat Discogs als kant-en-klare provider, en generiek OAuth1 is daar hooguit een nichepad via een custom connection. Dan heb je een extra vendor voor iets wat de eigen allauth-provider in ~30 regels al doet, en de tokens moeten alsnog naar de worker voor API-calls namens de user. Het interessante werk zit dus niet in de stack maar hieronder.
 
+### Uitvoeringsstatus (21 okt 2026)
+Gedaan:
+- **Tokens versleuteld.** Eigen `DiscogsConnection`-model met een `EncryptedTextField` (`core/fields.py`, Fernet via `cryptography`, `MultiFernet` voor rotatie), `SOCIALACCOUNT_STORE_TOKENS=False`, tokens gevangen via het `user_logged_in`-signaal. Een datamigratie verplaatst de bestaande tokens en verwijdert de platte `SocialToken`-rijen. Bewust **niet** `django-cryptography`: dat pakket wordt nauwelijks onderhouden en ondersteunt Django 5 niet officieel.
+- **Sentry**: `send_default_pii=False` én `include_local_variables=False`, plus een middleware die alleen het user-id meestuurt. Het tweede bleek nodig: Sentry's scrubber maskeert alleen exacte sleutelnamen (`token`, `secret`), dus `token_secret`, `tok_sec` of een `user` met de username als repr gingen anders mee in elke traceback.
+- **Tenant-isolatietest** (`core/tests_tenant_isolation.py`): user B loopt alle `<uuid:…>`-routes af met A's id's (GET en POST), plus de routes die id's in body of query krijgen. Een nieuwe UUID-route zonder dekking laat de test falen. Geverifieerd door tijdelijk een filter te verwijderen: de test werd rood.
+- `requirements.txt` verwijderd.
+
+Nog open:
+- **Backups + PITR + één restore-oefening.** Infra, geen code; doen bij het hervatten van staging (Volgorde stap 2). `FIELD_ENCRYPTION_KEY` moet daar ook gezet zijn, anders start de app niet.
+- **Uptime-check op de worker** en **Dependabot + `pip-audit`**. Er is nog geen CI; die komen samen.
+- *Restrisico, klein:* als een login pauzeert (signup-formulier bij een naamsbotsing, e-mailverificatie) zet allauth de hele `sociallogin` inclusief token geserialiseerd in de sessie, en sessies staan in de DB. Tijdelijk en zeldzaam met `AUTO_SIGNUP=True`. Alleen oppakken als we ooit e-mailverificatie of MFA aanzetten.
+
 ### 1. Tenantgrens structureel maken in plaats van disciplinair
 Vandaag is multi-tenancy een *gewoonte*: elke view moet `filter(user=request.user)` onthouden (zie CLAUDE.md). Eén vergeten filter is een cross-tenant leak, en UUID-PKs zijn daar geen vangnet voor — alleen een rem op enumeratie.
 
+- *Uitgesteld (21 okt 2026), met reden:* een audit liet zien dat alle ~40 querysites al filteren, inclusief de paden met id's in de POST-body. De omzetting naar `for_user()` zou een grote diff zijn die niets repareert, terwijl de test hieronder het eigenlijke vangnet is en nu bestaat. Oppakken als de test ooit een echte lek vindt, of samen met RLS.
 - Een `TenantQuerySet.for_user(user)` op de user-owned modellen (`Release`, `Track`, `BpmCache`, `Override`, `PrintRun`, `AuditEvent`), en views gebruiken alleen die. **Niet** de default manager `objects` laten weigeren of leeg teruggeven: Django gebruikt `_default_manager` voor admin, `dumpdata`, ModelForm-keuzelijsten en management commands, en die breken dan stil.
 - **De test is het eigenlijke vangnet**: twee users in een fixture, user A heeft van elk model een object, en een test loopt alle URL-patronen af met A's UUID's terwijl user B is ingelogd. Alles behalve 404/403 is rood. Een leak moet in CI falen, niet in review opvallen.
 - Eventueel Postgres RLS (`SET LOCAL app.user_id` per request) als tweede laag. Expliciet *als vangnet*, niet als primaire mechaniek — RLS is policy-onderhoud per tabel en dus meer code om te onderhouden dan één manager.

@@ -111,7 +111,7 @@ After install, the CLI is available as `sleeve-notes`. All commands resolve `.tm
 
 All secrets live in `.env` in the repo root. **Never commit this file** — it is already gitignored. A `.env.example` ships with every required key documented.
 
-Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: there's no separate account, no password. Discogs access tokens are stored encrypted-at-rest in Django via `allauth.SocialToken`, so background jobs can call the API on your behalf without you needing to be at the keyboard. The server needs the Discogs *consumer* credentials (identifying the app to Discogs) plus Django's own bootstrap config in `.env`; everything else is optional infrastructure for the BPM cascade.
+Sleeve Notes uses **"Sign in with Discogs" (OAuth 1.0a)** as its login system: there's no separate account, no password. Discogs access tokens are stored Fernet-encrypted at rest in `discogs_provider.DiscogsConnection` (key in `FIELD_ENCRYPTION_KEY`, never in the database), so background jobs can call the API on your behalf without you needing to be at the keyboard. The server needs the Discogs *consumer* credentials (identifying the app to Discogs) plus Django's own bootstrap config in `.env`; everything else is optional infrastructure for the BPM cascade.
 
 ### Minimal `.env`
 
@@ -126,11 +126,15 @@ DISCOGS_CONSUMER_SECRET=...
 #   python -c "import secrets; print(secrets.token_urlsafe(64))"
 DJANGO_SECRET_KEY=...
 
+# Encrypts your Discogs access token at rest. Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FIELD_ENCRYPTION_KEY=...
+
 # Local Postgres URL — `docker compose up -d db` brings up this database.
 DATABASE_URL=postgres://sleevenotes:dev@localhost:5432/sleevenotes
 
-# Dev convenience: run the Django-Q2 worker on a daemon thread inside
-# runserver so the background jobs work in one terminal.
+# Dev convenience: runserver starts the Django-Q2 worker as a child
+# process, so the background jobs work in one terminal.
 DEV_INPROCESS_QCLUSTER=true
 ```
 
@@ -190,7 +194,7 @@ Just the email + password you normally use to log in at beatport.com. No develop
 
 ### Standalone CLI use (advanced)
 
-The web UI is the normal entry point: signing in once persists your Discogs access token + secret in allauth's `SocialToken` table, and all subsequent CLI subcommands resolve the active user via `DISCOGS_USER_ID` (your numeric Discogs id, find it under the Django admin or via `sleeve-notes query users.User`). Set it once in `.env` and you can run `sleeve-notes fetch / bpm / render` directly. The OAuth tokens themselves are read from the DB, not the env — you only need `DISCOGS_USER_ID` to pick the right row.
+The web UI is the normal entry point: signing in once persists your Discogs access token + secret, encrypted, in the `DiscogsConnection` table, and all subsequent CLI subcommands resolve the active user via `DISCOGS_USER_ID` (your numeric Discogs id, find it under the Django admin or via `sleeve-notes query users.User`). Set it once in `.env` and you can run `sleeve-notes fetch / bpm / render` directly. The OAuth tokens themselves are read from the DB, not the env — you only need `DISCOGS_USER_ID` to pick the right row.
 
 ---
 
@@ -308,7 +312,7 @@ sleeve-notes web --no-browser    # bind only, don't pop a tab
 
 The app is **Django + Tailwind + HTMX** on top of the same engine. Background jobs (Discogs sync, BPM cascade, CSV import) run through Django-Q2; with `DEV_INPROCESS_QCLUSTER=true` in `.env` `runserver` starts a `manage.py qcluster` child process and shuts it down with itself, so one terminal is all you need. Caches, overrides and print history are identical whether you drive things from the terminal or the browser.
 
-Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance via django-allauth. On return Discogs's user id + username are written into the Django `users.User` row and the access token + secret are persisted in allauth's `SocialToken` so background jobs can call the API on your behalf. Sign out via the **Sign out** link in the top bar.
+Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance via django-allauth. On return Discogs's user id + username are written into the Django `users.User` row and the access token + secret are persisted, encrypted, in `DiscogsConnection` so background jobs can call the API on your behalf. Sign out via the **Sign out** link in the top bar.
 
 Once signed in there is no sidebar. Home (`/`) is the homepage, reachable at any time by clicking the "Sleeve Notes" wordmark in the top bar; making labels happens in a dedicated four-step flow that takes over the whole screen.
 
@@ -404,7 +408,7 @@ The Django models in summary:
 
 | Model | What's in it |
 |-------|--------------|
-| `users.User` | One row per Discogs user that has signed in. `discogs_user_id` is the Discogs id; `username` mirrors Discogs. allauth's `SocialToken` (a separate table) holds the OAuth1 access token + secret. |
+| `users.User` | One row per Discogs user that has signed in. `discogs_user_id` is the Discogs id; `username` mirrors Discogs. `discogs_provider.DiscogsConnection` (one-to-one) holds the OAuth1 access token + secret, Fernet-encrypted. |
 | `records.Release` | One row per (user, Discogs release). `basic_information` + `raw_tracklist` are JSONFields (per-release cache); `artist`, `title`, `rpm`, `release_type`, `format` are the normalized fields populated by sync via `sleeve_notes.ingest`. UUID PK. |
 | `records.Track` | Normalized track rows. Populated by sync alongside the parent release. UUID PK. |
 | `records.BpmCache` | One row per (user, artist+title hash). Tracks which sources have been queried in `sources_tried` and the raw per-source hits in `source_hits` (JSONField). |
@@ -597,7 +601,7 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 | Symptom | What to do |
 |---|---|
 | `DISCOGS_USER_ID must be set` from a CLI subcommand | Set `DISCOGS_USER_ID=<your numeric Discogs id>` in `.env`. Find it via `sleeve-notes query users.User` or the Django admin once you've signed in via the web UI. |
-| `No Discogs OAuth token found for this user` | You've never signed in via the browser (allauth hasn't created a SocialToken row), or you signed in before `SOCIALACCOUNT_STORE_TOKENS` was enabled. Sign out and back in via the web UI. |
+| `No Discogs OAuth token found for this user` | You've never signed in via the browser, so there's no `DiscogsConnection` row yet. Sign out and back in via the web UI. |
 | `ERROR: set DISCOGS_CONSUMER_KEY and DISCOGS_CONSUMER_SECRET in .env` | Your Discogs **app** isn't registered or its consumer credentials aren't in `.env`. Register an application at https://www.discogs.com/settings/developers, set its Callback URL to `<host>/accounts/discogs/login/callback/`, and paste the consumer key/secret. |
 | `DJANGO_SECRET_KEY must be set` | Generate one with `python -c "import secrets; print(secrets.token_urlsafe(64))"` and put it in `.env`. |
 | `Folder 'X' not found` | Pass an existing folder name (case-insensitive). In CSV mode the tool prints the folders present in the CSV; in API mode it prints the folders on your Discogs account. |
