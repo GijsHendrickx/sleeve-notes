@@ -20,6 +20,10 @@ ENVIRONMENT = env("ENVIRONMENT", default="local")  # local | staging | productio
 
 # ─── Core security ───────────────────────────────────────────────────────────
 SECRET_KEY = env("DJANGO_SECRET_KEY")
+# Fernet key(s) for core.fields.EncryptedTextField, comma-separated, newest
+# first. Kept out of the database on purpose: a DB dump alone must not be
+# enough to act as our users on Discogs.
+FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY")
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
@@ -113,10 +117,10 @@ ACCOUNT_SIGNUP_FIELDS = ["username*"]  # Discogs doesn't return email; only user
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_LOGIN_ON_GET = True
 SOCIALACCOUNT_ADAPTER = "discogs_provider.adapter.DiscogsSocialAccountAdapter"
-# Persist the Discogs OAuth1 access token + secret so background jobs can call
-# the API on behalf of the user. Without this, allauth discards the token after
-# the auth handshake and the sync command can't authenticate.
-SOCIALACCOUNT_STORE_TOKENS = True
+# allauth would store the Discogs access token + secret in plain text in
+# SocialToken. We keep them in discogs_provider.DiscogsConnection instead,
+# encrypted; discogs_provider.signals captures them at login.
+SOCIALACCOUNT_STORE_TOKENS = False
 SOCIALACCOUNT_PROVIDERS = {
     "discogs": {
         "APP": {

@@ -7,17 +7,17 @@ Two sources for the release listing:
 
 The acting user is identified by DISCOGS_USER_ID. OAuth tokens come from
 env (DISCOGS_OAUTH_TOKEN/_SECRET) if set; otherwise they're loaded from
-the user's allauth SocialToken row. Consumer credentials come from env.
+the user's encrypted DiscogsConnection row. Consumer credentials come from env.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from allauth.socialaccount.models import SocialAccount, SocialToken
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
+from discogs_provider.models import DiscogsConnection
 from records.services.discogs_sync import (
     make_oauth_session,
     sync_via_api,
@@ -113,14 +113,13 @@ class Command(BaseCommand):
         if env_token and env_secret:
             return env_token, env_secret
         try:
-            account = SocialAccount.objects.get(user=user, provider="discogs")
-            token = SocialToken.objects.get(account=account)
-        except (SocialAccount.DoesNotExist, SocialToken.DoesNotExist):
+            conn = DiscogsConnection.objects.get(user=user)
+        except DiscogsConnection.DoesNotExist:
             raise CommandError(
                 "No Discogs OAuth token found for this user. Sign in via the "
                 "web UI, or paste DISCOGS_OAUTH_TOKEN / _SECRET into .env."
             )
-        return token.token, token.token_secret
+        return conn.token, conn.token_secret
 
     def _require_consumer_credentials(self) -> tuple[str, str]:
         key = os.environ.get("DISCOGS_CONSUMER_KEY")
