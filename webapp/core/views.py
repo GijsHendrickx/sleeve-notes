@@ -1,20 +1,20 @@
-"""Cross-cutting views — landing, dashboard, healthz, run-toast banner."""
+"""Cross-cutting views — landing, home, healthz, run-toast banner."""
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 
 from core.models import UserJobLock
-from print_runs.models import PrintRun
 from print_runs.services.render import (
     already_printed_ids,
     last_print_timestamp,
+    open_draft,
+    saved_runs,
     settings_summary,
 )
-from records.models import Release
+from records.models import Override, Release
 from records.services.bpm_cascade import bpm_coverage_breakdown
 
 
@@ -25,80 +25,55 @@ _KIND_LABEL = {
 
 
 def landing(request):
-    """Public homepage. Authenticated users see the dashboard;
-    visitors see the marketing landing."""
+    """Public homepage. Authenticated users get Home; visitors the pitch."""
     if request.user.is_authenticated:
-        return _render_dashboard(request)
+        return _render_home(request)
     return render(request, "landing.html", {})
 
 
 @login_required
-def dashboard(request):
-    """Authenticated homepage. Sidebar wordmark links here."""
-    return _render_dashboard(request)
+def home(request):
+    """Authenticated homepage. One primary action, your saved sets, then
+    the library. Deliberately not a metrics dashboard — the job to be done
+    is making labels, so that is the only thing given weight."""
+    return _render_home(request)
 
 
-def _render_dashboard(request):
+def _render_home(request):
     user = request.user
     coverage = bpm_coverage_breakdown(user)
 
     total_releases = Release.objects.filter(user=user).count()
-    by_type = list(
-        Release.objects.filter(user=user)
-        .exclude(release_type="")
-        .values("release_type")
-        .annotate(n=Count("id"))
-        .order_by("-n")[:6]
-    )
-
     printed_ids = already_printed_ids(user)
     new_count = (
-        Release.objects.filter(user=user)
+        Release.objects.filter(user=user, tracks__isnull=False)
+        .distinct()
         .exclude(discogs_release_id__in=printed_ids)
         .count()
     )
-    last_print_ts = last_print_timestamp(user)
 
-    recent_runs_qs = PrintRun.objects.filter(user=user)[:6]
-    recent_runs = [
+    recent = [
         {
             "id": r.id,
-            "name": r.name,
+            "name": r.display_name,
             "created_at": r.created_at,
             "release_count": len(r.release_ids or []),
             "settings_summary": settings_summary(r.settings),
         }
-        for r in recent_runs_qs
-    ]
-    run_count = PrintRun.objects.filter(user=user).count()
-
-    coverage_total = coverage["total"] or 1
-    coverage_segments = [
-        ("high", coverage["high"], "bg-emerald-500", "high"),
-        ("octave", coverage["octave"], "bg-cyan-500", "oct."),
-        ("shared", coverage["shared"], "bg-yellow-500", "shared"),
-        ("single", coverage["single"], "bg-sky-500", "single"),
-        ("disputed", coverage["disputed"], "bg-amber-500", "disp."),
-        ("missing", coverage["missing"], "bg-app-s3", "miss"),
-    ]
-    coverage_segments = [
-        {
-            "key": k, "n": n, "pct": round(100 * n / coverage_total, 2),
-            "color": color, "label": label,
-        }
-        for (k, n, color, label) in coverage_segments
+        for r in saved_runs(user)[:5]
     ]
 
-    return render(request, "dashboard.html", {
-        "active": "dashboard",
-        "coverage": coverage,
-        "coverage_segments": coverage_segments,
-        "totals_total": total_releases,
-        "totals_by_type": by_type,
+    return render(request, "home.html", {
+        "active": "home",
         "new_count": new_count,
-        "last_print_ts": last_print_ts,
-        "recent_runs": recent_runs,
-        "run_count": run_count,
+        "last_print_ts": last_print_timestamp(user),
+        "draft": open_draft(user),
+        "recent_runs": recent,
+        "run_count": saved_runs(user).count(),
+        "lib_releases": total_releases,
+        "lib_tracks": coverage["total"],
+        "lib_missing": coverage["missing"],
+        "lib_overrides": Override.objects.filter(user=user).count(),
     })
 
 

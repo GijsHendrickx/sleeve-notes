@@ -21,6 +21,7 @@ class Release(TimestampedModel):
     notes = models.TextField(blank=True)
     basic_information = models.JSONField(null=True, blank=True)
     raw_tracklist = models.JSONField(null=True, blank=True)
+    videos = models.JSONField(null=True, blank=True)
     release_type = models.CharField(max_length=50, blank=True)
     format = models.CharField(max_length=50, blank=True)
     thumb_url = models.URLField(max_length=500, blank=True)

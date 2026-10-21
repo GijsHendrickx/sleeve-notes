@@ -1,0 +1,94 @@
+<title>Type Candidates</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=Martian+Mono:wght@400;500&family=Chivo:wght@400;500;600;800&family=Chivo+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;600;800&family=Red+Hat+Mono:wght@400;500;600&family=Archivo:wght@800&family=Geist:wght@400;500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: same sample set rendered per candidate so only the letterforms differ. */
+:root { color-scheme: light;
+  --g0: #F3F4F4; --g1: #E6E8E9; --g2: #D5D8DA; --g3: #BFC3C6; --g4: #8E9498; --g5: #4E5457; --g6: #2A2E30; --g7: #17191A; --led: #FF5A14;
+  --line: rgba(23,25,26,.14); }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--g2); color: var(--g7); font: 15px/1.5 system-ui, sans-serif; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 72px; display: grid; gap: 28px; }
+.wrap > * { min-width: 0; }
+h1 { margin: 0; font: 700 32px/1.1 "Barlow Semi Condensed", sans-serif; letter-spacing: -0.01em; }
+.lede { margin: 8px 0 0; color: var(--g5); max-width: 64ch; }
+.cards { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
+.card { background: var(--g1); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,.75), 0 0 0 1px var(--line); padding: 18px; display: grid; gap: 14px; font-family: var(--ui); min-width: 0; }
+.card * { min-width: 0; }
+.card[aria-label^='4'] { font-feature-settings: 'cv11'; }
+.ch { display: flex; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; align-items: baseline; }
+.ch b { font: 700 18px var(--ui); }
+.ch span { font: 400 13px var(--data); color: var(--g5); }
+.dark { background: var(--g7); color: var(--g0); border-radius: 14px; padding: 22px; display: grid; gap: 14px; }
+.mark { display: flex; align-items: center; gap: 10px; font: var(--dw) calc(18px * var(--ds)) var(--display); letter-spacing: var(--dls); }
+.needle { width: 30px; height: 24px; flex: none; }
+.dark h3 { margin: 0; font: var(--dw) calc(40px * var(--ds))/1 var(--display); letter-spacing: var(--dls); text-wrap: balance; }
+.dark p { margin: 0; color: var(--g3); font: 400 15px/1.5 var(--ui); max-width: 44ch; }
+.btns { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { height: 38px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 10px; font: 500 14px var(--ui); border: 1px solid transparent; }
+.btn.p { background: var(--g0); color: var(--g7); }
+.btn.q { border-color: rgba(243,244,244,.28); color: var(--g0); }
+.led { width: 10px; height: 10px; border-radius: 50%; background: var(--led); box-shadow: 0 0 0 2px var(--g6); }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: stretch; }
+.readout { display: flex; align-items: baseline; gap: 10px; padding: 14px 16px; border-radius: 12px; background: var(--g7); color: var(--led); box-shadow: inset 0 2px 6px rgba(0,0,0,.6), 0 0 0 1px var(--g6); }
+.readout b { font: 500 58px/1 var(--data); letter-spacing: var(--dl); font-variant-numeric: tabular-nums; }
+.readout i { font: normal 500 13px var(--data); color: var(--g4); }
+.readout em { font: normal 500 20px var(--data); margin-left: auto; color: var(--g0); }
+.slip { background: var(--g6); border-radius: 12px; padding: 14px; display: grid; place-items: center; }
+.sticker { width: 100%; max-width: 210px; background: #FEFEFC; color: #141414; border-radius: 3px; padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; }
+.sticker .pos { font: 500 12px var(--data); color: #55595B; }
+.sticker b { font: 500 46px/.95 var(--data); letter-spacing: var(--dl); }
+.sticker .k { font: 500 18px var(--data); align-self: end; }
+.sticker .n { grid-column: 1 / -1; font: 500 12px var(--ui); color: #3A3D3F; border-top: 1px solid #D5D7D8; padding-top: 5px; margin-top: 5px; }
+.rows { background: var(--g0); border-radius: 12px; box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
+.row { display: grid; grid-template-columns: 34px 1fr 52px 40px; gap: 10px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--line); font: 400 14px var(--ui); }
+.row:first-child { border-top: 0; }
+.row .pos, .row .key { font: 400 13px var(--data); color: var(--g5); }
+.row .key { text-align: right; }
+.row b { font-weight: 500; display: block; }
+.row small { font-size: 13px; color: var(--g5); }
+.row .bpm { font: 500 14px var(--data); text-align: right; }
+.body { font: 400 14px/1.55 var(--ui); color: var(--g5); margin: 0; max-width: 62ch; }
+.body b { color: var(--g7); font-weight: 600; }
+.note { font: 400 14px var(--ui); color: var(--g5); }
+@media (max-width: 520px) { .cards { grid-template-columns: 1fr; } .dark { padding: 16px; } .readout b { font-size: 46px; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Lettertypes naast elkaar</h1>
+    <p class="lede">Dezelfde inhoud per kandidaat, zodat alleen de letters verschillen. Het eerste kaartje is wat je nu ziet, ter vergelijking. De merknaam is een aanduiding.</p>
+  </header>
+  <div class="cards" id="cards"></div>
+</div>
+
+<script>
+var C = [
+  { id:'nu', name:'Nu · referentie', sub:'Archivo + Geist + IBM Plex Mono',
+    display:"'Archivo', sans-serif", ui:"'Geist', sans-serif", data:"'IBM Plex Mono', monospace", dw:800, ds:1, dls:'-0.03em', dl:'-0.05em',
+    note:'Netjes, maar de combinatie die je ook op duizend andere sites ziet.' },
+  { id:'a', name:'1 · Paneel', sub:'Barlow Semi Condensed + Barlow + Martian Mono',
+    display:"'Barlow Semi Condensed', sans-serif", ui:"'Barlow', sans-serif", data:"'Martian Mono', monospace", dw:700, ds:1.18, dls:'-0.005em', dl:'-0.06em',
+    note:'Smalle koppen die op het opschrift van een mengpaneel lijken. Barlow komt uit de wereld van borden en instrumenten. Het meest hardware, en het minst gebruikelijk voor webapps. Martian Mono is breed en valt op als display.' },
+  { id:'b', name:'2 · Eén familie', sub:'Chivo + Chivo Mono',
+    display:"'Chivo', sans-serif", ui:"'Chivo', sans-serif", data:"'Chivo Mono', monospace", dw:800, ds:.98, dls:'-0.025em', dl:'-0.05em',
+    note:'Een stevige grotesk met een mono-broertje, dus alles voelt als één gemaakt systeem. Minder uitgesproken dan 1, maar rustig en kloppend.' },
+  { id:'c', name:'3 · Redactioneel', sub:'Schibsted Grotesk + Red Hat Mono',
+    display:"'Schibsted Grotesk', sans-serif", ui:"'Schibsted Grotesk', sans-serif", data:"'Red Hat Mono', monospace", dw:800, ds:1, dls:'-0.03em', dl:'-0.05em',
+    note:'Ruimere, iets menselijkere vormen met een eigen karakter in de kleine letters. Het meest Apple-achtig van de drie, met de zachtste uitstraling.' },
+  { id:'inter', name:'4 · Inter', sub:'Inter + Inter + JetBrains Mono',
+    display:"'Inter', sans-serif", ui:"'Inter', sans-serif", data:"'JetBrains Mono', monospace", dw:800, ds:1, dls:'-0.04em', dl:'-0.05em',
+    note:'Jouw keuze. Strak en zeer leesbaar, maar ook het lettertype dat het vaakst in gegenereerde sites voorkomt. Met de enkelvoudige a (cv11) en strak gezette koppen wordt hij herkenbaarder.' }
+];
+var NEEDLE = '<svg class="needle" viewBox="0 0 30 24" aria-hidden="true"><circle cx="24" cy="5" r="3.6" fill="currentColor"/><path d="M24 5 L6 14 L10.5 21.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="miter"/><circle cx="10.5" cy="21" r="2.4" fill="#FF5A14"/></svg>';
+function card(c){
+  return '<section class="card" style="--display:'+c.display+';--ui:'+c.ui+';--data:'+c.data+';--dw:'+c.dw+';--ds:'+c.ds+';--dls:'+c.dls+';--dl:'+c.dl+'" aria-label="'+c.name+'">'+
+  '<div class="ch"><b>'+c.name+'</b><span>'+c.sub+'</span></div>'+
+  '<div class="dark"><div class="mark">'+NEEDLE+'Merknaam</div><h3>Elke hoes klaar voor de booth.</h3><p>Haal je collectie uit Discogs, laat BPM en key invullen en print etiketten voor op je hoezen.</p><div class="btns"><span class="btn p"><i class="led"></i>Inloggen met Discogs</span><span class="btn q">Bekijk een voorbeeld</span></div></div>'+
+  '<div class="pair"><div class="readout"><b>118</b><i>BPM</i><em>8A</em></div><div class="slip"><div class="sticker"><span class="pos">A1</span><span></span><b>118</b><span class="k">8A</span><span class="n">Mr. Fingers · Can You Feel It</span></div></div></div>'+
+  '<div class="rows"><div class="row"><span class="pos">A1</span><span><b>Can You Feel It</b><small>Mr. Fingers</small></span><span class="bpm">118</span><span class="key">8A</span></div><div class="row"><span class="pos">A2</span><span><b>Strings of Life</b><small>Derrick May</small></span><span class="bpm">126</span><span class="key">5A</span></div></div>'+
+  '<p class="body"><b>Stap 2 van 4.</b> 41 van de 54 tracks hebben een BPM. Zoek de overige 13 nu op, of sla ze over en vul ze later zelf in.</p>'+
+  '<p class="note">'+c.note+'</p></section>';
+}
+document.getElementById('cards').innerHTML = C.map(card).join('');
+</script>

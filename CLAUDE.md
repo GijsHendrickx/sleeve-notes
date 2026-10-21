@@ -18,7 +18,7 @@ webapp/            # Django project. `manage.py` lives here. Apps under it:
                    #   core/       UserJobLock + shared models
                    #   users/      AbstractUser subclass (custom AUTH_USER_MODEL)
                    #   records/    Release, Track, BpmCache, Override + services + views
-                   #   print_runs/ PrintRun + render service + PDF endpoint
+                   #   print_runs/ PrintRun + flow.py (the 4 steps) + render service
                    #   audit/      AuditEvent (append-only history)
                    #   discogs_provider/  Custom allauth OAuth1 adapter for Discogs
 roadmap.md         # Feature ideas / future work. See "Capturing feature ideas" below.
@@ -38,7 +38,9 @@ docker compose up -d db     # Postgres on localhost:5432
 sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluster
 ```
 
-`sleeve-notes web` is a thin wrapper around `webapp/manage.py runserver` that also opens the browser. The in-process Q2 cluster (gated by `DEV_INPROCESS_QCLUSTER=true` in `.env`) means one terminal, one Ctrl-C — no separate worker process needed for dev. **Restart isn't needed for Python or template edits** since Django's autoreloader watches everything under `webapp/` and `sleeve_notes/`. (Once in a while the reloader misses a urls.py change and you get a stale `NoReverseMatch`; manual restart fixes it.)
+`sleeve-notes web` is a thin wrapper around `webapp/manage.py runserver` that also opens the browser. The dev Q2 cluster (gated by `DEV_INPROCESS_QCLUSTER=true` in `.env`) means one terminal, one Ctrl-C — no separate worker process to babysit.
+
+**The dev cluster must stay a child *process*, never a thread inside runserver.** `core/apps.py` launches `manage.py qcluster` via `subprocess.Popen` and kills it on exit. It used to run `Cluster().start` on a daemon thread, which fails hard on macOS: django-q2 (1.11.1) hardcodes the `fork` start method whenever it's available, and forking a parent that has threads running — or that has already touched the network stack — kills the child the instant it calls into CoreFoundation (`objc[…]: +[NSNumber initialize] may have been in progress in another thread when fork() was called. Crashing instead.`). `requests` triggers it on its first call through macOS proxy lookup. The symptom is nasty and easy to misread: the worker dies before its `finally` runs, so the task is never acked, the `UserJobLock` row is never released, and **the toast spins forever on a job that is already dead**. `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` does *not* fix it (verified — the child still takes SIGSEGV). If you ever see a job hang with no progress, check the server log for `objc[` and `reincarnated worker … after death` before suspecting the job itself. **Restart isn't needed for Python or template edits** since Django's autoreloader watches everything under `webapp/` and `sleeve_notes/`. (Once in a while the reloader misses a urls.py change and you get a stale `NoReverseMatch`; manual restart fixes it.)
 
 ## Auth & multi-tenancy
 
@@ -60,9 +62,17 @@ sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluste
 
 ## Web UI conventions
 
-**Action-oriented, not pipeline-oriented.** The CLI thinks in pipeline steps (fetch → bpm → render). The web UI exposes each long-running task as a named sidebar action with a tailored modal — "Discogs sync", "Import Discogs csv", "BPM lookup". If a new long-running CLI subcommand lands, add it as a named action, not as an option in a generic dropdown.
+**Goal-oriented, not pipeline-oriented.** The CLI thinks in pipeline steps (fetch → bpm → render). The UI never names a task after its internals: step 2 says "41 of 54 tracks have a BPM" and offers the lookup as the consequence, not "run the BPM cascade". Collection-wide jobs that don't belong to one set (Discogs sync, CSV import, whole-library BPM lookup) live as named actions with tailored modals under Home's Library heading. If a new long-running CLI subcommand lands, add it as a named action there — not as an option in a generic dropdown.
 
-**Sidebar shape.** Two labelled sections in this order: **Collection** (Records `/collection`, Tracks `/tracks`) and **Actions** (the named jobs + Print runs `/print-runs/`). The Dashboard is the homepage (`/dashboard`) reached via the "Sleeve Notes" wordmark click; it is NOT a sidebar item. The wordmark is title-cased ("Sleeve Notes"), larger than nav items, with the version underneath. The sidebar footer shows the signed-in username + Sign out. The whole sidebar is rendered only when `user.is_authenticated`; logged-out visitors see the `/` landing page with no chrome.
+**There is no sidebar.** It was removed when the flow landed. Outside the flow there is a slim top bar: wordmark (→ Home) + breadcrumb on the left, username + Sign out on the right. Inside the flow the top bar is replaced by the step rail (`templates/flow/_base.html` overrides `{% block chrome %}`) — four steps and one **Save & close**, nothing else. A visible nav mid-set invites wandering off, which is exactly what the old editor allowed. Both bars render only when `user.is_authenticated`; logged-out visitors get the `/` landing page with no chrome.
+
+**The flow is the product; Home is the launcher.** Making sleeve labels is a four-step flow (`print_runs/flow.py`): Records → BPM → Design → Get them. There is no separate wizard and no one-page editor — the run *is* the flow. Home (`/`, `core.views.home`) carries exactly one primary action, the recent sets, and the Library. It is explicitly NOT a metrics dashboard; resist re-adding KPI cards.
+
+**Drafts are the unit of resumability.** Entering the flow creates a `PrintRun` with `status='draft'`; `step` records how far the user got and the flow reopens there. One draft per user — `flow.start` reuses the open one. **Only `saved` runs count as printed**: `already_printed_ids` and `last_print_timestamp` filter through `saved_runs()`. If you add a query over print history, go through those helpers, or an abandoned draft will silently mark records as done.
+
+**A job inside the flow renders in the step, not the toast.** Step 2 shows the cascade's progress inline and polls `/labels/<id>/bpm/status` every 2s *only while running*. The toast still exists for when the user navigates away. The status partial deliberately excludes the overrides table below it — swapping a table the user is typing into would wipe their work, so completion offers an explicit "Show updated list" instead.
+
+**Step 3's checkboxes are the single source of truth.** The three style presets are client-side bulk-sets over the nine content toggles (`PRESETS` is shipped to the template via `json_script` so the two can't drift). The server re-derives which chip is lit with `active_preset()`. Never make a preset a separate persisted field.
 
 **Toast progress text gets prettified.** `_prettify` in `records/jobs.py` strips the cascade's `[N/M] ●● artist - title -> 128 key=8A sources=[...]` down to `(N/M) artist - title` and writes `progress_done`/`progress_total` for the determinate progress bar. New job types should emit `[done/total]` somewhere in their log lines so the bar fills.
 
@@ -72,9 +82,11 @@ sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluste
 
 **Consistency across listing pages.** New listing pages mirror `/collection`'s affordances: search input is the FIRST element (same shape: `field h-8 px-3`), filter selects/chips right after, count + primary action at `ml-auto`. When a page already has a POST form (e.g. `/tracks`' big Save), use an empty sibling `<form id="..." method="get">` and bind the GET-only inputs to it via the HTML5 `form="..."` attribute so everything stays on one row without nesting forms.
 
-**Rename a feature → update every surface in one pass.** A label change is never just the sidebar. Also update the page title (`{% block title %}`), breadcrumb (`{% block breadcrumb %}`), dashboard cards, cross-page links, and README references. Partial renames produce confusing UIs where the sidebar says "Records" but the page header still says "Collection". Grep before declaring done.
+**Rename a feature → update every surface in one pass.** A label change is never just one screen. Also update the page title (`{% block title %}`), breadcrumb (`{% block breadcrumb %}`), Home, cross-page links, and README references. Note the deliberate split the "print run" → "sleeve labels" rename left behind: the **UI** says sleeve labels everywhere, while the **CLI flags and the model/table stay `PrintRun` / `--print-run-id` / `--mark-printed`**. Don't "finish" that rename in the CLI without deciding to break those flags. Partial renames produce confusing UIs where one screen says "Records" but the page header still says "Collection". Grep before declaring done.
 
 **Visual style.**
+- **`DESIGN.md` is the design system — read it before any UI work.** Hardware-grey housing, near-black display, one orange LED (`--led`) that only means active/look-here. Light, calm, functional (Operate mode). Tokens live in `base.html` `:root`; `PRODUCT.md` holds product truth for the Impeccable skill (`.claude/skills/impeccable/`, run `/impeccable <command>`). Keep new UI to these tokens and the `.t-good/.t-warn/.t-bad`, `.link`, `.row-hover`, `.row-selected` helpers — no raw Tailwind palette colours (`text-emerald-400` etc.).
+- Deliberately not used, because they read as generated UI: eyebrow/kicker labels above headings (use `.section-title`), uppercase tracked table headers, glow or gradient surfaces, backdrop blur/glass, numbered circle badges, unicode glyphs as icons (draw an SVG), fully rounded pills, text under 12px.
 - No greyed-out text in actionable buttons — reads as disabled. `.btn-quiet` uses `--ink` for text; reserve `--dim` for decorative glyphs.
 - No italics on song or release titles.
 - Prefer full column headers (`Position`, `Format`, `Duration`) over abbreviations. `BPM` is the one universal exception. Abbreviate (`Pos`, `Fmt`, `Dur`) only when space is genuinely tight (e.g. the detail drawer on `/collection`) — never on full-width listing pages.
@@ -113,11 +125,23 @@ Briefly mention in your reply that you captured it (one line is enough), so the 
 
 When in doubt, capture it. Re-finding a forgotten idea costs more than a one-line entry in a file.
 
+## Challenge ideas — always
+
+The user has explicitly asked to be challenged on ideas, every time, not only when they ask for an opinion. Agreeing by default is not helpful here.
+
+When the user proposes a feature, approach or technology, check it before building it or writing it down:
+- **Does it already exist?** Grep first. An idea that is already (partly) in the code should be answered with what's there and what's actually missing (e.g. `BpmCache` already covered "cache BPMs once fetched"; the new part was sharing across users).
+- **Does it conflict with a recorded decision?** The `## Uitgangspunten` at the top of `roadmap.md` (minimal customer data, the fixed Django stack) and the conventions in this file win unless the user decides otherwise.
+- **Is there a cheaper or lower-maintenance variant?** Say which, and why.
+- **What's the failure mode?** Especially anything that can silently put a wrong value on a printed sticker.
+
+How to challenge: state the counterargument concretely and briefly, give a recommendation, and keep going — don't block the work on it. When capturing the idea in `roadmap.md`, still capture it, and put the counterargument next to it (a `*Challenge*` / `*Tegenargument*` line or sub-section) so it isn't re-debated from scratch later. If the user reaffirms the idea after hearing the challenge, that's their call: build it.
+
 ## Before pushing to GitHub
 
 Whenever I ask you to push (`push`, `push to <branch>`, `ship it`, etc.) — do NOT just `git push` the pending diff. First do a thorough sweep of the repo to confirm everything still matches reality, then commit any fixes alongside the push:
 
-- **README.md** especially — feature labels, sidebar/page names, screenshot text, CLI flags, command examples. UI renames are the #1 source of stale docs.
+- **README.md** especially — feature labels, page names, screenshot text, CLI flags, command examples. UI renames are the #1 source of stale docs.
 - **CLAUDE.md (this file)** — conventions you've added or invalidated this session.
 - **CLI `--help` strings + the corresponding README snippets** — they should agree.
 - **In-code comments and docstrings** referencing renamed/removed concepts.

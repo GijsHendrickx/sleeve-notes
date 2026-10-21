@@ -21,6 +21,8 @@ dependencies = [
     "reportlab>=4.1,<5",
     "qrcode>=7.4,<9",
     "requests-oauthlib>=1.3,<3",
+    "librosa>=0.11,<1",
+    "yt-dlp>=2026.8,<2027",
     # Django web app (webapp/)
     "django>=5.2,<5.3",
     "django-environ>=0.11,<1",

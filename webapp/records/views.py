@@ -11,23 +11,23 @@ from django.views.decorators.http import require_POST
 
 from sleeve_notes import sticker_layout as L
 from sleeve_notes.fetch_bpm import (
-    BPM_MAX,
-    BPM_MIN,
     RateLimiter,
     cache_key,
     cascade_all,
-    parse_key_to_camelot,
 )
 from sleeve_notes.preview import render_release_stickers_svg
 from sleeve_notes.youtube import resolve_video_id
 
-from records.models import BpmCache, Override, Release, Track
+from records.models import BpmCache, Release, Track
 from records.services.bpm_cascade import (
     bpm_coverage_for_releases,
     derive_track_result,
     load_all_cache_entries,
     load_overrides,
+    parse_override_post,
+    precise_overrides,
     save_cache_entry,
+    save_track_overrides,
 )
 from print_runs.services.render import build_bpm_lookup, releases_by_ids
 
@@ -69,25 +69,12 @@ def _build_track_row(
         "bpm": result.get("bpm"),
         "bpm_confidence": result.get("bpm_confidence"),
         "bpm_sources": result.get("bpm_sources"),
+        "bpm_source_labels": result.get("bpm_source_labels"),
+        "audio_analysis": result.get("audio_analysis"),
         "key_camelot": result.get("key_camelot"),
         "spotify_track_id": track.spotify_track_id,
         "override": override_display,
     }
-
-
-def _load_precise_overrides(user) -> dict[tuple[int, str], Override]:
-    """Map (discogs_release_id, position) → Override row (precise form only).
-
-    Broad overrides (artist+title without release+position) live in by_tk
-    from load_overrides() and aren't editable per-row from /tracks.
-    """
-    out: dict[tuple[int, str], Override] = {}
-    for o in (
-        Override.objects.filter(user=user, release__isnull=False)
-        .select_related("release")
-    ):
-        out[(o.release.discogs_release_id, o.position or "")] = o
-    return out
 
 
 @login_required
@@ -183,7 +170,7 @@ def tracks(request):
 
     by_rp, by_tk, _ = load_overrides(request.user)
     cache_entries = load_all_cache_entries(request.user)
-    precise = _load_precise_overrides(request.user)
+    precise = precise_overrides(request.user)
 
     rows = []
     for t in tracks_db:
@@ -220,93 +207,15 @@ def tracks(request):
 def tracks_save(request):
     """Batch-save per-row overrides from the /tracks form.
 
-    Form fields look like ``bpm_<discogs_release_id>_<position>`` etc.
-    A row with all three fields blank deletes the override; any combination
-    of non-blank fields creates or updates it.
+    Parsing + writing live in records.services.bpm_cascade so step 2 of the
+    sleeve-labels flow saves overrides through exactly the same code.
     """
-    grouped: dict[tuple[int, str], dict[str, str]] = {}
-    for key, value in request.POST.items():
-        for prefix in ("bpm_", "key_", "note_"):
-            if not key.startswith(prefix):
-                continue
-            rest = key[len(prefix):]
-            try:
-                rid_s, pos = rest.split("_", 1)
-                rid = int(rid_s)
-            except ValueError:
-                continue
-            grouped.setdefault((rid, pos), {})[prefix[:-1]] = value.strip()
-            break
-
+    grouped = parse_override_post(request.POST)
     tracks_url = "/tracks"
     if not grouped:
         return redirect(f"{tracks_url}?saved=0")
 
-    existing = _load_precise_overrides(request.user)
-    releases_by_did = {
-        r.discogs_release_id: r
-        for r in Release.objects.filter(
-            user=request.user,
-            discogs_release_id__in=[rid for (rid, _) in grouped],
-        )
-    }
-
-    changed = 0
-    for (rid, pos), entry in grouped.items():
-        bpm_raw = entry.get("bpm") or ""
-        key_raw = entry.get("key") or ""
-        note_raw = entry.get("note") or ""
-
-        bpm_val: int | None = None
-        if bpm_raw:
-            try:
-                bpm_val = int(bpm_raw)
-            except ValueError:
-                continue
-            if not (BPM_MIN <= bpm_val <= BPM_MAX):
-                continue
-
-        key_val = ""
-        if key_raw:
-            normalized = parse_key_to_camelot(key_raw)
-            if normalized is None:
-                continue
-            key_val = normalized
-
-        empty = bpm_val is None and not key_val and not note_raw
-        current = existing.get((rid, pos))
-
-        if empty and current is None:
-            continue
-        if empty and current is not None:
-            current.delete()
-            changed += 1
-            continue
-
-        rel = releases_by_did.get(rid)
-        if rel is None:
-            continue  # Release dropped out of the collection; skip.
-
-        if current is None:
-            Override.objects.create(
-                user=request.user, release=rel, position=pos,
-                bpm=bpm_val, key_camelot=key_val, note=note_raw,
-            )
-            changed += 1
-            continue
-
-        same = (
-            current.bpm == bpm_val
-            and (current.key_camelot or "") == key_val
-            and (current.note or "") == note_raw
-        )
-        if same:
-            continue
-        current.bpm = bpm_val
-        current.key_camelot = key_val
-        current.note = note_raw
-        current.save(update_fields=["bpm", "key_camelot", "note", "updated_at"])
-        changed += 1
+    changed = save_track_overrides(request.user, grouped)
 
     # Preserve the filter/search context so the user lands back on the
     # same view they submitted from.
@@ -354,6 +263,8 @@ def release_detail(request, release_id):
             "bpm": result.get("bpm"),
             "bpm_confidence": result.get("bpm_confidence"),
             "bpm_sources": result.get("bpm_sources"),
+            "bpm_source_labels": result.get("bpm_source_labels"),
+            "audio_analysis": result.get("audio_analysis"),
             "key_camelot": result.get("key_camelot"),
             "spotify_track_id": t.spotify_track_id,
         })
@@ -452,7 +363,7 @@ def tracks_sync(request):
 
     by_rp, by_tk, _ = load_overrides(request.user)
     cache_entries = load_all_cache_entries(request.user)
-    precise = _load_precise_overrides(request.user)
+    precise = precise_overrides(request.user)
     row = _build_track_row(
         request.user, track,
         by_rp=by_rp, by_tk=by_tk,

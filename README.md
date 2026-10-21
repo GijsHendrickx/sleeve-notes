@@ -1,10 +1,10 @@
 # Sleeve Notes
 
-Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Sticker size, the grid on A4, edge-to-edge tile vs gutters + crop marks, and which fields appear on each sticker (artist / title / RPM / BPM / key / duration / Discogs QR / side labels) are all configurable per print run — defaults give you 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12".
+Generate a printable A4 PDF with one sticker per record from your Discogs collection. Each sticker lists every track on the release, grouped by side (A / B / …), with **position, artist, title, duration, musical key (Camelot) and BPM**, plus a **QR code** linking to the Discogs release page and the **playback RPM** (33⅓ / 45) when Discogs lists it. Sticker size, the grid on A4, edge-to-edge tile vs gutters + crop marks, and which fields appear on each sticker (artist / title / RPM / BPM / key / duration / Discogs QR / side labels) are all configurable per set — defaults give you 96 × 50.8 mm (two per row on A4), perfect for the sleeve of a 12".
 
-The web UI manages **print runs** — each run is a saved "which releases + which layout settings" recipe you can re-download, Duplicate as the starting point for the next print, or delete. Collection views filter by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other), both auto-classified from Discogs metadata at fetch time.
+The web UI is a four-step flow — **Records → BPM → Design → Get them** — that ends in a PDF (and, later, an order for printed stickers). Each finished set of **sleeve labels** is a saved "which records + which layout" recipe you can re-download, duplicate as the starting point for the next print, or delete. Collection views filter by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other), both auto-classified from Discogs metadata at fetch time.
 
-BPM and key are looked up by firing 5 sources in **parallel per track** (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciling them by consensus. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
+BPM and key are looked up through five metadata sources (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciled by consensus. Optionally, tracks with zero or one metadata BPM are measured from a strictly matched YouTube recording using librosa. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
 ---
 
@@ -103,7 +103,7 @@ docker compose up -d db
 
 After install, the CLI is available as `sleeve-notes`. All commands resolve `.tmp/`, `.env`, and the Postgres connection from `DATABASE_URL` against the project root.
 
-**First run** apply migrations once: `cd webapp && python manage.py migrate`. Then sign in via the web UI (`sleeve-notes web`) to create your user row; the per-user tables (collection, BPM cache, print runs) fill up as you sync.
+**First run** apply migrations once: `cd webapp && python manage.py migrate`. Then sign in via the web UI (`sleeve-notes web`) to create your user row; the per-user tables (collection, BPM cache, sleeve-label sets) fill up as you sync.
 
 ---
 
@@ -130,7 +130,7 @@ DJANGO_SECRET_KEY=...
 DATABASE_URL=postgres://sleevenotes:dev@localhost:5432/sleevenotes
 
 # Dev convenience: run the Django-Q2 worker on a daemon thread inside
-# runserver so sidebar action buttons work in one terminal.
+# runserver so the background jobs work in one terminal.
 DEV_INPROCESS_QCLUSTER=true
 ```
 
@@ -158,6 +158,10 @@ BEATPORT_PASSWORD=...
 # don't care about the YouTube fallback — the icon then opens
 # youtube.com/results instead of resolving to a specific video.
 YOUTUBE_API_KEY=...
+
+# Optional: measure YouTube audio only when metadata returns zero or one BPM.
+# Requires ffmpeg (included in Docker; install separately for local CLI use).
+AUDIO_ANALYSIS_ENABLED=true
 
 ```
 
@@ -237,7 +241,7 @@ sleeve-notes bpm                  # default: 8 cross-track worker threads
 sleeve-notes bpm --workers 12     # bump if you're bandwidth-rich
 ```
 
-- Iterates over every track in the `tracks` table. A pool of worker threads (`--workers 8` by default) processes tracks in parallel; inside each worker, all 5 sources fire in parallel and are reconciled via consensus (BPM cluster ±1; key by exact-match majority). See [BPM cascade details](#bpm-cascade-details).
+- Iterates over every track in the `tracks` table. A pool of worker threads (`--workers 8` by default) processes tracks in parallel; inside each worker, the five metadata sources fire in parallel and are reconciled via consensus (BPM cluster ±1; key by exact-match majority). If enabled, audio analysis runs afterwards only for tracks with zero or one metadata BPM. See [BPM cascade details](#bpm-cascade-details).
 - Output: rows in `bpm_cache` (one per track, with `sources_tried` array) plus rows in `bpm_source_hits` (one per source-that-returned-something). Per-track consensus is derived on the fly by the renderer — no `bpm_results.json` needed.
 - Beatport is opt-in (see [Beatport: one-time auth](#beatport-one-time-auth)).
 
@@ -256,7 +260,7 @@ sleeve-notes render --tile                       # edge-to-edge: exactly 10 stic
 sleeve-notes render --tile --tile-cols 3 --tile-rows 4    # 12-per-A4 tile (70 x 74.2 mm)
 sleeve-notes render --new-only                   # only releases not yet in the print history
 sleeve-notes render --new-only --mark-printed    # render new + save as a new print run (releases + settings)
-sleeve-notes render --print-run-id <uuid>         # re-render a previously-saved print run (UUID — get it from `/print-runs/` or `sleeve-notes query print_runs.PrintRun`)
+sleeve-notes render --print-run-id <uuid>         # re-render a previously-saved set (UUID — get it from `/labels/` or `sleeve-notes query print_runs.PrintRun`)
 sleeve-notes render -o ~/Desktop/crate-2026-05.pdf   # custom output path
 sleeve-notes render -o out/                       # custom dir; filename defaults to stickers.pdf
 ```
@@ -270,7 +274,7 @@ sleeve-notes render -o out/                       # custom dir; filename default
 - **QR code** sits 1 mm from the top-right corner of each sticker (14 × 14 mm, ~0.5 mm modules) and links to `https://www.discogs.com/release/<id>`. Scan it from the sleeve to jump straight to the Discogs page.
 - The console output reports the sticker count, pages used, the chosen mm size and the auto-derived grid (e.g. `2x5 grid edge-to-edge (tile mode)`), plus the exact number of straight cuts you need to make per page when in tile mode.
 
-**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. Print history lives in the `print_runs` + `print_run_releases` tables. Each `print_runs` row stores a timestamp, an optional name and the layout/content settings used (`settings_json`); the join table records the release IDs that were on it. `--new-only` filters the render to releases that don't appear in any prior print run; `--mark-printed` saves the rendered set + the current CLI settings as a new print run. Typical workflow:
+**Incremental printing (`--new-only` / `--mark-printed`):** you won't reprint a 500-record crate every month — you'll print the 8 records you bought last week. Print history lives in the `print_runs` table — the same rows the web UI calls **sleeve labels**. Each row stores a timestamp, an optional name, the layout/content settings used (`settings`) and the Discogs release ids that were on it (`release_ids`). Rows the web flow hasn't finished yet are `status='draft'` and are ignored by everything below. `--new-only` filters the render to releases that don't appear in any prior print run; `--mark-printed` saves the rendered set + the current CLI settings as a new print run. Typical workflow:
 
 ```bash
 # First time: print everything, save it as a print run
@@ -302,23 +306,32 @@ sleeve-notes web --port 9000     # change port
 sleeve-notes web --no-browser    # bind only, don't pop a tab
 ```
 
-The app is **Django + Tailwind + HTMX** on top of the same engine. Background jobs (Discogs sync, BPM cascade, CSV import) run through Django-Q2; with `DEV_INPROCESS_QCLUSTER=true` in `.env` the Q2 cluster runs on a daemon thread inside `runserver`, so one terminal is all you need. Caches, overrides and print history are identical whether you drive things from the terminal or the browser.
+The app is **Django + Tailwind + HTMX** on top of the same engine. Background jobs (Discogs sync, BPM cascade, CSV import) run through Django-Q2; with `DEV_INPROCESS_QCLUSTER=true` in `.env` `runserver` starts a `manage.py qcluster` child process and shuts it down with itself, so one terminal is all you need. Caches, overrides and print history are identical whether you drive things from the terminal or the browser.
 
-Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance via django-allauth. On return Discogs's user id + username are written into the Django `users.User` row and the access token + secret are persisted in allauth's `SocialToken` so background jobs can call the API on your behalf. Sign out via the **Sign out** link in the sidebar footer.
+Visiting `/` while signed out shows a minimal landing page with a single **Sign in with Discogs** button — it kicks off the OAuth 1.0a dance via django-allauth. On return Discogs's user id + username are written into the Django `users.User` row and the access token + secret are persisted in allauth's `SocialToken` so background jobs can call the API on your behalf. Sign out via the **Sign out** link in the top bar.
 
-Once signed in, the sidebar splits into two sections — **Collection** (data views) and **Actions** (one-shot jobs that shell out to the CLI). The Dashboard is the homepage at `/`, reached by clicking the "Sleeve Notes" wordmark in the top-left.
+Once signed in there is no sidebar. Home (`/`) is the homepage, reachable at any time by clicking the "Sleeve Notes" wordmark in the top bar; making labels happens in a dedicated four-step flow that takes over the whole screen.
+
+**The flow (`/labels/…`).** Making sleeve labels *is* the flow — there is no separate wizard, and no one-page editor any more. Entering it creates a `draft` set, so closing the tab never loses your work; the step rail at the top is the only navigation, plus one **Save & close**. Reopening a draft resumes at the step you left.
+
+| Step | What happens |
+|---|---|
+| **1 · Records** | Pick which records get labels. Everything not in a previous set is pre-selected, with client-side search and **New only** / **Everything** / **Clear**. You can name the set here. |
+| **2 · BPM** | Coverage for *this set only* (confirmed / single source / disputed / missing), and a button that runs the cascade over just these records instead of your whole collection. Progress renders inside the step, not in the corner toast. Below it, a short "needs your eye" list — only the missing, disputed and single-source tracks — with inline BPM/key overrides. |
+| **3 · Design** | Layout settings on the left, a **live label preview** on the right, re-rendered on every change through the same engine path the PDF uses. Three style presets (Minimal / DJ / Everything) bulk-set the nine content toggles underneath. |
+| **4 · Get them** | Sheet preview, a recap (records / tracks / with BPM / A4 sheets) and two outcomes: **Download PDF** now, and **Order them printed** — not open yet, see roadmap.md. Finishing flips the draft to saved, which is what marks its records as printed. |
 
 | Surface | What it's for |
 |---|---|
-| **Dashboard** (`/`) | At-a-glance BPM coverage (high / octave / shared / single / disputed / missing), count of releases new since the last print, quick-action buttons. |
+| **Home** (`/`) | One primary action (**New sleeve labels**, badged with how many records are new since your last print, or **Resume** if a draft is open), your recent sets with Duplicate + PDF, and the Library — Records, Tracks, without-BPM and with-override counts, plus the Discogs sync / CSV import / collection-wide BPM lookup actions. |
 | **Records** (`/collection`) | Searchable, filterable table of every release (artist, title, year, type, format, BPM coverage). Click a row to inspect tracks, BPM sources and key in a side drawer that also renders an inline SVG sticker preview at the actual print size. |
 | **Tracks** (`/tracks`) | Per-track table with text search (artist/title), filter chips (All / Without BPM / Has override), and inline editing of manual BPM / key / note overrides. Each row has a **▶** listen icon (Spotify-green when we have a Spotify ID, YouTube-red otherwise) that opens the track in a new tab, plus a **↻** sync button that re-fetches BPM/key for just that track from all 5 sources; the BPM and Key cells briefly flash blue when the request returns, so the user gets confirmation even when the value didn't change. The same listen icon also appears in the per-release drawer's tracklist on `/collection`. |
-| **Print runs** (`/print-runs/`) | Manage print runs as saved {releases + settings} recipes. The list shows every past run with size + a quick `PDF` download button. The editor (`/print-runs/new`) is a single-page release picker: full release table with checkboxes (pre-checked on releases not yet in any print run), client-side search, and **Select new only** / **Select all** / **Clear** quick actions. Save lands you on the detail page where you can hit **Download PDF**. Settings UI (sticker size, tile mode, content toggles) is deferred — runs created from the browser use the defaults; use the CLI for fine-tuned layouts. |
+| **Sleeve labels** (`/labels/`) | Every saved set as a {records + layout} recipe, with **Duplicate** (copy it into a fresh draft — same layout, adjust the records) and a quick `PDF` download. Click one for the detail page: full tracklist, layout summary, re-download, delete. |
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
 | **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
 
-**Job feedback.** Sidebar actions enqueue a Django-Q2 task; the worker writes progress into a per-user `UserJobLock` row that the toast polls every 2s. Three states map to three visual styles: running (blue determinate bar + `(N/M) artist - title` live), done (green bar + summary), failed (red bar + error). The toast lingers ~5s after completion, then vanishes. One running job per user is enforced at the DB layer — a second click while one's in-flight returns HTTP 409 and a flash on the modal.
+**Job feedback.** Actions enqueue a Django-Q2 task; the worker writes progress into a per-user `UserJobLock` row that the toast polls every 2s. Three states map to three visual styles: running (blue determinate bar + `(N/M) artist - title` live), done (green bar + summary), failed (red bar + error). The toast lingers ~5s after completion, then vanishes. One running job per user is enforced at the DB layer — a second click while one's in-flight returns HTTP 409 and a flash on the modal. Inside the flow, step 2 renders the cascade's progress in the step itself; the toast is what you get once you navigate away.
 
 State lives in Postgres (locally via `docker compose up -d db`) plus `.tmp/` for ad-hoc PDF output. The web app and the CLI are two doors into the same Django ORM; mix and match freely.
 
@@ -396,7 +409,7 @@ The Django models in summary:
 | `records.Track` | Normalized track rows. Populated by sync alongside the parent release. UUID PK. |
 | `records.BpmCache` | One row per (user, artist+title hash). Tracks which sources have been queried in `sources_tried` and the raw per-source hits in `source_hits` (JSONField). |
 | `records.Override` | Manual BPM/key overrides — either precise (`release` + `position`) or broad (`artist` + `title`). Per-user. |
-| `print_runs.PrintRun` | First-class print runs: name + `settings` JSONField + `release_ids` array. Backs the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the `/print-runs/` UI. UUID PK. |
+| `print_runs.PrintRun` | One set of sleeve labels: name + `settings` JSONField + `release_ids` array, plus `status` (`draft` / `saved`) and `step` so an unfinished set resumes where you left it. Only `saved` sets count as printed. Backs the CLI `--new-only` / `--mark-printed` / `--print-run-id` flags and the `/labels/` UI. UUID PK. |
 | `core.UserJobLock` | OneToOne with user; enforces "one running background job per user". State + progress text + result message. The toast reads this. |
 | `audit.AuditEvent` | Append-only history of user actions. Future-proofing for print-fulfillment orders. |
 
@@ -447,7 +460,7 @@ Your overrides go too — export them first via Django admin if needed.
 
 ## BPM cascade details
 
-`sleeve_notes/fetch_bpm.py` runs the cascade with **two levels of `ThreadPoolExecutor`**: an outer pool (`--workers 8` by default) processes tracks in parallel, and inside each worker an inner pool fires **all five sources in parallel per track**, then reconciles them by consensus. Each source can contribute BPM, musical key, or both — independently:
+`sleeve_notes/fetch_bpm.py` runs the cascade with **two levels of `ThreadPoolExecutor`**: an outer pool (`--workers 8` by default) processes tracks in parallel, and inside each worker an inner pool fires the five metadata sources in parallel. The optional audio source runs only when those produce zero or one BPM. Each source can contribute BPM, musical key, or both — independently:
 
 | Source | BPM | Key | Notes |
 |---|:---:|:---:|---|
@@ -456,6 +469,7 @@ Your overrides go too — export them first via Django admin if needed.
 | **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). Coverage = "everything on Spotify" — limited for pre-Spotify vinyl-only releases. The Spotify track ID matched here is also persisted onto `tracks.spotify_track_id` so the web UI's listen icon can deep-link straight into Spotify. |
 | **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
+| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with librosa. Results with fewer than 16 beats or an unstable beat grid are discarded. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
 
@@ -633,16 +647,17 @@ Tracks for which no BPM could be found get an empty rectangle on the sticker its
 │   │   ├── services/                      ← discogs_sync, bpm_cascade — ORM-bound wrappers around sleeve_notes/
 │   │   ├── management/commands/           ← sync_discogs, lookup_bpm, query, overrides — CLI entry points
 │   │   ├── jobs.py                        ← enqueue_* + _run_* worker functions for Django-Q2
-│   │   ├── action_views.py                ← /actions/<name> POST endpoints (sidebar modals)
+│   │   ├── action_views.py                ← /actions/<name> POST endpoints (Home's modals)
 │   │   └── views.py                       ← /collection, /collection/<uuid>, /tracks, /tracks/save, /tracks/sync
-│   ├── print_runs/                        ← PrintRun + render service + PDF download
+│   ├── print_runs/                        ← PrintRun + the sleeve-labels flow + render service
 │   │   ├── models.py
+│   │   ├── flow.py                        ← the four steps: /labels/new, /labels/<uuid>/step/<n> (+ preview / status endpoints)
 │   │   ├── services/render.py             ← releases_by_ids, build_bpm_lookup, render_pdf
 │   │   ├── management/commands/           ← render_print_run
-│   │   └── views.py                       ← /print-runs/, /print-runs/<uuid>, /print-runs/<uuid>/pdf, /print-runs/new
+│   │   └── views.py                       ← /labels/, /labels/<uuid>, /labels/<uuid>/pdf, /labels/<uuid>/duplicate
 │   ├── audit/                             ← AuditEvent (append-only history)
 │   ├── discogs_provider/                  ← custom allauth OAuth1 provider for Discogs
-│   ├── templates/                         ← Django templates (base.html + per-page + partials)
+│   ├── templates/                         ← Django templates (base.html, home.html, flow/, per-page + partials)
 │   └── middleware/staging_gate.py         ← HTTP Basic Auth for ENVIRONMENT=staging
 └── .tmp/                                  ← disposable cache + final PDF (gitignored)
     ├── stickers.pdf                       ← the only file you actually need to print

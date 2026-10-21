@@ -1,0 +1,481 @@
+<title>Design System v0.1</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Red+Hat+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: housing-grey page, rounded panels, one dark "display" well per section, the LED is the only chroma.
+   Single look by choice: this is a hardware surface, not a themed document. */
+:root {
+  color-scheme: light;
+  --g0: #F3F4F4; --g1: #E6E8E9; --g2: #D5D8DA; --g3: #BFC3C6; --g4: #8E9498; --g5: #4E5457; --g6: #2A2E30; --g7: #17191A;
+  --led: #FF5A14;
+  --good: #246338; --warn: #745600; --bad: #A8322A;
+  --r1: 6px; --r2: 10px; --r3: 14px; --r4: 22px;
+  --line: rgba(23,25,26,.14); --line2: rgba(23,25,26,.28);
+  --hi: inset 0 1px 0 rgba(255,255,255,.75);
+  --display: "Schibsted Grotesk", system-ui, sans-serif;
+  --ui: "Schibsted Grotesk", system-ui, sans-serif;
+  --data: "Red Hat Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--g2); color: var(--g7); font: 15px/1.5 var(--ui); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 80px; display: grid; gap: 56px; }
+.wrap > * { min-width: 0; }
+h1, h2, h3 { margin: 0; }
+h1 { font: 800 clamp(34px, 6vw, 60px)/1 var(--display); letter-spacing: -0.035em; text-wrap: balance; }
+h2 { font: 700 26px/1.1 var(--display); letter-spacing: -0.02em; }
+.lede { color: var(--g5); max-width: 62ch; margin: 10px 0 0; }
+.sec-h { display: grid; gap: 4px; margin-bottom: 20px; }
+.sec-h p { margin: 0; color: var(--g5); max-width: 66ch; }
+.cap { font: 500 12px/1.2 var(--ui); color: var(--g5); margin: 0 0 10px; }
+.mono { font-family: var(--data); }
+.panel { background: var(--g1); border-radius: var(--r3); box-shadow: var(--hi), 0 0 0 1px var(--line); padding: 20px; min-width: 0; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.grid > * { min-width: 0; }
+.well { background: var(--g7); color: var(--g0); border-radius: var(--r3); }
+
+/* LED with its bezel: orange is never read against light grey alone. */
+.led { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--led); box-shadow: 0 0 0 2px var(--g7); }
+.well .led { box-shadow: 0 0 0 2px var(--g6); }
+
+.principles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 28px; }
+.principles div { border-top: 2px solid var(--g7); padding-top: 10px; }
+.principles b { display: block; font: 700 17px var(--display); margin-bottom: 2px; }
+.principles span { color: var(--g5); font-size: 14px; }
+
+/* hero */
+.hero { position: relative; overflow: hidden; min-height: 440px; padding: 48px 40px; display: grid; align-content: center; }
+.hero .copy { position: relative; z-index: 1; max-width: 460px; display: grid; gap: 18px; }
+.hero .mark { display: inline-flex; align-items: center; gap: 10px; font: 800 18px var(--display); letter-spacing: -0.01em; }
+.hero h3 { font: 800 clamp(34px, 5.4vw, 58px)/1 var(--display); letter-spacing: -0.035em; text-wrap: balance; }
+.hero p { margin: 0; color: var(--g3); max-width: 40ch; }
+.hero .art { position: absolute; right: -60px; top: 0; height: 100%; width: 560px; pointer-events: none; }
+.hero .art svg { width: 100%; height: 100%; }
+.hero .nav { position: relative; z-index: 1; display: flex; gap: 20px; font: 500 14px var(--ui); color: var(--g3); margin-bottom: 40px; }
+
+/* buttons */
+.btn { height: 38px; padding: 0 16px; display: inline-flex; align-items: center; gap: 10px; border-radius: var(--r2); border: 1px solid transparent; font: 500 14px var(--ui); cursor: pointer; text-decoration: none; transition: background-color .12s, border-color .12s, transform .12s; }
+.btn:focus-visible, .field:focus-visible, .seg button:focus-visible, .fader:focus-visible { outline: 2px solid var(--g7); outline-offset: 2px; }
+.well .btn:focus-visible { outline-color: var(--g0); }
+.btn:active { transform: translateY(1px); }
+.btn-p { background: var(--g7); color: var(--g0); }
+.btn-p:hover { background: var(--g6); }
+.well .btn-p { background: var(--g0); color: var(--g7); }
+.well .btn-p:hover { background: #fff; }
+.btn-s { background: var(--g0); color: var(--g7); border-color: var(--line2); box-shadow: var(--hi); }
+.btn-s:hover { background: #fff; }
+.btn-q { background: transparent; color: var(--g7); border-color: var(--line); }
+.btn-q:hover { background: var(--g0); border-color: var(--line2); }
+.well .btn-q { color: var(--g0); border-color: rgba(243,244,244,.28); }
+.well .btn-q:hover { background: rgba(243,244,244,.08); }
+.btn-d { background: transparent; color: var(--bad); border-color: rgba(168,50,42,.4); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* fields */
+.field { height: 36px; padding: 0 12px; border-radius: var(--r2); border: 1px solid var(--line2); background: var(--g0); color: var(--g7); font: 400 14px var(--ui); width: 100%; box-shadow: inset 0 1px 2px rgba(23,25,26,.08); }
+.field::placeholder { color: var(--g5); }
+.field:focus { border-color: var(--g7); outline: none; box-shadow: 0 0 0 3px rgba(23,25,26,.16); }
+.stack { display: grid; gap: 10px; }
+label.lb { font: 500 13px var(--ui); display: grid; gap: 6px; }
+
+/* segmented, like the 33 / 45 buttons */
+.seg { display: inline-flex; padding: 3px; gap: 3px; background: var(--g2); border-radius: var(--r3); box-shadow: inset 0 1px 2px rgba(23,25,26,.18); }
+.seg button { height: 34px; padding: 0 16px; border: 0; border-radius: var(--r2); background: transparent; color: var(--g5); font: 500 14px var(--ui); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.seg button[aria-pressed="true"] { background: var(--g0); color: var(--g7); box-shadow: var(--hi), 0 1px 2px rgba(23,25,26,.25), 0 0 0 1px var(--line); }
+.seg button i { width: 6px; height: 6px; border-radius: 50%; background: var(--g3); }
+.seg button[aria-pressed="true"] i { background: var(--led); box-shadow: 0 0 0 1.5px var(--g7); width: 7px; height: 7px; }
+
+/* pitch fader */
+.fader-wrap { display: grid; gap: 8px; }
+.fader-top { display: flex; justify-content: space-between; align-items: baseline; font: 500 13px var(--ui); }
+.fader-top output { font: 500 14px var(--data); }
+.fader { -webkit-appearance: none; appearance: none; width: 100%; height: 34px; background: transparent; cursor: grab; margin: 0; }
+.fader::-webkit-slider-runnable-track { height: 34px; border-radius: var(--r2); background:
+  linear-gradient(var(--g7), var(--g7)) center / 100% 2px no-repeat,
+  repeating-linear-gradient(90deg, var(--g4) 0 1px, transparent 1px 10%) bottom / 100% 8px no-repeat; }
+.fader::-moz-range-track { height: 34px; background: linear-gradient(var(--g7), var(--g7)) center / 100% 2px no-repeat, repeating-linear-gradient(90deg, var(--g4) 0 1px, transparent 1px 10%) bottom / 100% 8px no-repeat; }
+.fader::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 30px; margin-top: 2px; border-radius: 5px; border: 1px solid var(--g7); background: linear-gradient(90deg, var(--g6) 0 calc(50% - 1px), var(--led) calc(50% - 1px) calc(50% + 1px), var(--g6) calc(50% + 1px)); box-shadow: 0 2px 4px rgba(23,25,26,.35); }
+.fader::-moz-range-thumb { width: 16px; height: 28px; border-radius: 5px; border: 1px solid var(--g7); background: linear-gradient(90deg, var(--g6) 0 calc(50% - 1px), var(--led) calc(50% - 1px) calc(50% + 1px), var(--g6) calc(50% + 1px)); }
+
+/* chips */
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: var(--r1); background: var(--g0); border: 1px solid var(--line); font: 500 13px var(--ui); }
+.chip.ok { color: var(--good); }
+.chip.warn { color: var(--warn); }
+.chip.bad { color: var(--bad); }
+.chip svg { width: 12px; height: 12px; }
+
+/* tonearm */
+.arm { position: relative; width: 100%; height: 26px; color: var(--g7); --groove: var(--g3); --done: var(--g7); }
+.arm svg { display: block; width: 100%; height: 26px; overflow: visible; }
+.well .arm, .toast .arm { color: var(--g0); --groove: var(--g6); --done: var(--g4); }
+.rail-labels { display: grid; grid-template-columns: repeat(4, 1fr); font: 500 14px var(--ui); color: var(--g5); }
+.rail-labels span { padding-top: 4px; }
+.rail-labels .now { color: var(--g7); font-weight: 600; }
+.rail-labels .done { color: var(--g7); }
+
+/* readout */
+.readout { display: flex; align-items: baseline; gap: 12px; padding: 18px 20px; border-radius: var(--r3); background: var(--g7); color: var(--led); box-shadow: inset 0 2px 6px rgba(0,0,0,.6), 0 0 0 1px var(--g6), var(--hi); }
+.readout b { font: 500 72px/1 var(--data); letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+.readout .u { font: 500 13px var(--data); color: var(--g4); }
+.readout .k { margin-left: auto; font: 500 22px var(--data); color: var(--g0); }
+
+/* rows */
+.rows { border-radius: var(--r3); background: var(--g0); box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
+.row { display: grid; grid-template-columns: 40px 1fr 64px 48px; gap: 12px; align-items: center; padding: 11px 16px; border-top: 1px solid var(--line); font-size: 14px; }
+.row:first-child { border-top: 0; }
+.row:hover { background: var(--g1); }
+.row .pos, .row .key { font: 400 13px var(--data); color: var(--g5); }
+.row .t b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .t small { color: var(--g5); font-size: 13px; }
+.row .bpm { font: 500 14px var(--data); text-align: right; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.row .key { text-align: right; }
+
+/* strobe dots */
+.strobe { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.strobe i { width: 6px; height: 6px; border-radius: 50%; background: var(--g4); }
+.strobe i.on { background: var(--led); box-shadow: 0 0 0 1.5px var(--g7); }
+
+/* toast */
+.toast { background: var(--g7); color: var(--g0); border-radius: var(--r3); padding: 14px 16px; display: grid; gap: 6px; box-shadow: 0 8px 24px rgba(23,25,26,.28), 0 0 0 1px var(--g6); max-width: 380px; }
+.toast .l1 { display: flex; justify-content: space-between; gap: 12px; font: 500 14px var(--ui); }
+.toast .l1 span:last-child { font: 400 13px var(--data); color: var(--g4); }
+.toast .l2 { font: 400 13px var(--ui); color: var(--g3); min-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* sticker on slipmat */
+.slipmat { border-radius: var(--r3); background: var(--g6); padding: 28px; display: grid; place-items: center; box-shadow: inset 0 2px 8px rgba(0,0,0,.5); background-image: repeating-radial-gradient(circle at 50% 120%, transparent 0 9px, rgba(255,255,255,.04) 9px 10px); }
+.sticker { width: 230px; background: #FEFEFC; color: #141414; border-radius: 3px; padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
+.sticker .pos { font: 500 12px var(--data); color: #55595B; }
+.sticker b { font: 600 56px/.95 var(--data); letter-spacing: -0.05em; }
+.sticker .k { font: 500 20px var(--data); align-self: end; justify-self: end; }
+.sticker .n { grid-column: 1 / -1; font: 500 12px var(--ui); color: #3A3D3F; border-top: 1px solid #D5D7D8; padding-top: 6px; margin-top: 6px; }
+
+/* swatches */
+.scale { display: grid; grid-template-columns: repeat(8, 1fr); border-radius: var(--r3); overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+.scale div { padding: 40px 8px 10px; font: 500 12px/1.3 var(--data); min-width: 0; }
+.scale b { display: block; font: 600 13px var(--ui); }
+.scale .dk { color: var(--g0); }
+.led-card { display: grid; gap: 12px; }
+.sem { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.sem div { background: var(--g0); border-radius: var(--r2); box-shadow: 0 0 0 1px var(--line); padding: 10px 12px; font-size: 14px; }
+.sem i { display: block; height: 6px; border-radius: 3px; margin-bottom: 8px; }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th { text-align: left; font-weight: 600; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line2); }
+table.t td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: baseline; }
+.tw { overflow-x: auto; }
+
+/* type */
+.spec { display: grid; gap: 14px; }
+.spec .s { display: grid; gap: 2px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.spec .s:last-child { border-bottom: 0; padding-bottom: 0; }
+.spec small { font: 400 12px var(--data); color: var(--g5); }
+
+/* rules */
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.rules ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.rules li { padding-left: 18px; position: relative; font-size: 14px; }
+.rules li::before { content: ""; position: absolute; left: 0; top: .55em; width: 8px; height: 2px; background: var(--g7); }
+.rules .no li::before { background: var(--bad); }
+
+@media (max-width: 640px) {
+  .hero { padding: 28px 20px; min-height: 480px; align-content: end; }
+  .hero .art { right: -200px; opacity: .55; }
+  .scale { grid-template-columns: repeat(4, 1fr); }
+  .readout b { font-size: 56px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <h1>Design system<br>versie 0.1</h1>
+    <p class="lede">Lichtgrijs als behuizing, donkergrijs als display, één oranje LED. Afgeronde hoeken zoals een modern apparaat, met groeven, strobe-stippen en een pitchfader als vaste vormtaal. De naam is nog open, dit systeem is er niet van afhankelijk.</p>
+    <div class="principles">
+      <div><b>De LED betekent: nu</b><span>Oranje staat alleen op wat actief is of wat je moet zien. Nooit als decoratie of als tekstkleur op licht.</span></div>
+      <div><b>Hardware, geen skeuomorfisme</b><span>We lenen vorm en gedrag van de draaitafel, geen textuur. Geen metaal, geen schroeven, geen gloed.</span></div>
+      <div><b>De sticker is het product</b><span>Het enige echte papier in de interface. Alles eromheen is behuizing.</span></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-h"><h2>Landingspagina, eerste scherm</h2><p>Zo komen A en B samen: donkere display met afgeronde hoeken, een plaat met groeven die van de rand af loopt. De oranje LED in de knop is het enige kleurpunt.</p></div>
+    <div class="well hero" style="border-radius:var(--r4)">
+      <div class="art" aria-hidden="true"><svg id="heroArt" viewBox="0 0 560 440" preserveAspectRatio="xMidYMid slice"></svg></div>
+      <div class="nav"><span class="mark"><i class="led"></i>Merknaam</span><span>Hoe het werkt</span><span>Stickers</span></div>
+      <div class="copy">
+        <h3>Elke hoes klaar voor de booth.</h3>
+        <p>Haal je collectie uit Discogs, laat BPM en key invullen en print etiketten voor op je hoezen.</p>
+        <div class="btn-row"><a class="btn btn-p" href="#"><i class="led"></i>Inloggen met Discogs</a><a class="btn btn-q" href="#">Bekijk een voorbeeld</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Kleur</h2><p>Zeven grijzen met een lichte blauwgroene onderstroom, zodat ze bij elkaar horen en niet dood grijs ogen. Contrasten zijn berekend.</p></div>
+    <div class="scale" role="list">
+      <div role="listitem" style="background:#F3F4F4"><b>g0</b>#F3F4F4<br>Veld, invoer</div>
+      <div role="listitem" style="background:#E6E8E9"><b>g1</b>#E6E8E9<br>Paneel</div>
+      <div role="listitem" style="background:#D5D8DA"><b>g2</b>#D5D8DA<br>Behuizing</div>
+      <div role="listitem" style="background:#BFC3C6"><b>g3</b>#BFC3C6<br>Rand, groef</div>
+      <div role="listitem" style="background:#8E9498"><b>g4</b>#8E9498<br>Decoratief</div>
+      <div role="listitem" class="dk" style="background:#4E5457"><b>g5</b>#4E5457<br>Gedempte tekst</div>
+      <div role="listitem" class="dk" style="background:#2A2E30"><b>g6</b>#2A2E30<br>Verhoogd donker</div>
+      <div role="listitem" class="dk" style="background:#17191A"><b>g7</b>#17191A<br>Inkt, display</div>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <div class="panel led-card">
+        <div style="display:flex;align-items:center;gap:12px"><span class="led" style="width:22px;height:22px;box-shadow:0 0 0 3px var(--g7)"></span><div><b>LED #FF5A14</b><div class="mono" style="font-size:12px;color:var(--g5)">alleen vulling, geen tekst op licht</div></div></div>
+        <div class="tw"><table class="t">
+          <thead><tr><th>Combinatie</th><th>Contrast</th></tr></thead>
+          <tbody>
+            <tr><td>Inkt g7 op behuizing g2</td><td class="mono">12,3</td></tr>
+            <tr><td>Gedempt g5 op behuizing g2</td><td class="mono">5,4</td></tr>
+            <tr><td>LED op display g7</td><td class="mono">5,7</td></tr>
+            <tr><td>LED op paneel g1, zonder rand</td><td class="mono">2,5, valt af</td></tr>
+          </tbody></table></div>
+        <p style="margin:0;font-size:14px;color:var(--g5)">Daarom zit de LED op licht altijd in een donkere rand, zoals een echte LED in zijn fitting. Oranje alleen is nooit de enige aanwijzing: er hoort altijd tekst of vorm bij.</p>
+      </div>
+      <div class="panel">
+        <p class="cap">Status, los van de LED</p>
+        <div class="sem">
+          <div><i style="background:var(--good)"></i><b style="color:var(--good)">Gevonden</b><br>#246338</div>
+          <div><i style="background:var(--warn)"></i><b style="color:var(--warn)">Controleer</b><br>#745600</div>
+          <div><i style="background:var(--bad)"></i><b style="color:var(--bad)">Mislukt</b><br>#A8322A</div>
+        </div>
+        <p style="margin:12px 0 0;font-size:14px;color:var(--g5)">Waarschuwing is bewust okergeel-bruin en niet oranje. Anders lijkt "let op" op "bezig".</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Letters</h2><p>Een strakke grotesk voor koppen, een rustige sans voor de interface en een mono voor alles wat een getal of positie is. De mono maakt BPM leesbaar als display.</p></div>
+    <div class="panel spec">
+      <div class="s"><span style="font:800 56px/1 var(--display);letter-spacing:-0.035em">Schibsted Grotesk 800</span><small>Display · koppen, merk · 56 / 40 / 26 px · regelhoogte 1,0–1,1 · tracking −0,035 em</small></div>
+      <div class="s"><span style="font:600 22px/1.2 var(--ui)">Schibsted Grotesk · Interface en lopende tekst</span><small>UI · 12 / 13 / 14 / 15 / 17 px · 400, 500, 600</small></div>
+      <div class="s"><span style="font:500 40px/1 var(--data);letter-spacing:-0.04em">118 · 8A · A1</span><small>Red Hat Mono · BPM, key, positie, duur · tabulaire cijfers verplicht</small></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Vorm en oppervlak</h2><p>Vier stralen. Hoe groter het object, hoe ronder. Volledig ronde pillen blijven uit, zoals al in CLAUDE.md staat.</p></div>
+    <div class="grid">
+      <div class="panel">
+        <p class="cap">Stralen</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div style="width:64px;height:64px;background:var(--g0);border-radius:6px;box-shadow:0 0 0 1px var(--line2);display:grid;place-items:center;font:500 12px var(--data)">6<br>chip</div>
+          <div style="width:64px;height:64px;background:var(--g0);border-radius:10px;box-shadow:0 0 0 1px var(--line2);display:grid;place-items:center;font:500 12px var(--data)">10<br>knop</div>
+          <div style="width:64px;height:64px;background:var(--g0);border-radius:14px;box-shadow:0 0 0 1px var(--line2);display:grid;place-items:center;font:500 12px var(--data)">14<br>paneel</div>
+          <div style="width:64px;height:64px;background:var(--g7);color:var(--g0);border-radius:22px;display:grid;place-items:center;font:500 12px var(--data)">22<br>hero</div>
+        </div>
+      </div>
+      <div class="panel">
+        <p class="cap">Drie oppervlakken</p>
+        <div class="stack" style="font-size:14px">
+          <div style="background:var(--g1);border-radius:var(--r2);box-shadow:var(--hi),0 0 0 1px var(--line);padding:10px 12px"><b>Paneel</b> · rand en lichte bovenrand. Standaard voor kaarten en tabellen.</div>
+          <div style="background:var(--g2);border-radius:var(--r2);box-shadow:inset 0 1px 2px rgba(23,25,26,.22);padding:10px 12px"><b>Uitsparing</b> · ingedrukt. Segmentbalken en groeven.</div>
+          <div style="background:var(--g7);color:var(--g0);border-radius:var(--r2);padding:10px 12px"><b>Display</b> · donker. Uitlezing, toast, hero.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Vormtaal van de draaitafel</h2><p>Drie motieven, elk met een vaste taak in de interface. Ze verwijzen naar de draaitafel maar tekenen hem niet na.</p></div>
+    <div class="grid">
+      <div class="panel">
+        <p class="cap">De groeven · achtergrond</p>
+        <div style="height:120px;border-radius:var(--r2);background:var(--g7);position:relative;overflow:hidden"><svg id="grooveDemo" viewBox="0 0 300 120" style="position:absolute;inset:0;width:100%;height:100%" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg></div>
+        <p style="margin:8px 0 0;font-size:14px;color:var(--g5)">Fijne, bijna onzichtbare ringen. Alleen op donkere vlakken en nooit achter tekst die gelezen moet worden.</p>
+      </div>
+      <div class="panel">
+        <p class="cap">De strobe · wachten</p>
+        <div class="strobe" id="strobe" aria-label="Bezig"></div>
+        <p style="margin:8px 0 0;font-size:14px;color:var(--g5)">De stippen langs de rand van het draaiplateau. Eén brandt oranje en loopt rond. Voor korte acties zonder meetbare voortgang, zoals het synchroniseren van één rij.</p>
+      </div>
+      <div class="panel">
+        <p class="cap">De pitchfader · waarde instellen</p>
+        <div class="fader-wrap"><div class="fader-top"><label for="pitch">BPM aanpassen</label><output id="pitchOut" for="pitch">+0,0 %</output></div>
+          <input class="fader" id="pitch" type="range" min="-8" max="8" step="0.1" value="0"></div>
+        <p style="margin:8px 0 0;font-size:14px;color:var(--g5)">Voor elke waarde die je binnen een bereik kiest, zoals stickergrootte of lettergrootte. Het streepje in de dop is de LED.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Componenten</h2><p>Alles hieronder werkt. Klik rond.</p></div>
+    <div class="grid">
+      <div class="panel">
+        <p class="cap">Knoppen</p>
+        <div class="btn-row">
+          <button class="btn btn-p" type="button"><i class="led"></i>Print stickers</button>
+          <button class="btn btn-s" type="button">Opslaan</button>
+          <button class="btn btn-q" type="button">Annuleren</button>
+          <button class="btn btn-d" type="button">Verwijderen</button>
+          <button class="btn btn-s" type="button" disabled>Niet beschikbaar</button>
+        </div>
+        <p style="margin:12px 0 0;font-size:14px;color:var(--g5)">Maximaal één primaire knop per scherm. Alleen de primaire draagt de LED.</p>
+      </div>
+      <div class="panel">
+        <p class="cap">Keuze, zoals 33 / 45</p>
+        <div class="seg" role="group" aria-label="Stijl" id="seg">
+          <button type="button" aria-pressed="false"><i></i>Compact</button>
+          <button type="button" aria-pressed="true"><i></i>Standaard</button>
+          <button type="button" aria-pressed="false"><i></i>Volledig</button>
+        </div>
+        <p style="margin:12px 0 0;font-size:14px;color:var(--g5)">Voor de stijlkeuzes in stap 3. Eén staat is altijd aan en toont de LED.</p>
+      </div>
+      <div class="panel">
+        <p class="cap">Invoer</p>
+        <div class="stack">
+          <label class="lb" for="f1">Zoeken<input class="field" id="f1" type="search" placeholder="Artiest, titel of label"></label>
+          <label class="lb" for="f2">Formaat<select class="field" id="f2"><option>Avery L7160 · 21 per vel</option><option>Avery L7163 · 14 per vel</option></select></label>
+        </div>
+      </div>
+      <div class="panel">
+        <p class="cap">Status</p>
+        <div class="chips">
+          <span class="chip ok"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5l2.5 2.5L10 3.5"/></svg>Gevonden</span>
+          <span class="chip warn"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 2.5v4M6 9v.1"/></svg>Controleer</span>
+          <span class="chip bad"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>Niet gevonden</span>
+          <span class="chip"><i class="led" style="width:8px;height:8px;box-shadow:0 0 0 1.5px var(--g7)"></i>Bezig</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>De flow in beeld</h2><p>Stappenbalk, een BPM-uitlezing, tracklijst en sticker. Dit is het werkscherm.</p></div>
+    <div class="panel" style="padding:24px;display:grid;gap:22px">
+      <div>
+        <div class="arm" id="railArm" data-p="0.375" data-ticks="1"></div>
+        <div class="rail-labels"><span class="done">Records</span><span class="now">BPM</span><span>Design</span><span>Get them</span></div>
+      </div>
+      <div class="grid">
+        <div>
+          <p class="cap">Uitlezing</p>
+          <div class="readout"><b>118</b><span class="u">BPM</span><span class="k">8A</span></div>
+          <p class="cap" style="margin-top:18px">Toast, bezig</p>
+          <div class="toast" id="toast">
+            <div class="l1"><span id="toastTitle">BPM opzoeken</span><span id="toastNum">7 / 12</span></div>
+            <div class="arm" id="toastArm" data-p="0.58"></div>
+            <div class="l2" id="toastTxt">Mr. Fingers · Can You Feel It</div>
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-q" type="button" data-toast="run">Bezig</button>
+            <button class="btn btn-q" type="button" data-toast="done">Klaar</button>
+            <button class="btn btn-q" type="button" data-toast="fail">Mislukt</button>
+          </div>
+        </div>
+        <div>
+          <p class="cap">Sticker op de mat</p>
+          <div class="slipmat"><div class="sticker"><span class="pos">A1</span><span></span><b>118</b><span class="k">8A</span><span class="n">Mr. Fingers · Can You Feel It</span></div></div>
+        </div>
+      </div>
+      <div class="rows" role="table" aria-label="Voorbeeldtracks">
+        <div class="row"><span class="pos">A1</span><span class="t"><b>Can You Feel It</b><small>Mr. Fingers</small></span><span class="bpm">118</span><span class="key">8A</span></div>
+        <div class="row"><span class="pos">A2</span><span class="t"><b>Strings of Life</b><small>Derrick May</small></span><span class="bpm">126</span><span class="key">5A</span></div>
+        <div class="row"><span class="pos">B1</span><span class="t"><b>Windowlicker</b><small>Aphex Twin</small></span><span class="bpm"><i class="led" style="width:8px;height:8px;box-shadow:0 0 0 1.5px var(--g7)"></i>…</span><span class="key"></span></div>
+      </div>
+    </div>
+    <p class="lede" style="font-size:13px">Voorbeelddata, geen echte BPM-waarden.</p>
+  </section>
+
+  <section>
+    <div class="sec-h"><h2>Regels en botsingen met wat er al staat</h2></div>
+    <div class="rules">
+      <div class="panel"><p class="cap">Doen</p><ul>
+        <li>LED alleen op actief, huidige stap, primaire knop en voortgang.</li>
+        <li>Op licht grijs altijd een donkere rand om de LED.</li>
+        <li>Cijfers in mono met tabulaire breedte.</li>
+        <li>Donkere display voor het belangrijkste getal op een scherm.</li>
+        <li>Groeven alleen als ongelezen achtergrond.</li>
+      </ul></div>
+      <div class="panel no"><p class="cap">Niet doen</p><ul class="no">
+        <li>Oranje tekst op licht, of oranje als enige signaal.</li>
+        <li>Gloed rond de LED. Het is vlak, met rand.</li>
+        <li>Een tweede accentkleur voor waarschuwingen.</li>
+        <li>Hout, metaal, schroeven of echte foto's van de draaitafel in de UI.</li>
+      </ul></div>
+      <div class="panel"><p class="cap">Wijzigt t.o.v. nu</p><ul>
+        <li>De huidige teal accent (#1F5A63) valt weg. Links worden inkt met onderstreping.</li>
+        <li>Straal van 5–6 px wordt 10–14 px. Dit raakt alle knoppen, velden en kaarten.</li>
+        <li>Systeemfont wordt Schibsted Grotesk, met Red Hat Mono voor cijfers.</li>
+        <li>De BPM-kolom wordt mono. Stap 2 en Tracks krijgen de uitlezing.</li>
+      </ul></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  var NS = 'http://www.w3.org/2000/svg';
+
+  /* progress: a plain groove-style bar; the LED marks where the work is now */
+  function drawArm(el){
+    var W = el.clientWidth || 300, p = Math.max(0, Math.min(1, parseFloat(el.dataset.p || 0)));
+    var r = 5, x0 = r + 3, x1 = W - r - 3, tx = x0 + (x1 - x0) * p, y = 13;
+    var tip = el.dataset.tip || 'var(--led)';
+    var ticks = '';
+    if (el.dataset.ticks) for (var i = 0; i <= 4; i++) { var x = x0 + (x1 - x0) * i / 4; ticks += '<line x1="'+x+'" y1="'+(y-9)+'" x2="'+x+'" y2="'+(y+9)+'" stroke="var(--groove)" stroke-width="1.5"/>'; }
+    el.innerHTML = '<svg viewBox="0 0 '+W+' 26" width="'+W+'" height="26" aria-hidden="true">'+
+      '<line x1="'+x0+'" y1="'+y+'" x2="'+x1+'" y2="'+y+'" stroke="var(--groove)" stroke-width="4" stroke-linecap="round"/>'+
+      ticks+
+      '<line x1="'+x0+'" y1="'+y+'" x2="'+tx+'" y2="'+y+'" stroke="var(--done)" stroke-width="4" stroke-linecap="round"/>'+
+      '<circle cx="'+tx+'" cy="'+y+'" r="'+(r + 2.5)+'" fill="'+(el.closest('.toast,.well') ? 'var(--g6)' : 'var(--g7)')+'"/><circle cx="'+tx+'" cy="'+y+'" r="'+(r - 1)+'" fill="'+tip+'"/>'+
+      '</svg>';
+  }
+  function setArm(el, p, tip){ el.dataset.p = p; if (tip) el.dataset.tip = tip; drawArm(el); }
+  var arms = [].slice.call(document.querySelectorAll('.arm'));
+  function drawAll(){ arms.forEach(drawArm); }
+  if (window.ResizeObserver) { var ro = new ResizeObserver(drawAll); arms.forEach(function(a){ ro.observe(a); }); }
+  drawAll();
+
+  /* animated demos respect reduced motion by jumping straight to the end */
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function run(el, from, to, ms, step, done){
+    if (reduce) { setArm(el, to); if (step) step(to); if (done) done(); return; }
+    var t0 = performance.now();
+    (function f(t){ var k = Math.min(1, (t - t0) / ms); var v = from + (to - from) * k; setArm(el, v); if (step) step(v); if (k < 1) requestAnimationFrame(f); else if (done) done(); })(t0);
+  }
+
+  /* hero art: grooved record running off the edge, arm resting on it */
+  var art = document.getElementById('heroArt'), g = '';
+  for (var r = 70; r < 330; r += 6) g += '<circle cx="330" cy="290" r="'+r+'" fill="none" stroke="#F3F4F4" stroke-opacity="'+(r % 24 === 70 % 24 ? .14 : .06)+'" stroke-width="1"/>';
+  art.innerHTML = '<circle cx="330" cy="290" r="338" fill="#1E2123"/>' + g +
+    '<circle cx="330" cy="290" r="54" fill="#2A2E30"/><circle cx="330" cy="290" r="5" fill="#17191A"/>';
+
+  var gd = document.getElementById('grooveDemo'), gs = '';
+  for (var q = 20; q < 200; q += 5) gs += '<circle cx="230" cy="150" r="'+q+'" fill="none" stroke="#F3F4F4" stroke-opacity=".07"/>';
+  gd.innerHTML = gs;
+
+  /* strobe */
+  var st = document.getElementById('strobe'), dots = [], n = 22, cur = 0;
+  for (var d = 0; d < n; d++) { var i = document.createElement('i'); st.appendChild(i); dots.push(i); }
+  dots[0].className = 'on';
+  if (!reduce) setInterval(function(){ dots[cur].className = ''; cur = (cur + 1) % n; dots[cur].className = 'on'; }, 140);
+
+  /* fader */
+  var fd = document.getElementById('pitch'), fo = document.getElementById('pitchOut');
+  fd.addEventListener('input', function(){ var v = parseFloat(fd.value); fo.textContent = (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace('.', ',') + ' %'; });
+
+  /* segmented */
+  var seg = document.getElementById('seg');
+  seg.addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; [].forEach.call(seg.children, function(c){ c.setAttribute('aria-pressed', c === b ? 'true' : 'false'); }); });
+
+  /* toast states */
+  var tArm = document.getElementById('toastArm'), tT = document.getElementById('toastTitle'), tN = document.getElementById('toastNum'), tX = document.getElementById('toastTxt');
+  var names = ['Can You Feel It', 'Strings of Life', 'Windowlicker', 'Blue Monday', 'Papua New Guinea'];
+  function toast(kind){
+    if (kind === 'run') {
+      tT.textContent = 'BPM opzoeken';
+      run(tArm, 0, 0.75, 3600, function(v){ var k = Math.round(v * 12); tN.textContent = k + ' / 12'; tX.textContent = names[k % names.length]; });
+    } else if (kind === 'done') {
+      setArm(tArm, 1, 'var(--g0)'); tT.textContent = 'Klaar'; tN.textContent = '12 / 12'; tX.textContent = '11 gevonden, 1 niet gevonden';
+    } else {
+      setArm(tArm, 0.4, 'var(--bad)'); tT.textContent = 'Mislukt'; tN.textContent = '5 / 12'; tX.textContent = 'Discogs reageert niet. Probeer het zo opnieuw.';
+    }
+  }
+  [].forEach.call(document.querySelectorAll('[data-toast]'), function(b){ b.addEventListener('click', function(){ toast(b.dataset.toast); }); });
+})();
+</script>

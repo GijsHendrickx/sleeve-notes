@@ -12,7 +12,7 @@ without nesting.
 <form id="tracks-search" method="get" action="{% url 'records:tracks' %}"></form>
 
 <form method="post" action="{% url 'records:tracks_save' %}{% if q or filter and filter != 'all' %}?{% if q %}q={{ q|urlencode }}{% endif %}{% if filter and filter != 'all' %}{% if q %}&{% endif %}filter={{ filter }}{% endif %}{% endif %}"
-      class="flex flex-col h-[calc(100vh-7.5rem)]">
+      class="flex flex-col h-[calc(100vh-8.5rem)]">
   {% csrf_token %}
 
   <div class="flex flex-wrap gap-2 items-center mb-4 text-sm">
@@ -23,16 +23,16 @@ without nesting.
     {% endif %}
     <button form="tracks-search" type="submit" class="btn btn-ghost h-8">Search</button>
 
-    <div class="text-[11px] uppercase tracking-[0.08em] text-app-mute font-medium mx-2">Filter</div>
+    <div class="text-[12px] text-app-mute font-medium mx-2">Filter</div>
     {% for key, label in filter_presets %}
       <a href="{% url 'records:tracks' %}?filter={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}"
-         class="px-3 py-1.5 rounded-full text-[12px] border transition-colors
+         class="px-3 py-1.5 rounded text-[12px] border transition-colors
                 {% if filter == key %}surface-3 border-app-line2 text-app-ink
                 {% else %}border-app-line text-app-dim hover:bg-app-s2 hover:text-app-ink{% endif %}">{{ label }}</a>
     {% endfor %}
 
     {% if saved %}
-      <span class="ml-auto text-[12px] text-emerald-400">
+      <span class="ml-auto text-[12px] t-good">
         Saved {{ saved }} change{{ saved|pluralize }}.
       </span>
     {% else %}
@@ -45,7 +45,7 @@ without nesting.
 
   <div class="flex-1 overflow-auto card">
     <table class="dense w-full text-[13px]">
-      <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+      <thead class="surface-2 text-[12px] text-app-mute sticky top-0 z-10">
         <tr class="border-b hairline">
           <th class="text-left w-56">Release</th>
           <th class="text-left w-16">Position</th>

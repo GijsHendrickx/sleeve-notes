@@ -1,4 +1,9 @@
-"""Print runs app views — index, detail, editor, PDF download."""
+"""Sleeve-label sets outside the flow — index, detail, duplicate, PDF.
+
+The four-step flow lives in print_runs/flow.py. What's left here is what
+you do with a set once it's saved: browse them, look inside one, copy one
+as the starting point for the next, download the PDF, throw it away.
+"""
 from __future__ import annotations
 
 import re
@@ -8,72 +13,48 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from records.models import Release
-
 from print_runs.models import PrintRun
 from print_runs.services.render import (
-    DEFAULT_SETTINGS,
-    already_printed_ids,
     build_bpm_lookup,
     create_print_run,
+    open_draft,
     releases_by_ids,
     render_pdf,
+    saved_runs,
     settings_summary,
 )
-
-
-_BOOL_SETTINGS = (
-    "tile", "qr",
-    "show_artist", "show_title", "show_rpm",
-    "show_key", "show_bpm", "show_duration",
-    "show_track_title", "show_sides",
-)
-_NUMERIC_SETTINGS = ("sticker_w", "sticker_h", "tile_cols", "tile_rows")
-
-
-def _settings_from_post(post) -> dict:
-    """Build a settings dict from editor POST data.
-
-    Numeric fields pass through verbatim (normalize_settings coerces).
-    Bool fields are forced: present → "on", absent → "" — so an unchecked
-    checkbox resolves to False instead of falling back to DEFAULT_SETTINGS.
-    """
-    out: dict = {}
-    for f in _NUMERIC_SETTINGS:
-        v = (post.get(f) or "").strip()
-        if v:
-            out[f] = v
-    for f in _BOOL_SETTINGS:
-        out[f] = "on" if post.get(f) else ""
-    return out
 
 
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def _row(run: PrintRun) -> dict:
+    return {
+        "id": run.id,
+        "name": run.display_name,
+        "created_at": run.created_at,
+        "release_count": len(run.release_ids or []),
+        "settings_summary": settings_summary(run.settings),
+    }
+
+
 @login_required
 def index(request):
-    runs = list(PrintRun.objects.filter(user=request.user))
-    rows = [
-        {
-            "id": r.id,
-            "name": r.name,
-            "created_at": r.created_at,
-            "release_count": len(r.release_ids or []),
-            "settings_summary": settings_summary(r.settings),
-        }
-        for r in runs
-    ]
+    runs = list(saved_runs(request.user))
     return render(request, "print_runs/index.html", {
         "active": "print_runs",
-        "rows": rows,
-        "run_count": len(rows),
+        "rows": [_row(r) for r in runs],
+        "run_count": len(runs),
+        "draft": open_draft(request.user),
     })
 
 
 @login_required
 def detail(request, run_id):
     run = get_object_or_404(PrintRun, pk=run_id, user=request.user)
+    if run.is_draft:
+        return redirect("print_runs:step", run_id=run.id, step=run.step)
+
     requested_ids = [int(r) for r in (run.release_ids or [])]
     releases = releases_by_ids(request.user, requested_ids)
     present_ids = {r["id"] for r in releases}
@@ -103,69 +84,33 @@ def delete(request, run_id):
 
 
 @login_required
-def editor(request):
-    """Pick releases and create a new PrintRun.
+@require_POST
+def duplicate(request, run_id):
+    """Copy a saved set into a fresh draft and drop the user into step 1.
 
-    GET: render a checkbox table over every release in the user's
-    collection. Already-printed releases are tagged so a "Select new
-    only" JS button can match the legacy --new-only flag.
-
-    POST: create a PrintRun with the selected discogs_release_ids and
-    redirect to its detail page so the user can download immediately.
+    The common case for a returning user: same layout, different records.
+    Any existing draft is replaced — one draft per user (see flow.start).
     """
-    if request.method == "POST":
-        ids = [
-            int(x) for x in request.POST.getlist("release_id")
-            if str(x).isdigit()
-        ]
-        settings_in = _settings_from_post(request.POST)
-        name = (request.POST.get("name") or "").strip()
-        if not ids:
-            return render(request, "print_runs/editor.html", {
-                "active": "print_runs",
-                "error": "Select at least one release.",
-                "name": name,
-                "rows": _editor_rows(request.user, preselected=set()),
-                "settings": settings_in or dict(DEFAULT_SETTINGS),
-            })
-        run = create_print_run(request.user, ids, settings=settings_in, name=name)
-        return redirect("print_runs:detail", run_id=run.id)
-
-    return render(request, "print_runs/editor.html", {
-        "active": "print_runs",
-        "name": "",
-        "rows": _editor_rows(request.user),
-        "settings": dict(DEFAULT_SETTINGS),
-    })
-
-
-def _editor_rows(request_user, preselected: set[int] | None = None) -> list[dict]:
-    """Build the editor's release rows. ``preselected`` lets the POST
-    handler re-render with the user's last selection on validation error."""
-    printed = already_printed_ids(request_user)
-    qs = (
-        Release.objects.filter(user=request_user, tracks__isnull=False)
-        .distinct()
-        .order_by("artist", "title")
-        .values("discogs_release_id", "artist", "title", "year",
-                "release_type", "format", "thumb_url")
+    source = get_object_or_404(PrintRun, pk=run_id, user=request.user)
+    existing = open_draft(request.user)
+    if existing is not None:
+        existing.delete()
+    draft = create_print_run(
+        request.user,
+        [int(r) for r in (source.release_ids or [])],
+        settings=source.settings or {},
+        name=f"{source.display_name} (copy)",
+        status=PrintRun.STATUS_DRAFT,
+        step=1,
     )
-    rows = []
-    for r in qs:
-        rid = r["discogs_release_id"]
-        rows.append({
-            **r,
-            "is_new": rid not in printed,
-            "checked": rid in preselected if preselected is not None else rid not in printed,
-        })
-    return rows
+    return redirect("print_runs:step", run_id=draft.id, step=1)
 
 
 @login_required
 def pdf_download(request, run_id):
-    """Render this print run to a PDF and stream it back as a download.
+    """Render this set to a PDF and stream it back as a download.
 
-    Render is synchronous: typical runs (10-100 releases) finish in a
+    Render is synchronous: typical sets (10-100 records) finish in a
     second or two and we'd rather block the request than orchestrate a
     background task + polling for a one-shot download. Heavy renders
     could be moved to Django-Q2 later — RenderResult.pdf_bytes is the
@@ -175,8 +120,8 @@ def pdf_download(request, run_id):
     releases = releases_by_ids(request.user, [int(r) for r in run.release_ids])
     if not releases:
         return HttpResponse(
-            "Print run has no renderable releases — every source release "
-            "was removed from your collection or lacks tracks.",
+            "This set has no renderable records — every one of them was "
+            "removed from your collection or lacks tracks.",
             status=410,  # gone
         )
     try:
@@ -192,8 +137,8 @@ def pdf_download(request, run_id):
         run.pdf_hash = result.pdf_hash
         run.save(update_fields=["pdf_hash"])
 
-    base = run.name or f"print-run-{str(run.id)[:8]}"
-    filename = _FILENAME_SAFE.sub("-", base).strip("-") or "sleeve-notes"
+    base = run.name or f"sleeve-labels-{str(run.id)[:8]}"
+    filename = _FILENAME_SAFE.sub("-", base).strip("-") or "sleeve-labels"
     return HttpResponse(
         result.pdf_bytes,
         content_type="application/pdf",

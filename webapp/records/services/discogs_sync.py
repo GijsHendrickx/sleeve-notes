@@ -189,12 +189,23 @@ def is_cached_release(user, discogs_release_id: int) -> bool:
         user=user,
         discogs_release_id=discogs_release_id,
         raw_tracklist__isnull=False,
+        videos__isnull=False,
     ).exists()
+
+
+def _slim_videos(videos: list | None) -> list[dict]:
+    """Keep only what BPM matching needs. [] (not None) marks "fetched, none"."""
+    return [
+        {"uri": v["uri"], "title": v.get("title") or "", "duration": v.get("duration")}
+        for v in videos or []
+        if isinstance(v, dict) and v.get("uri")
+    ]
 
 
 @transaction.atomic
 def upsert_release_detail(
     user, discogs_release_id: int, basic: dict, tracklist: list, notes: str | None,
+    videos: list | None = None,
 ):
     """Insert/update a Release + its Tracks. Idempotent.
 
@@ -227,6 +238,7 @@ def upsert_release_detail(
             "notes": notes or "",
             "basic_information": basic or {},
             "raw_tracklist": tracklist or [],
+            "videos": _slim_videos(videos),
             "release_type": release_type or "",
             "format": fmt or "",
             "thumb_url": basic.get("thumb") or basic.get("cover_image") or "",
@@ -355,6 +367,7 @@ def _fetch_each_detail(
         basic = (basics_override or {}).get(rid) or basic_from_detail(detail)
         upsert_release_detail(
             user, rid, basic, detail.get("tracklist") or [], detail.get("notes"),
+            detail.get("videos"),
         )
         fetched += 1
         if fetched % 25 == 0:

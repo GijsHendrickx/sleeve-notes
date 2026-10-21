@@ -169,11 +169,20 @@ def _run_discogs_sync(
             Path(csv_path).unlink(missing_ok=True)
 
 
-def _run_bpm_cascade(user_id: int, *, workers: int = 8, force: bool = False) -> dict:
+def _run_bpm_cascade(
+    user_id: int,
+    *,
+    workers: int = 8,
+    force: bool = False,
+    release_ids: list[int] | None = None,
+) -> dict:
     user = User.objects.get(pk=user_id)
     progress = _make_progress_logger(user)
     try:
-        result = run_bpm_cascade(user, workers=workers, force=force, log=progress)
+        result = run_bpm_cascade(
+            user, workers=workers, force=force,
+            release_ids=release_ids, log=progress,
+        )
     except Exception as e:
         UserJobLock.mark_failed(user, f"BPM lookup failed: {e}")
         raise
@@ -233,7 +242,12 @@ def enqueue_discogs_sync(
     return task_id
 
 
-def enqueue_bpm_cascade(user, *, workers: int = 8, force: bool = False) -> str:
+def enqueue_bpm_cascade(
+    user, *, workers: int = 8, force: bool = False,
+    release_ids: list[int] | None = None,
+) -> str:
+    """Queue the BPM cascade. ``release_ids`` scopes it to one sleeve-labels
+    set; None runs the whole collection (the CLI / library path)."""
     lock = UserJobLock.acquire(user, kind="bpm_cascade")
     try:
         task_id = async_task(
@@ -241,6 +255,7 @@ def enqueue_bpm_cascade(user, *, workers: int = 8, force: bool = False) -> str:
             user.id,
             workers=workers,
             force=force,
+            release_ids=release_ids,
             task_name=f"bpm_cascade:{user.id}",
         )
     except Exception:

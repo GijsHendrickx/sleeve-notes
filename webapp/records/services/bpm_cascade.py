@@ -31,6 +31,7 @@ from sleeve_notes.fetch_bpm import (
     cascade_all,
     override_to_result,
     parse_key_to_camelot,
+    sources_required_for_cache,
 )
 
 
@@ -95,6 +96,123 @@ def load_overrides(user) -> tuple[dict, dict, list[str]]:
             )
 
     return by_rp, by_tk, warnings
+
+
+def precise_overrides(user) -> dict[tuple[int, str], Override]:
+    """Map (discogs_release_id, position) → Override row (precise form only).
+
+    Broad overrides (artist+title without release+position) live in by_tk
+    from load_overrides() and aren't editable per-row.
+    """
+    out: dict[tuple[int, str], Override] = {}
+    for o in (
+        Override.objects.filter(user=user, release__isnull=False)
+        .select_related("release")
+    ):
+        out[(o.release.discogs_release_id, o.position or "")] = o
+    return out
+
+
+def save_track_overrides(user, entries: dict[tuple[int, str], dict]) -> int:
+    """Create / update / delete per-track overrides. Returns rows changed.
+
+    ``entries`` maps (discogs_release_id, position) → {"bpm", "key", "note"}
+    of raw strings. A row whose three fields are all blank deletes any
+    existing override; out-of-range BPMs and unparseable keys are skipped
+    rather than raising, so one bad cell never loses the rest of the batch.
+
+    Shared by the /tracks bulk grid and step 2 of the sleeve-labels flow.
+    """
+    if not entries:
+        return 0
+
+    existing = precise_overrides(user)
+    releases_by_did = {
+        r.discogs_release_id: r
+        for r in Release.objects.filter(
+            user=user, discogs_release_id__in=[rid for (rid, _) in entries],
+        )
+    }
+
+    changed = 0
+    for (rid, pos), entry in entries.items():
+        bpm_raw = (entry.get("bpm") or "").strip()
+        key_raw = (entry.get("key") or "").strip()
+        note_raw = (entry.get("note") or "").strip()
+
+        bpm_val: int | None = None
+        if bpm_raw:
+            try:
+                bpm_val = int(bpm_raw)
+            except ValueError:
+                continue
+            if not (BPM_MIN <= bpm_val <= BPM_MAX):
+                continue
+
+        key_val = ""
+        if key_raw:
+            normalized = parse_key_to_camelot(key_raw)
+            if normalized is None:
+                continue
+            key_val = normalized
+
+        empty = bpm_val is None and not key_val and not note_raw
+        current = existing.get((rid, pos))
+
+        if empty and current is None:
+            continue
+        if empty and current is not None:
+            current.delete()
+            changed += 1
+            continue
+
+        rel = releases_by_did.get(rid)
+        if rel is None:
+            continue  # Release dropped out of the collection; skip.
+
+        if current is None:
+            Override.objects.create(
+                user=user, release=rel, position=pos,
+                bpm=bpm_val, key_camelot=key_val, note=note_raw,
+            )
+            changed += 1
+            continue
+
+        same = (
+            current.bpm == bpm_val
+            and (current.key_camelot or "") == key_val
+            and (current.note or "") == note_raw
+        )
+        if same:
+            continue
+        current.bpm = bpm_val
+        current.key_camelot = key_val
+        current.note = note_raw
+        current.save(update_fields=["bpm", "key_camelot", "note", "updated_at"])
+        changed += 1
+    return changed
+
+
+def parse_override_post(post) -> dict[tuple[int, str], dict]:
+    """Group ``bpm_<release_id>_<position>`` style form fields by track.
+
+    Both the /tracks grid and the flow's step 2 post overrides in this
+    shape; keeping the parser next to the writer keeps them in step.
+    """
+    grouped: dict[tuple[int, str], dict[str, str]] = {}
+    for key, value in post.items():
+        for prefix in ("bpm_", "key_", "note_"):
+            if not key.startswith(prefix):
+                continue
+            rest = key[len(prefix):]
+            try:
+                rid_s, pos = rest.split("_", 1)
+                rid = int(rid_s)
+            except ValueError:
+                continue
+            grouped.setdefault((rid, pos), {})[prefix[:-1]] = value.strip()
+            break
+    return grouped
 
 
 # ─── BPM cache I/O ───────────────────────────────────────────────────────────
@@ -308,9 +426,18 @@ def bpm_coverage_breakdown(user) -> dict:
 
 
 def run_bpm_cascade(
-    user, *, workers: int = 8, force: bool = False, log: Logger = print,
+    user,
+    *,
+    workers: int = 8,
+    force: bool = False,
+    release_ids: list[int] | None = None,
+    log: Logger = print,
 ) -> dict:
-    """Cascade BPM/key lookups for every track in the user's collection.
+    """Cascade BPM/key lookups for the user's tracks.
+
+    ``release_ids`` narrows the run to those Discogs release ids — the
+    sleeve-labels flow uses it so step 2 only queries the records in that
+    set, instead of the whole collection. None means every release.
 
     Returns a stats dict. Idempotent: tracks whose BPM cache already has
     every source attempted are skipped, unless ``force=True`` re-queries
@@ -325,13 +452,18 @@ def run_bpm_cascade(
         log(f"Loaded {len(by_rp) + len(by_tk)} override(s) from DB.")
     used_overrides: set[tuple] = set()
 
+    qs = Release.objects.filter(user=user, tracks__isnull=False)
+    if release_ids is not None:
+        qs = qs.filter(discogs_release_id__in=[int(r) for r in release_ids])
     releases = list(
-        Release.objects.filter(user=user, tracks__isnull=False)
-        .distinct()
+        qs.distinct()
         .order_by("discogs_release_id")
-        .values("discogs_release_id", "artist", "id")
+        .values("discogs_release_id", "artist", "id", "videos")
     )
     if not releases:
+        if release_ids is not None:
+            log("ERROR: none of the selected releases have tracks.")
+            return {"error": "no_releases"}
         log("ERROR: no releases with tracks found. Run `sleeve-notes fetch` first.")
         return {"error": "no_releases"}
 
@@ -339,7 +471,7 @@ def run_bpm_cascade(
     total_tracks = Track.objects.filter(release_id__in=release_ids_uuid).count()
     tracks_by_release: dict = {}
     for t in Track.objects.filter(release_id__in=release_ids_uuid).values(
-        "release_id", "position", "artist", "title",
+        "release_id", "position", "artist", "title", "duration_s",
     ):
         tracks_by_release.setdefault(t["release_id"], []).append(t)
 
@@ -372,7 +504,7 @@ def run_bpm_cascade(
             ck = cache_key(artist, title)
             cached = None if force else load_cache_entry(user, ck)
             tried = set((cached or {}).get("sources_tried") or [])
-            if not force and cached and set(ALL_SOURCES).issubset(tried):
+            if not force and cached and set(sources_required_for_cache()).issubset(tried):
                 cached_hits += 1
                 continue
 
@@ -380,6 +512,10 @@ def run_bpm_cascade(
                 "rid": rid, "position": position,
                 "artist": artist, "title": title,
                 "cache_key": ck, "cached": cached,
+                "hints": {
+                    "videos": release["videos"] or [],
+                    "duration_s": track["duration_s"],
+                },
             })
 
     log(
@@ -396,7 +532,9 @@ def run_bpm_cascade(
     if worklist:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {
-                ex.submit(cascade_all, w["artist"], w["title"], w["cached"], rl): w
+                ex.submit(
+                    cascade_all, w["artist"], w["title"], w["cached"], rl, w["hints"],
+                ): w
                 for w in worklist
             }
             for fut in as_completed(futures):

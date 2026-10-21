@@ -1,4 +1,4 @@
-"""Look up BPM per track via a 5-source cascade.
+"""Look up BPM per track via metadata sources plus deferred audio analysis.
 
 Sources, in order:
   1. songbpm.com  — direct HTML scrape of canonical detail pages (no auth).
@@ -62,7 +62,15 @@ ROOT = project_root()
 
 # All sources in the cascade. Order here is informational; the cascade fires
 # them in parallel per track, then `consense()` picks the canonical value.
-ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
+METADATA_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
+AUDIO_SOURCE = "audio_analysis"
+ALL_SOURCES = (*METADATA_SOURCES, AUDIO_SOURCE)
+
+
+def sources_required_for_cache() -> tuple[str, ...]:
+    if os.environ.get("AUDIO_ANALYSIS_ENABLED", "").lower() in ("1", "true", "yes"):
+        return ALL_SOURCES
+    return METADATA_SOURCES
 
 # Tie-breaker order when sources disagree (no consensus, raw or octave-aware).
 # Order is empirically driven by per-source outlier rates measured against the
@@ -70,7 +78,23 @@ ALL_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrainz")
 # Beatport disagrees most often (frequently a wrong-track match or a halftime
 # reading for older DJ catalog entries). Beatport's "labels supply the BPM"
 # argument didn't hold up in practice on this collection.
-SOURCE_PRIORITY = ("songbpm", "reccobeats", "deezer", "acousticbrainz", "beatport")
+SOURCE_PRIORITY = (
+    "audio_analysis", "songbpm", "reccobeats", "deezer", "acousticbrainz", "beatport"
+)
+
+SOURCE_LABELS = {
+    "audio_analysis": "YouTube audio analysis",
+    "songbpm": "SongBPM",
+    "reccobeats": "ReccoBeats",
+    "deezer": "Deezer",
+    "acousticbrainz": "AcousticBrainz",
+    "beatport": "Beatport",
+    "manual": "Manual override",
+}
+
+
+def source_label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source.replace("_", " ").title())
 
 # --- songbpm.com scrape -------------------------------------------------------
 SONGBPM_BASE = "https://songbpm.com"
@@ -558,12 +582,16 @@ def _spotify_search_best(artist: str, title: str, rl: RateLimiter) -> tuple[floa
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=15,
             )
-        except Exception:
-            continue
+        except requests.RequestException as exc:
+            raise SourceUnavailable(f"Spotify search failed: {exc}") from exc
         if resp.status_code == 401:
             global _spotify_token
             _spotify_token = None
-            return None
+            raise SourceUnavailable("Spotify token rejected (401)")
+        # A throttled/failed lookup is not a "no match": returning None would
+        # land the track in sources_tried and poison the cache permanently.
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise SourceUnavailable(f"Spotify search returned {resp.status_code}")
         if resp.status_code != 200:
             continue
         items = resp.json().get("tracks", {}).get("items", []) or []
@@ -592,6 +620,8 @@ def reccobeats_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
     rl.wait("reccobeats", RECCOBEATS_RATE_S)
     try:
         _, data = http_get_json(f"{RECCOBEATS_BASE}/track", params={"ids": spot_id})
+    except RetryableHTTPError as exc:
+        raise SourceUnavailable(f"ReccoBeats unavailable: {exc}") from exc
     except Exception:
         return None
     if not data:
@@ -612,6 +642,8 @@ def reccobeats_lookup(artist: str, title: str, rl: RateLimiter) -> dict | None:
     rl.wait("reccobeats", RECCOBEATS_RATE_S)
     try:
         _, features = http_get_json(f"{RECCOBEATS_BASE}/track/{rb_id}/audio-features")
+    except RetryableHTTPError as exc:
+        raise SourceUnavailable(f"ReccoBeats unavailable: {exc}") from exc
     except Exception:
         return None
     if not features:
@@ -906,42 +938,87 @@ _LOOKUP_FNS = {
 }
 
 
+def _audio_analysis_lookup(
+    artist: str, title: str, hints: dict | None,
+) -> dict | None:
+    from sleeve_notes.audio_analysis import AudioAnalysisUnavailable, youtube_audio_lookup
+
+    hints = hints or {}
+    try:
+        return youtube_audio_lookup(
+            artist, title,
+            discogs_videos=hints.get("videos"), duration_s=hints.get("duration_s"),
+        )
+    except AudioAnalysisUnavailable as exc:
+        raise SourceUnavailable(str(exc)) from exc
+
+
+def _align_audio_bpm(audio_hit: dict, sources: dict[str, dict]) -> dict:
+    """Resolve common half/double and 3:2 meter readings against one known BPM."""
+    existing = [float(hit["bpm"]) for hit in sources.values() if hit.get("bpm")]
+    if len(existing) != 1 or not audio_hit.get("bpm"):
+        return audio_hit
+    measured = float(audio_hit["bpm"])
+    reference = existing[0]
+    candidates = (measured, measured * 2, measured / 2, measured * 1.5, measured / 1.5)
+    aligned = min(candidates, key=lambda value: abs(value - reference))
+    if abs(aligned - reference) > 2:
+        return audio_hit
+    out = dict(audio_hit)
+    out["measured_bpm"] = measured
+    out["bpm"] = int(round(aligned))
+    if aligned != measured:
+        out["meter_adjustment"] = round(aligned / measured, 3)
+    return out
+
+
 def cascade_all(
     artist: str,
     title: str,
     prev: dict | None,
     rl: RateLimiter,
+    hints: dict | None = None,
 ) -> dict:
-    """Fire every untried source in parallel, return a merged cache entry."""
+    """Run metadata in parallel, then analyze audio only for zero/single-hit tracks.
+
+    ``hints`` carries per-call release context that is not part of the cache
+    key: ``videos`` (Discogs video links) and ``duration_s``.
+    """
     sources: dict[str, dict] = dict((prev or {}).get("sources") or {})
     tried: set[str] = set((prev or {}).get("sources_tried") or [])
-    to_run = [s for s in ALL_SOURCES if s not in tried]
+    to_run = [s for s in METADATA_SOURCES if s not in tried]
     new_unavailable: list[str] = []
     new_errored: list[str] = []
 
-    if not to_run:
-        return {
-            "sources": sources,
-            "sources_tried": sorted(tried),
-            "sources_unavailable": [],
-            "sources_errored": [],
-        }
+    if to_run:
+        with ThreadPoolExecutor(max_workers=len(to_run)) as ex:
+            futures = {ex.submit(_LOOKUP_FNS[s], artist, title, rl): s for s in to_run}
+            for fut in as_completed(futures):
+                src = futures[fut]
+                try:
+                    hit = fut.result()
+                except SourceUnavailable:
+                    new_unavailable.append(src)
+                    continue
+                except Exception as e:
+                    new_errored.append(f"{src}: {e}")
+                    continue
+                tried.add(src)
+                if hit:
+                    sources[src] = hit
 
-    with ThreadPoolExecutor(max_workers=len(to_run)) as ex:
-        futures = {ex.submit(_LOOKUP_FNS[s], artist, title, rl): s for s in to_run}
-        for fut in as_completed(futures):
-            src = futures[fut]
-            try:
-                hit = fut.result()
-            except SourceUnavailable:
-                new_unavailable.append(src)
-                continue
-            except Exception as e:
-                new_errored.append(f"{src}: {e}")
-                continue
-            tried.add(src)
-            if hit:
-                sources[src] = hit
+    bpm_hit_count = sum(1 for hit in sources.values() if hit.get("bpm"))
+    if AUDIO_SOURCE not in tried and bpm_hit_count <= 1:
+        try:
+            audio_hit = _audio_analysis_lookup(artist, title, hints)
+        except SourceUnavailable:
+            new_unavailable.append(AUDIO_SOURCE)
+        except Exception as exc:
+            new_errored.append(f"{AUDIO_SOURCE}: {exc}")
+        else:
+            tried.add(AUDIO_SOURCE)
+            if audio_hit:
+                sources[AUDIO_SOURCE] = _align_audio_bpm(audio_hit, sources)
 
     out = {
         "sources": sources,
@@ -1142,7 +1219,9 @@ def build_track_result(
     sources = entry.get("sources") or {}
     bpm = derived["bpm"]
     if bpm is None:
-        all_tried = set(ALL_SOURCES).issubset(set(entry.get("sources_tried") or []))
+        all_tried = set(sources_required_for_cache()).issubset(
+            set(entry.get("sources_tried") or [])
+        )
         reason = "exhausted" if all_tried else "incomplete"
     else:
         reason = "match"
@@ -1167,11 +1246,13 @@ def build_track_result(
         "bpm_confidence": bpm_confidence,
         "key_confidence": derived["key_confidence"],
         "bpm_sources": derived["bpm_sources"],
+        "bpm_source_labels": [source_label(s) for s in derived["bpm_sources"]],
         "key_sources": derived["key_sources"],
         "source": derived["bpm_sources"][0] if derived["bpm_sources"] else None,
         "source_url": (sources.get(derived["bpm_sources"][0]) or {}).get("url")
             if derived["bpm_sources"] else None,
         "shared_siblings": shared_siblings,
+        "audio_analysis": sources.get(AUDIO_SOURCE),
         "reason": reason,
     }
 

@@ -7,8 +7,8 @@ Backdrop click empties #modal-root to dismiss.
   <div class="modal-card p-5 text-[13px]" hx-on:click="event.stopPropagation();">
     <div class="flex items-center mb-3">
       <h2 class="text-app-ink text-[15px] font-semibold">{{ title }}</h2>
-      <button type="button" class="ml-auto text-app-mute hover:text-app-ink text-[16px] leading-none"
-              hx-on:click="document.getElementById('modal-root').innerHTML='';">✕</button>
+      <button type="button" class="ml-auto text-app-dim hover:text-app-ink p-1 -m-1"
+              hx-on:click="document.getElementById('modal-root').innerHTML='';"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg><span class="sr-only">Close</span></button>
     </div>
     {% if description %}
     <p class="text-app-dim text-[12px] mb-3">{{ description }}</p>
