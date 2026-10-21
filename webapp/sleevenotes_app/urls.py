@@ -12,5 +12,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("healthz", core_views.healthz),
     path("run/banner", core_views.run_banner, name="run_banner"),
+    path("feedback", include("feedback.urls")),
     path("accounts/", include("allauth.urls")),
 ]

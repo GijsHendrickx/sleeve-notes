@@ -415,6 +415,10 @@
       <a href="{% url 'home' %}" class="wordmark"><i class="led"></i>{{ APP_NAME }}</a>
       <span class="crumb">{% block breadcrumb %}{% endblock %}</span>
       <span class="flex-1"></span>
+      {% if FEEDBACK_ENABLED %}
+      <button type="button" class="btn btn-quiet h-7 px-2.5 text-[12px]"
+              hx-get="{% url 'feedback:feedback' %}" hx-target="#modal-root">Feedback</button>
+      {% endif %}
       <span class="text-[13px] text-app-dim">{{ user.username }}</span>
       <form method="post" action="{% url 'account_logout' %}">
         {% csrf_token %}

@@ -20,6 +20,7 @@ webapp/            # Django project. `manage.py` lives here. Apps under it:
                    #   records/    Release, Track, BpmCache, Override + services + views
                    #   print_runs/ PrintRun + flow.py (the 4 steps) + render service
                    #   audit/      AuditEvent (append-only history)
+                   #   feedback/   Tester feedback (90-day retention) + list_feedback
                    #   discogs_provider/  Custom allauth OAuth1 adapter for Discogs
 roadmap.md         # Feature ideas / future work. See "Capturing feature ideas" below.
 migration_plan.md  # The Django port plan + Voortgang. Mostly historical now that

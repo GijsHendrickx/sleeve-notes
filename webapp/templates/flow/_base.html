@@ -21,5 +21,9 @@ mid-set, which is what the old editor let you do.
   <span class="text-[12px] text-app-dim truncate max-w-[16rem]">
     {{ run.display_name }}{% if run.is_draft %} · draft{% endif %}
   </span>
+  {% if FEEDBACK_ENABLED %}
+  <button type="button" class="btn btn-quiet h-7 px-2.5 text-[12px] self-center"
+          hx-get="{% url 'feedback:feedback' %}" hx-target="#modal-root">Feedback</button>
+  {% endif %}
 </nav>
 {% endblock %}

@@ -334,6 +334,7 @@ Once signed in there is no sidebar. Home (`/`) is the homepage, reachable at any
 | **Discogs sync** action | Modal-driven `sleeve-notes fetch` via the Discogs API. Optional folder name + result-limit. |
 | **Import Discogs csv** action | Modal-driven `sleeve-notes fetch --csv …` against a CSV export uploaded from your machine. Optional folder filter. |
 | **BPM lookup** action | Modal-driven `sleeve-notes bpm`. One option: **Force re-fetch all** — wipes the BPM cache before running, so every track is re-queried. |
+| **Feedback** button | In the top bar and the step rail. One text field; stores the message plus the page path, route, set id and step — no query string, screenshot or form contents. Kept `FEEDBACK_RETENTION_DAYS` (default 90) and pruned by a daily Django-Q2 schedule. Read it with `python manage.py list_feedback [--days N] [--json]` or in the Django admin. Off with `FEEDBACK_ENABLED=false`. |
 
 **Job feedback.** Actions enqueue a Django-Q2 task; the worker writes progress into a per-user `UserJobLock` row that the toast polls every 2s. Three states map to three visual styles: running (blue determinate bar + `(N/M) artist - title` live), done (green bar + summary), failed (red bar + error). The toast lingers ~5s after completion, then vanishes. One running job per user is enforced at the DB layer — a second click while one's in-flight returns HTTP 409 and a flash on the modal. Inside the flow, step 2 renders the cascade's progress in the step itself; the toast is what you get once you navigate away.
 

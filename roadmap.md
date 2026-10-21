@@ -13,7 +13,7 @@ Randvoorwaarden die boven de losse ideeën hieronder staan. Elke feature die hie
 Voorstel op basis van afhankelijkheden, okt 2026. Kernidee: **eerst de app veilig genoeg maken om andermans data te bewaren, dan pas testers binnenlaten.** Elke tester zet zijn Discogs-token in onze database.
 
 1. ~~**Hardening vóór testers**~~ — **gedaan (21 okt 2026)**: Discogs-tokens versleuteld, Sentry zonder PII, tenant-isolatietest. Wat overblijft (backups + restore-oefening, workercheck, Dependabot) staat onder "Hardening & onderhoudslast → Uitvoeringsstatus" en hoort bij het herstellen van staging in stap 2.
-2. **Staging herstellen + feedbackformulier.** Staging deployt nog van de verdwenen branch `django-port`. Zie "Feedback van testers".
+2. **Staging herstellen + feedbackformulier.** Code-kant **gedaan (21 okt 2026)**: `render.yaml` deployt van `main`, de Docker-build is gerepareerd, en het feedbackformulier staat er. Wat overblijft is dashboardwerk: zie "Feedback van testers → Uitvoeringsstatus".
 3. **BPM-kwaliteit**: de genummerde lijst onder "BPM-bronnen onderzoek → Uitvoeringsstatus", items 1–5, in die volgorde.
 4. **Gedeelde BPM-cache** (item 7 in diezelfde lijst). Pas zinvol zodra er meer dan één gebruiker is, en pas na stap 1.
 5. **Huisstijl.** Na de eerste testerfeedback, zodat die feedback over de flow gaat en niet over kleur.
@@ -326,6 +326,18 @@ Ordered by impact over effort. Each is a flow-level change; none needs new engin
 ## Feedback van testers
 
 Mensen uit het eigen netwerk gaan de app op staging testen en moeten **in de app zelf** feedback kunnen geven. Een agent pikt die feedback op, en reageert eventueel zelf met vragen of suggesties.
+
+### Uitvoeringsstatus (21 okt 2026)
+Gedaan:
+- `render.yaml` deployt van `main`. De Docker-build faalde bovendien: hij kopieerde `sleeve_notes_web/`, verwijderd in `ea7dc03`. Lokaal gebouwd en gedraaid met `ENVIRONMENT=staging`: healthz 200, Basic Auth 401/200, worker start.
+- Feedback v1 zoals hieronder voorgesteld: app `feedback`, knop in top bar en step rail, eigen tabel, 90 dagen bewaartermijn via een dagelijkse Q2-schedule, uitlezen met `manage.py list_feedback --json`. De open vragen zijn zo beantwoord: **eigen tabel**, en **ook in productie aan** (uit te zetten met `FEEDBACK_ENABLED`); er is geen reden om feedback van echte gebruikers te weigeren.
+
+Nog te doen, in het Render-dashboard (niet vanuit code):
+1. Een staging-only `FIELD_ENCRYPTION_KEY` genereren, in Bitwarden zetten, en op web én worker invullen. Zonder die sleutel start geen van beide.
+2. Database terugzetten indien verwijderd (Blueprint sync), web en worker resumen. Zie RUNBOOK → Resume staging.
+3. Backups/PITR aanzetten en één restore oefenen (uit stap 1).
+4. Testers de Basic Auth-gegevens geven.
+- *Restpunt:* de Django-admin heeft op staging geen opmaak, want er is geen `collectstatic`/whitenoise. Bruikbaar maar lelijk; pas oplossen als de admin vaker nodig is.
 
 ### Voorwaarden (blokkeren het nu)
 - **Staging staat uit** (gepauzeerd om kosten te sparen, zie `RUNBOOK.md`) én `render.yaml` deployt nog van branch `django-port`, die sinds de merge naar `main` niet meer bestaat. Hervatten zonder die branch om te zetten geeft een kapotte deploy.

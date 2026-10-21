@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "records",
     "print_runs",
     "audit",
+    "feedback",
     "django_q",
 ]
 
@@ -175,6 +176,10 @@ Q_CLUSTER = {
 # in production — on Render the worker service runs `manage.py qcluster`
 # as its own process and this stays False.
 DEV_INPROCESS_QCLUSTER = env.bool("DEV_INPROCESS_QCLUSTER", default=False)
+
+# ─── Tester feedback ─────────────────────────────────────────────────────────
+FEEDBACK_ENABLED = env.bool("FEEDBACK_ENABLED", default=True)
+FEEDBACK_RETENTION_DAYS = env.int("FEEDBACK_RETENTION_DAYS", default=90)
 
 # ─── Error & performance monitoring (Sentry) ─────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")
