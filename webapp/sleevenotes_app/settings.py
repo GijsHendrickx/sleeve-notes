@@ -59,6 +59,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "allauth.account.middleware.AccountMiddleware",
+    "middleware.sentry_user.SentryUserIdMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -181,6 +182,12 @@ if SENTRY_DSN:
         dsn=SENTRY_DSN,
         environment=ENVIRONMENT,
         integrations=[DjangoIntegration()],
-        send_default_pii=True,
+        # No usernames, IPs, cookies or request bodies to a third party:
+        # SentryUserIdMiddleware attaches the bare user id instead. Frame
+        # locals are off too — the default scrubber only masks exact key
+        # names like "token", so `token_secret`, `tok_sec` or a `user` whose
+        # repr is the username would otherwise ship with every traceback.
+        send_default_pii=False,
+        include_local_variables=False,
         traces_sample_rate=1.0 if ENVIRONMENT in ("local", "staging") else 0.1,
     )
