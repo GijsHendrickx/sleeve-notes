@@ -9,7 +9,7 @@ services:
     name: sleeve-notes-web-staging
     runtime: docker
     plan: starter
-    branch: django-port
+    branch: main
     autoDeploy: true
     dockerfilePath: ./Dockerfile
     region: frankfurt
@@ -50,7 +50,7 @@ services:
     name: sleeve-notes-worker-staging
     runtime: docker
     plan: starter
-    branch: django-port
+    branch: main
     autoDeploy: true
     dockerfilePath: ./Dockerfile
     dockerContext: .

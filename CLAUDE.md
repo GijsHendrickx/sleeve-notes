@@ -25,7 +25,7 @@ roadmap.md         # Feature ideas / future work. See "Capturing feature ideas" 
 migration_plan.md  # The Django port plan + Voortgang. Mostly historical now that
                    # fase 5 is complete; kept for fase 6 (Render production cut-over).
 docker-compose.yml # Local Postgres. `docker compose up -d db` to start.
-render.yaml        # Render Blueprint (currently suspended to save costs — see RUNBOOK.md).
+render.yaml        # Render Blueprint, staging deploys from main (suspended to save costs — see RUNBOOK.md).
 .env               # Discogs creds, DJANGO_SECRET_KEY, DATABASE_URL, Spotify/YT keys.
                    # NEVER commit.
 .env.example       # Documents every required + optional key; safe to commit.

@@ -12,8 +12,9 @@ production. The point is: in a 3 AM panic, you read this file, not your terminal
 
 ## Branches & deploy
 
-- `main` → production (when cut over; pre-cut-over: legacy FastAPI app)
-- `django-port` → staging (auto-deploys on push)
+- `main` → staging (auto-deploys on push). There is no production service on
+  Render yet; when there is, it gets its own trigger so testers on staging
+  and real users don't share one deploy button.
 
 ## Common incidents
 
@@ -69,10 +70,13 @@ After pause, when you want to deploy again:
 
 1. **If the DB was deleted:** dashboard → Blueprints → **Sync Blueprint** (re-reads `render.yaml`, re-creates the DB). Wait until the database row shows "Available".
 2. **Web service** → Resume. On first start after resume, the Dockerfile's `CMD` runs `manage.py migrate --noinput` which (re-)creates the schema if it's empty.
-3. **Worker service** → Resume (only when you have routes wired to `enqueue_*` — until then leave the worker suspended; the web alone is enough for fase 5 development).
-4. **Re-paste secrets** *only if* you also deleted the services: env vars survive suspend but die with delete. The values live in Bitwarden under `Sleeve Notes / staging-secrets`.
-5. Push (or "Manual Deploy → Latest Commit" in the dashboard) to trigger the first build after resume.
+3. **Worker service** → Resume. Required: Discogs sync and the BPM lookup in step 2 of the flow run on it, and without it the toast spins forever.
+4. **Check `FIELD_ENCRYPTION_KEY`** on both web and worker. It became required with the encrypted Discogs tokens; without it neither service starts. Use a staging-only key (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) and store it in Bitwarden first — losing it means every tester signs in again.
+5. **Re-paste secrets** *only if* you also deleted the services: env vars survive suspend but die with delete. The values live in Bitwarden under `Sleeve Notes / staging-secrets`.
+6. Push (or "Manual Deploy → Latest Commit" in the dashboard) to trigger the first build after resume.
 
 Sanity check after resume:
 - Web `/healthz` returns 200.
+- Without Basic Auth `/` returns 401, with it 200.
+- Worker logs show `Q Cluster … running`.
 - Behind Basic Auth gate, sign in via Discogs works (the staging Discogs OAuth app's callback URL has not changed, so no reconfiguration needed).

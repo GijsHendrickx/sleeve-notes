@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && \
 
 COPY pyproject.toml README.md ./
 COPY sleeve_notes/ ./sleeve_notes/
-COPY sleeve_notes_web/ ./sleeve_notes_web/
 COPY webapp/ ./webapp/
 
 RUN pip install .
