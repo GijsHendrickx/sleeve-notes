@@ -1,4 +1,4 @@
-"""HTMX action endpoints for the sidebar buttons.
+"""HTMX action endpoints for the Library actions on Home.
 
 Each action is a pair: a GET that returns a modal partial with optional
 parameter inputs, and a POST that enqueues the job via records.jobs and

@@ -4,7 +4,7 @@ Generate a printable A4 PDF with one sticker per record from your Discogs collec
 
 The web UI is a four-step flow — **Records → BPM → Design → Get them** — that ends in a PDF (and, later, an order for printed stickers). Each finished set of **sleeve labels** is a saved "which records + which layout" recipe you can re-download, duplicate as the starting point for the next print, or delete. Collection views filter by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other), both auto-classified from Discogs metadata at fetch time.
 
-BPM and key are looked up through five metadata sources (songbpm + Deezer + ReccoBeats/Spotify + Beatport + AcousticBrainz) and reconciled by consensus. Optionally, tracks with zero or one metadata BPM are measured from a strictly matched YouTube recording using librosa. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
+BPM and key are looked up through four metadata sources (songbpm + Deezer + ReccoBeats/Spotify + AcousticBrainz; Beatport is [currently disabled](#beatport-one-time-auth)) and reconciled by consensus. Optionally, tracks with zero or one metadata BPM are measured from a strictly matched YouTube recording using librosa. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
 ---
 

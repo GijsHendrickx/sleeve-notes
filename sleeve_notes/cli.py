@@ -32,7 +32,7 @@ Inspection / data:
   overrides      Add/list/remove manual BPM/key overrides
 
 Interactive:
-  web            Launch the localhost Django web UI (dashboard, overrides, print runs)
+  web            Launch the localhost Django web UI (Home, sleeve labels flow, records, tracks)
 
 Pass -h/--help to any subcommand for its own options.
 """

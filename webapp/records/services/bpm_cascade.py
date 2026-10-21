@@ -374,8 +374,8 @@ def bpm_coverage_breakdown(user) -> dict:
     """Per-confidence breakdown of every track in the user's collection.
 
     Returns counts for: high, octave, shared, single (other confidences with
-    a BPM), disputed, missing, plus total + with_bpm. Powers the dashboard
-    coverage card. O(tracks) in-memory work; one query for overrides, one
+    a BPM), disputed, missing, plus total + with_bpm. Powers the Library
+    line on Home. O(tracks) in-memory work; one query for overrides, one
     for the cache, one for releases+tracks.
     """
     by_rp, by_tk, _ = load_overrides(user)
