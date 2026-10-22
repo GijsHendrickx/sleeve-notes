@@ -11,6 +11,7 @@ canvas sized in points (matching ``viewBox``) and flip Y in each draw call.
 
 from __future__ import annotations
 
+import re
 from html import escape
 
 import qrcode
@@ -166,3 +167,43 @@ def render_release_stickers_svg(
         )
         svgs.append(drawer.to_svg())
     return svgs
+
+
+def render_sheet_svg(sticker_svgs: list[str], layout: L.LayoutConfig) -> str:
+    """One A4 page with the given stickers on the layout grid.
+
+    Slots beyond the supplied stickers stay as dashed outlines, so a short
+    run still shows the whole sheet. Coordinates are PDF points, the same
+    unit ``derive_layout`` and each sticker's viewBox use.
+    """
+    parts: list[str] = []
+    origins = L.sticker_origins(layout)
+    for i, (ox, oy) in enumerate(origins):
+        top = L.PAGE_H - oy - layout.sticker_h
+        if i < len(sticker_svgs):
+            opening = (
+                f'<svg x="{ox:.2f}" y="{top:.2f}" '
+                f'width="{layout.sticker_w:.2f}" height="{layout.sticker_h:.2f}" '
+                f'viewBox="0 0 {layout.sticker_w:.2f} {layout.sticker_h:.2f}" '
+                f'preserveAspectRatio="xMidYMid meet" overflow="hidden">'
+            )
+            inner = re.sub(r"^<svg[^>]*>", opening, sticker_svgs[i], count=1)
+            parts.append(inner)
+            parts.append(
+                f'<rect x="{ox:.2f}" y="{top:.2f}" width="{layout.sticker_w:.2f}" '
+                f'height="{layout.sticker_h:.2f}" fill="none" stroke="#000" '
+                f'stroke-opacity="0.18" stroke-width="0.5"/>'
+            )
+        else:
+            parts.append(
+                f'<rect x="{ox:.2f}" y="{top:.2f}" width="{layout.sticker_w:.2f}" '
+                f'height="{layout.sticker_h:.2f}" fill="none" stroke="#000" '
+                f'stroke-opacity="0.25" stroke-width="0.5" stroke-dasharray="3 3"/>'
+            )
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {L.PAGE_W:.2f} {L.PAGE_H:.2f}" '
+        f'style="display:block;width:100%;height:auto;background:#fff">'
+        + "".join(parts)
+        + "</svg>"
+    )

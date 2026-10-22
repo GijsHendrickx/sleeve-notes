@@ -1,15 +1,99 @@
 {% extends "base.html" %}
 {% load socialaccount %}
 
+{% block title %}{{ APP_NAME }}{% endblock %}
+
 {% block content %}
-<div class="max-w-2xl mx-auto pt-12">
-  <h1 class="text-3xl font-semibold mb-3">{{ APP_NAME }}</h1>
-  <p class="text-zinc-400 mb-6">
-    Generate printable BPM stickers for your Discogs collection.
-  </p>
-  <a href="{% provider_login_url 'discogs' %}"
-     class="inline-block px-4 py-2 rounded bg-white/10 hover:bg-white/20 transition">
-    Sign in with Discogs
-  </a>
+<style>
+  .lp { max-width: 1120px; margin: 0 auto; padding: 20px 20px 56px; }
+  .lp-hero {
+    position: relative; overflow: hidden; border-radius: var(--r-xl);
+    background: var(--g7); color: var(--g0);
+    min-height: 600px; padding: 28px 44px 56px;
+    display: flex; flex-direction: column;
+  }
+  .lp-hero .art { position: absolute; top: 0; bottom: 0; right: -40px; width: 900px; pointer-events: none; }
+  .lp-hero .art svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  .lp-nav { position: relative; z-index: 1; display: flex; align-items: center; gap: 28px; font-size: 14px; color: var(--g3); }
+  .lp-nav .wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; color: var(--g0); }
+  .lp-nav .led { box-shadow: 0 0 0 2px var(--g6); }
+  .lp-nav a { color: inherit; text-decoration: none; }
+  .lp-nav a:hover { color: var(--g0); }
+  .lp-copy { position: relative; z-index: 1; margin-block: auto; padding-top: 56px; max-width: 480px; display: flex; flex-direction: column; gap: 22px; }
+  .lp-copy h1 { margin: 0; font-size: clamp(38px, 6vw, 64px); line-height: 1; font-weight: 800; letter-spacing: -0.04em; text-wrap: balance; }
+  .lp-copy p { margin: 0; color: var(--g3); font-size: 17px; line-height: 1.5; max-width: 40ch; }
+  .lp-cta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .lp-cta .btn { height: 42px; padding: 0 20px; font-size: 15px; }
+  .lp-cta .btn-primary { background: var(--g0); color: var(--g7); }
+  .lp-cta .btn-primary:hover { background: #fff; }
+  .lp-cta .btn-primary::before { box-shadow: 0 0 0 1.5px var(--g7); }
+  .lp-cta .btn-quiet { color: var(--g0); border-color: rgba(243,244,244,.28); }
+  .lp-cta .btn-quiet:hover { background: rgba(243,244,244,.08); border-color: rgba(243,244,244,.4); }
+
+  .lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-top: 20px; }
+  .lp-step { padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .lp-step h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .lp-step p { margin: 0; color: var(--dim); font-size: 14px; line-height: 1.5; }
+  .lp-step .n { font: 500 13px "Red Hat Mono", ui-monospace, monospace; color: var(--mute); display: flex; align-items: center; gap: 8px; }
+
+  .lp-proof { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: stretch; }
+  .lp-readout { display: flex; align-items: baseline; gap: 14px; padding: 22px 26px; border-radius: var(--r-lg); background: var(--g7); color: var(--led); box-shadow: inset 0 2px 6px rgba(0,0,0,.6), 0 0 0 1px var(--g6); }
+  .lp-readout b { font: 500 84px/1 "Red Hat Mono", ui-monospace, monospace; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+  .lp-readout .u { font: 500 14px "Red Hat Mono", ui-monospace, monospace; color: var(--g4); }
+  .lp-readout .k { margin-left: auto; font: 500 28px "Red Hat Mono", ui-monospace, monospace; color: var(--g0); }
+  .lp-copy-2 { padding: 22px 26px; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+  .lp-copy-2 b { font-size: 18px; letter-spacing: -0.02em; }
+  .lp-copy-2 span { color: var(--dim); font-size: 14px; }
+
+  @media (max-width: 720px) {
+    .lp { padding: 12px 12px 40px; }
+    .lp-hero { padding: 20px 22px 32px; min-height: 560px; }
+    .lp-hero .art { right: -250px; opacity: .45; }
+    .lp-nav .hide-sm { display: none; }
+    .lp-readout b { font-size: 64px; }
+  }
+</style>
+
+<div class="lp">
+  <section class="lp-hero">
+    <div class="art" aria-hidden="true"><svg viewBox="0 0 900 600" preserveAspectRatio="xMidYMid slice" id="lp-record"></svg></div>
+    <nav class="lp-nav" aria-label="Main">
+      <span class="wordmark"><i class="led"></i>{{ APP_NAME }}</span>
+      <a href="#how" class="hide-sm">How it works</a>
+      <span class="flex-1"></span>
+      <a href="{% provider_login_url 'discogs' %}">Sign in</a>
+    </nav>
+    <div class="lp-copy">
+      <h1>Every sleeve, ready for the booth.</h1>
+      <p>Pull your collection from Discogs, fill in BPM and key for every track, and print labels for your sleeves.</p>
+      <div class="lp-cta">
+        <a href="{% provider_login_url 'discogs' %}" class="btn btn-primary">Sign in with Discogs</a>
+        <a href="#how" class="btn btn-quiet">See how it works</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="lp-steps" aria-label="How it works">
+    <div class="card lp-step"><span class="n"><i class="led"></i>Records</span><h2>Pick what you play</h2><p>Your Discogs collection, searchable. Select the records for tonight, or everything new since your last print.</p></div>
+    <div class="card lp-step"><span class="n">BPM</span><h2>Fill the gaps</h2><p>Tempo and key are looked up from five sources. You see which tracks are still missing and can type the rest in yourself.</p></div>
+    <div class="card lp-step"><span class="n">Design</span><h2>Choose the label</h2><p>Pick how much goes on the sticker. The preview is exactly what prints, on the stock you use.</p></div>
+    <div class="card lp-step"><span class="n">Get them</span><h2>Print the sheet</h2><p>Download a PDF that matches your label sheet, or mark the set as printed and move on.</p></div>
+  </section>
+
+  <section class="lp-proof" aria-label="Example">
+    <div class="lp-readout"><b>118</b><span class="u">BPM</span><span class="k">8A</span></div>
+    <div class="card lp-copy-2"><b>Check before you print.</b><span>Every value on the sticker comes from a source you can see, and you can overrule any of them.</span></div>
+  </section>
 </div>
+
+<script>
+  (function () {
+    var svg = document.getElementById('lp-record');
+    if (!svg) return;
+    var cx = 600, cy = 330, g = '';
+    for (var r = 76; r < 340; r += 6) g += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="#F3F4F4" stroke-opacity="' + (r % 24 === 76 % 24 ? 0.14 : 0.06) + '"/>';
+    svg.innerHTML = '<circle cx="' + cx + '" cy="' + cy + '" r="342" fill="#1E2123"/>' + g +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="58" fill="#2A2E30"/><circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#17191A"/>';
+  })();
+</script>
 {% endblock %}

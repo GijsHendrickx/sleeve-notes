@@ -1,0 +1,31 @@
+{% extends "actions/_modal.html" %}
+
+{% block body %}
+{% if sent %}
+<p class="text-app-ink t-good">Thanks, your feedback is in.</p>
+<div class="flex justify-end pt-4">
+  <button type="button" class="btn btn-quiet"
+          hx-on:click="document.getElementById('modal-root').innerHTML='';">Close</button>
+</div>
+{% else %}
+<form hx-post="{% url 'feedback:feedback' %}"
+      hx-target="#modal-root" hx-swap="innerHTML"
+      class="space-y-3">
+  {% csrf_token %}
+  <label class="block">
+    <span class="field-label mb-1 block">What's working, what isn't, what's missing?</span>
+    <textarea name="message" rows="6" maxlength="{{ max_length }}" required autofocus
+              class="field block w-full px-3 py-2 text-[13px]"></textarea>
+    {% if error %}<span class="block t-bad text-[12px] mt-1">{{ error }}</span>{% endif %}
+    <span class="block text-app-dim text-[12px] mt-1">
+      We save your message and which page you're on. Nothing else, and it's deleted after {{ retention_days }} days.
+    </span>
+  </label>
+  <div class="flex gap-2 justify-end pt-2">
+    <button type="button" class="btn btn-quiet"
+            hx-on:click="document.getElementById('modal-root').innerHTML='';">Cancel</button>
+    <button type="submit" class="btn btn-primary">Send</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

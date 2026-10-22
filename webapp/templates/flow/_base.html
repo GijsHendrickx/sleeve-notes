@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% comment %}
+Flow shell. Overrides base's top bar with the step rail: inside the flow
+there is exactly one way forward, one way back, and one way out. The
+sidebar is deliberately absent — a visible nav invites wandering off
+mid-set, which is what the old editor let you do.
+{% endcomment %}
+
+{% block chrome %}
+<nav class="rail " aria-label="Sleeve labels steps">
+  <a href="{% url 'home' %}" class="rail-exit">Save &amp; close</a>
+  {% for s in rail %}
+    <a href="{% url 'print_runs:step' run.id s.n %}"
+       class="rail-step{% if s.done %} done{% endif %}"
+       {% if s.current %}aria-current="step"{% endif %}
+       {% if not s.reachable %}aria-disabled="true" tabindex="-1"{% endif %}>
+      <span class="idx">{% if s.done %}<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.5l2.2 2.2L9.5 3.5"/></svg><span class="sr-only">Done: </span>{% else %}{{ s.n }}{% endif %}</span> {{ s.title }}
+    </a>
+  {% endfor %}
+  <span class="flex-1"></span>
+  <span class="text-[12px] text-app-dim truncate max-w-[16rem]">
+    {{ run.display_name }}{% if run.is_draft %} · draft{% endif %}
+  </span>
+  {% if FEEDBACK_ENABLED %}
+  <button type="button" class="btn btn-quiet h-7 px-2.5 text-[12px] self-center"
+          hx-get="{% url 'feedback:feedback' %}" hx-target="#modal-root">Feedback</button>
+  {% endif %}
+</nav>
+{% endblock %}

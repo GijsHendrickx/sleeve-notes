@@ -1,0 +1,102 @@
+{% extends "flow/_base.html" %}
+
+{% block title %}BPM — sleeve labels — {{ APP_NAME }}{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto">
+
+  <div class="flex flex-col gap-1.5 mb-4">
+    <h1 class="text-[22px] font-semibold tracking-tight">Fill in the missing BPMs</h1>
+    <p class="text-app-dim max-w-[62ch]">
+      We look up BPM and key for the {{ release_count }} record{{ release_count|pluralize }}
+      in this set only — not your whole collection.
+    </p>
+  </div>
+
+  {% include "flow/_step2_status.html" %}
+
+  <form method="post" action="{% url 'print_runs:step' run.id 2 %}" class="mt-5">
+    {% csrf_token %}
+
+    <div class="flex items-baseline gap-3 mb-2.5">
+      <h3 class="section-title">Needs your eye</h3>
+      <span class="text-app-mute text-[12px]">
+        Type a value to override it. Anything left blank simply prints without a BPM.
+      </span>
+    </div>
+
+    <div class="card overflow-auto max-h-[calc(100vh-26rem)]">
+      <table class="dense w-full text-[13px]">
+        <thead class="surface-2 text-[12px] text-app-mute sticky top-0 z-10">
+          <tr class="border-b hairline">
+            <th class="text-left">Track</th>
+            <th class="text-left w-52">Release</th>
+            <th class="text-left w-36">Why</th>
+            <th class="text-left w-44">Sources</th>
+            <th class="text-right w-24">BPM</th>
+            <th class="text-left w-24">Key</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in fixes %}
+          <tr class="border-t hairline align-middle">
+            <td class="text-app-ink">{{ f.title|default:"—" }}</td>
+            <td class="text-app-dim">{{ f.release_title|default:"—" }}</td>
+            <td>
+              {% if f.reason == "sources disagree" %}
+                <span class="pill pill-warn">{{ f.reason }}</span>
+              {% elif f.reason == "measured from audio" %}
+                <span class="pill">{{ f.reason }}</span>
+              {% else %}
+                <span class="text-app-mute text-[12px]">{{ f.reason }}</span>
+              {% endif %}
+            </td>
+            <td class="text-app-mute text-[12px]">
+              {% if f.audio_analysis.url %}
+                <a href="{{ f.audio_analysis.url }}" target="_blank" rel="noopener"
+                   class="link hover:underline"
+                   title="Matched video: {{ f.audio_analysis.video_title }}">
+                  {{ f.sources|default:"YouTube audio analysis" }}
+                </a>
+                {% if f.audio_analysis.analysis_confidence %}
+                  <span class="num text-app-dim">· {{ f.audio_analysis.analysis_confidence }}</span>
+                {% endif %}
+              {% else %}
+                {{ f.sources|default:"—" }}
+              {% endif %}
+            </td>
+            <td class="text-right">
+              <input class="fix-input" name="bpm_{{ f.release_id }}_{{ f.position }}"
+                     value="{{ f.bpm }}" placeholder="—"
+                     aria-label="BPM for {{ f.title }}">
+            </td>
+            <td>
+              <input class="fix-input key" name="key_{{ f.release_id }}_{{ f.position }}"
+                     value="{{ f.key }}" placeholder="—"
+                     aria-label="Key for {{ f.title }}">
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center py-12 text-app-mute">
+            Every track in this set has a confident BPM. Nothing to check.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="actionbar ">
+      <a href="{% url 'print_runs:step' run.id 1 %}" class="btn btn-quiet">Back</a>
+      <span class="flex-1"></span>
+      <span class="summary">
+        {% if cov_missing %}
+          <b>{{ cov_missing }}</b> track{{ cov_missing|pluralize }} will print without a BPM
+        {% else %}
+          Every track has a BPM
+        {% endif %}
+      </span>
+      <button type="submit" class="btn btn-primary">Continue</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,31 +1,33 @@
 {% load socialaccount %}
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ APP_NAME }}{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Red+Hat+Mono:wght@400;500;600&display=swap">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
-            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"SF Pro Display"', 'ui-sans-serif', 'system-ui', '"Helvetica Neue"', 'Arial', 'sans-serif'],
-            mono: ['"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['"Schibsted Grotesk"', '-apple-system', 'BlinkMacSystemFont', 'system-ui', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+            mono: ['"Red Hat Mono"', '"SF Mono"', 'ui-monospace', 'Menlo', 'Consolas', 'monospace'],
           },
           colors: {
             app: {
-              bg:    '#0c0c0e',
-              s1:    '#161618',
-              s2:    '#1d1d1f',
-              s3:    '#2a2a2c',
-              line:  'rgba(255,255,255,0.07)',
-              line2: 'rgba(255,255,255,0.12)',
-              ink:   '#f5f5f7',
-              dim:   '#98989d',
-              mute:  '#6e6e73',
+              bg:    'var(--app-bg)',
+              s1:    'var(--s1)',
+              s2:    'var(--s2)',
+              s3:    'var(--s3)',
+              line:  'var(--line)',
+              line2: 'var(--line2)',
+              ink:   'var(--ink)',
+              dim:   'var(--dim)',
+              mute:  'var(--mute)',
             },
           },
         },
@@ -34,19 +36,37 @@
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <style>
+    /* Design tokens — see DESIGN.md. Greys are the housing, --led is the one
+       chroma and only ever means "active / look here". */
     :root {
-      --app-bg: #0c0c0e;
-      --s1: #161618;
-      --s2: #1d1d1f;
-      --s3: #2a2a2c;
-      --line: rgba(255,255,255,0.07);
-      --line2: rgba(255,255,255,0.12);
-      --ink: #f5f5f7;
-      --dim: #98989d;
-      --mute: #6e6e73;
+      --g0: #F3F4F4; --g1: #E6E8E9; --g2: #D5D8DA; --g3: #BFC3C6;
+      --g4: #8E9498; --g5: #4E5457; --g6: #2A2E30; --g7: #17191A;
+      --led: #FF5A14;
+
+      --app-bg: var(--g2);
+      --s1: var(--g1);
+      --s2: var(--g0);
+      --s3: var(--g3);
+      --line: rgba(23,25,26,0.14);
+      --line2: rgba(23,25,26,0.28);
+      --ink: var(--g7);
+      --dim: var(--g5);
+      --mute: #565C60;
+      --accent: var(--g7);
+      --accent-hover: var(--g6);
+      --accent-soft: rgba(23,25,26,0.07);
+      --accent-ring: rgba(23,25,26,0.22);
+      --good: #246338;
+      --warn: #745600;
+      --bad: #A8322A;
+      --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 22px;
+      /* The one surface that isn't app chrome: the stock labels print on. */
+      --paper: #fefefc;
     }
-    html, body { font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
-    body { background: var(--app-bg); color: var(--ink); letter-spacing: -0.005em; }
+    html, body { -webkit-font-smoothing: antialiased; }
+    body { background: var(--app-bg); color: var(--ink); }
+    input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+    ::selection { background: var(--accent-ring); color: var(--ink); }
 
     .hairline   { border-color: var(--line); }
     .hairline-2 { border-color: var(--line2); }
@@ -55,80 +75,84 @@
     .surface-2 { background: var(--s2); }
     .surface-3 { background: var(--s3); }
 
-    .vibrancy-strong {
-      background: rgba(12,12,14,0.72);
-      backdrop-filter: saturate(180%) blur(28px);
-      -webkit-backdrop-filter: saturate(180%) blur(28px);
+    .num { font-variant-numeric: tabular-nums; }
+
+    .t-good { color: var(--good); }
+    .t-warn { color: var(--warn); }
+    .t-bad  { color: var(--bad); }
+    .link { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-ring); }
+    .link:hover { text-decoration-color: currentColor; }
+    .row-hover:hover { background: var(--s2); }
+    .row-selected { background: var(--accent-soft); }
+
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
     }
 
-    .nav-item {
-      display: block;
-      margin: 1px 8px;
-      padding: 6px 10px;
-      border-radius: 7px;
-      font-size: 13px;
-      color: var(--ink);
-      transition: background-color 120ms ease, color 120ms ease;
-    }
-    .nav-item:hover { background: var(--s2); color: var(--ink); }
-    .nav-item.active { background: var(--s3); color: var(--ink); }
-    .nav-item[disabled] { color: var(--mute); cursor: not-allowed; }
-    .nav-item[disabled]:hover { background: transparent; color: var(--mute); }
-    .nav-section {
-      margin: 0 16px;
-      padding: 6px 0 4px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--mute);
-    }
-    .nav-action { display: flex; align-items: center; gap: 8px; }
-    .nav-glyph {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 14px; color: var(--dim); font-size: 13px;
-    }
-
-    /* Cards — primary container for listing tables and detail panels. */
+    /* Panels — listing tables and detail areas. */
     .card {
       background: var(--s1);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      transition: border-color 160ms ease;
+      border-radius: var(--r-lg);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 0 0 1px var(--line);
+    }
+
+    /* The LED always sits in a dark bezel: orange alone fails contrast on grey. */
+    .led {
+      display: inline-block; flex: none; width: 9px; height: 9px; border-radius: 50%;
+      background: var(--led); box-shadow: 0 0 0 2px var(--g7);
     }
 
     /* Buttons */
     .btn {
-      display: inline-flex; align-items: center; gap: 0.4rem;
-      padding: 0.4rem 0.85rem; border-radius: 8px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      padding: 0.4rem 0.9rem; border-radius: var(--r-md);
       font-size: 13px; font-weight: 500;
       transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
       border: 1px solid transparent;
+      white-space: nowrap; cursor: pointer;
     }
-    .btn-primary { background: #0a84ff; color: #fff; }
-    .btn-primary:hover { background: #2393ff; }
-    .btn-ghost   { background: transparent; color: var(--ink); border-color: var(--line2); }
-    .btn-ghost:hover { background: var(--s2); }
+    .btn-primary { background: var(--accent); color: var(--g0); }
+    .btn-primary::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--led); box-shadow: 0 0 0 1.5px var(--g6); flex: none; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-ghost   { background: var(--s2); color: var(--ink); border-color: var(--line2); box-shadow: inset 0 1px 0 rgba(255,255,255,.7); }
+    .btn-ghost:hover { background: #fff; }
     .btn-quiet   { background: transparent; color: var(--ink); border-color: var(--line); }
-    .btn-quiet:hover { background: var(--s2); color: var(--ink); }
+    .btn-quiet:hover { background: var(--s2); border-color: var(--line2); }
+    .btn-lg { height: 38px; padding: 0 18px; font-size: 14px; }
+    .btn[disabled] { opacity: .5; cursor: not-allowed; }
 
     /* Form fields — inputs + selects share the same shape and focus ring. */
     .field {
       background: var(--s2);
-      border: 1px solid var(--line);
-      border-radius: 7px;
+      border: 1px solid var(--line2);
+      border-radius: var(--r-md);
       color: var(--ink);
-      transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      box-shadow: inset 0 1px 2px rgba(23,25,26,.08);
+      transition: border-color 120ms ease, box-shadow 120ms ease;
     }
     .field:focus, .field:focus-visible {
       outline: none;
-      border-color: rgba(10,132,255,0.6);
-      box-shadow: 0 0 0 3px rgba(10,132,255,0.18);
-      background: var(--s3);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-ring);
     }
     .field::placeholder { color: var(--mute); }
 
-    /* Listing tables — borders + header weight. Padding lives in density rules. */
+    .section-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+    .field-label   { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 1px 8px; border-radius: var(--r-sm);
+      font-size: 12px; font-weight: 500; line-height: 1.6;
+      border: 1px solid var(--line2);
+    }
+    .pill-new  { color: var(--good); border-color: rgba(36,99,56,.40); background: rgba(36,99,56,.08); }
+    .pill-warn { color: var(--warn); border-color: rgba(116,86,0,.40); background: rgba(116,86,0,.08); }
+    .pill-soon { color: var(--dim); }
+
+    /* Listing tables — padding lives in density rules. */
     table.dense thead th { font-weight: 500; padding: 0.4rem 0.7rem; }
     table.dense tbody td { padding: 0.4rem 0.7rem; }
     table.dense tbody tr { transition: background-color 120ms ease; }
@@ -136,12 +160,165 @@
     table.dense.drawer-table thead th { padding: 0.35rem 0.45rem; }
     table.dense.drawer-table tbody td { padding: 0.35rem 0.45rem; }
 
-    /* Sticker preview canvas — borrow paper colour for visual contrast. */
-    .sticker-preview { background: #fafaf7; box-shadow: 0 4px 24px rgba(0,0,0,.35); border-radius: 6px; }
+    /* Sticker preview — the printed object, so it keeps its own paper. */
+    .sticker-preview { background: var(--paper); border: 1px solid var(--line2); border-radius: 3px; }
+
+    /* ── Top bar (everywhere except inside the flow) ─────────────── */
+    .topbar {
+      display: flex; align-items: center; gap: 14px;
+      height: 52px; padding: 0 24px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 20;
+    }
+    .topbar .wordmark {
+      display: inline-flex; align-items: center; gap: 9px;
+      font-size: 16px; font-weight: 800; letter-spacing: -0.02em;
+      color: var(--ink); text-decoration: none;
+    }
+    .topbar .crumb { color: var(--dim); font-size: 13px; }
+    .topbar .crumb a { color: var(--dim); text-decoration: none; }
+    .topbar .crumb a:hover { color: var(--ink); }
+
+    /* ── Flow rail (replaces the sidebar inside the flow) ────────── */
+    .rail {
+      display: flex; align-items: stretch; gap: 20px;
+      padding: 0 24px; height: 52px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 20;
+      overflow-x: auto;
+    }
+    .rail > .truncate, .rail > span { align-self: center; }
+    .rail-exit {
+      display: flex; align-items: center;
+      color: var(--dim); font-size: 13px; text-decoration: none; white-space: nowrap;
+    }
+    .rail-exit:hover { color: var(--ink); }
+    .rail-step {
+      display: flex; align-items: center; gap: 7px;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      color: var(--dim); font-size: 13px; white-space: nowrap; text-decoration: none;
+      transition: color 120ms ease, border-color 120ms ease;
+    }
+    .rail-step:hover { color: var(--ink); }
+    .rail-step[aria-current="step"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+    .rail-step[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+    .rail-step[aria-current="step"]::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--led); box-shadow: 0 0 0 2px var(--g7); }
+    .rail-step .idx { font-variant-numeric: tabular-nums; color: var(--mute); font-family: "Red Hat Mono", ui-monospace, monospace; }
+    .rail-step.done .idx { color: var(--good); }
+    .rail-step .idx svg { display: block; }
+
+    /* The action bar is the spine of the flow: same place, same shape,
+       every step. Forward on the right, escape hatch on the left. */
+    .actionbar {
+      position: sticky; bottom: -24px; z-index: 20;
+      display: flex; align-items: center; gap: 12px;
+      padding-top: 12px; padding-bottom: 12px;
+      margin: 24px calc(50% - 50vw) -24px;
+      padding-left: max(24px, calc(50vw - 590px)); padding-right: max(24px, calc(50vw - 590px));
+      background: var(--s1);
+      border-top: 1px solid var(--line);
+    }
+    .actionbar .summary { font-size: 13px; color: var(--dim); }
+    .actionbar .summary b { color: var(--ink); font-weight: 600; }
+
+    /* ── Step 2: coverage + inline job progress ─────────────────── */
+    .cover-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--s3); }
+    .cover-bar i { display: block; transition: width 420ms ease; }
+    .dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+    .job-bar { height: 4px; border-radius: 2px; background: var(--s3); overflow: hidden; }
+    .job-bar i { display: block; height: 100%; background: var(--accent); transition: width 300ms linear; }
+    .job-bar.done i { background: var(--good); }
+    .job-bar.failed i { background: var(--bad); }
+
+    .fix-input {
+      width: 62px; height: 26px; padding: 0 7px;
+      background: var(--s2); border: 1px solid var(--line2); border-radius: var(--r-sm);
+      color: var(--ink); font-variant-numeric: tabular-nums; font-family: "Red Hat Mono", ui-monospace, monospace;
+      font-size: 13px; text-align: right;
+    }
+    .fix-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+    .fix-input.key { width: 52px; text-align: left; }
+
+    /* ── Step 3: presets + label stage ──────────────────────────── */
+    .preset {
+      display: flex; align-items: flex-start; gap: 11px; text-align: left; width: 100%;
+      padding: 10px 12px; cursor: pointer;
+      background: var(--s2); border: 1px solid var(--line); border-radius: var(--r-md);
+      transition: border-color 140ms ease, background-color 140ms ease;
+    }
+    .preset:hover { border-color: var(--line2); }
+    .preset[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+    .preset .mark {
+      width: 15px; height: 15px; border-radius: 999px; flex: none; margin-top: 1px;
+      border: 1px solid var(--line2); display: grid; place-items: center;
+    }
+    .preset[aria-pressed="true"] .mark { border-color: var(--accent); }
+    .preset[aria-pressed="true"] .mark::after { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--accent); }
+
+    .toggle { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; cursor: pointer; padding: 2px 0; }
+    .toggle:hover { color: var(--ink); }
+
+    .stage {
+      display: flex; flex-direction: column; gap: 12px; align-items: center;
+      padding: 26px; border-radius: var(--r-lg);
+      background: var(--g6);
+      /* Slipmat: the printed label sits on a dark felt, so captions re-point to light tokens. */
+      --mute: var(--g3); --warn: #E5B94A;
+      border: 1px solid var(--line);
+    }
+    .stage .sticker-preview { width: 340px; max-width: 100%; }
+    .stage .sticker-preview.sheet-preview { width: min(440px, calc((100vh - 270px) / 1.414)); box-shadow: 0 1px 3px rgba(20,32,33,.18); }
+
+    /* Two-way switch, e.g. Sheet / One label. */
+    .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: var(--r-md); overflow: hidden; background: var(--g2); box-shadow: inset 0 1px 2px rgba(23,25,26,.18); }
+    .seg label { position: relative; cursor: pointer; }
+    .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+    .seg span { display: block; padding: 0 12px; height: 30px; line-height: 30px; font-size: 13px; color: var(--dim); }
+    .seg label + label span { border-left: 1px solid var(--line2); }
+    .seg input:checked + span { background: var(--s2); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(23,25,26,.25); }
+    .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+    /* The preview reflects the form the instant it changes; dim it only
+       while the round-trip is genuinely in flight. */
+    .stage.htmx-request { opacity: .55; transition: opacity 120ms ease; }
+
+    /* ── Step 4: sheet mock ─────────────────────────────────────── */
+    .sheet {
+      width: 100%; max-width: 260px; aspect-ratio: 210 / 297;
+      background: var(--paper); border: 1px solid var(--line2); border-radius: 3px; padding: 9px;
+      display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; gap: 5px;
+    }
+    .sheet i { display: block; border: 1px dashed rgba(20,40,42,.30); border-radius: 1px; background: rgba(20,40,42,.04); }
+
+    /* ── Home ───────────────────────────────────────────────────── */
+    .start {
+      display: flex; align-items: center; gap: 22px;
+      padding: 22px 24px;
+      border-radius: var(--r-lg);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 0 0 1px var(--line2);
+      background: var(--s1);
+      text-align: left; width: 100%; cursor: pointer;
+      transition: border-color 160ms ease;
+    }
+    .start:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 0 0 2px var(--g7); }
+
+    /* Library reads as reference, not as a metrics dashboard — hence
+       rules between figures rather than a grid of cards. */
+    .lib-item {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 12px 24px 12px 0; margin-right: 24px;
+      border-right: 1px solid var(--line);
+      text-decoration: none; color: inherit;
+    }
+    .lib-item:last-child { border-right: 0; }
+    .lib-val { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .lib-item:hover .lib-val { color: var(--accent); }
+    .lib-key { font-size: 12px; color: var(--mute); }
 
     /* /tracks per-row sync button — spins while the HTMX request is in flight. */
     .sync-btn.htmx-request {
-      color: #0a84ff;
+      color: var(--accent);
       pointer-events: none;
       animation: sync-spin 0.9s linear infinite;
       transform-origin: 50% 50%;
@@ -156,41 +333,36 @@
        so the user gets visual confirmation even when the value didn't change. */
     .flash-sync { animation: cell-flash 1.6s ease-out; }
     @keyframes cell-flash {
-      0%   { background-color: rgba(10,132,255,0.45); }
-      30%  { background-color: rgba(10,132,255,0.30); }
+      0%   { background-color: rgba(255,90,20,0.30); }
+      30%  { background-color: rgba(255,90,20,0.14); }
       100% { background-color: transparent; }
     }
 
-    /* Modal — centered dialog with frosted backdrop. Sidebar actions inject here. */
+    /* Modal — centered dialog. */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 40;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: saturate(140%) blur(4px);
-      -webkit-backdrop-filter: saturate(140%) blur(4px);
+      background: rgba(23,25,26,0.5);
       display: flex; align-items: center; justify-content: center;
       padding: 1.5rem;
     }
     .modal-card {
       width: 100%; max-width: 28rem;
-      background: var(--s1); border: 1px solid var(--line2); border-radius: 14px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      background: var(--s1); border-radius: var(--r-lg);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 0 0 1px var(--line2), 0 12px 32px rgba(23,25,26,0.28);
     }
 
-    /* Run toast — fixed bottom-right with indeterminate progress bar.
-       Hidden when empty (no active or recently-finished job). The toast-in
-       animation lives on the :not(:empty) state so it only fires when the
-       toast first gains content; subsequent innerHTML swaps keep the rule
-       matched, so the animation doesn't re-run on every poll. */
+    /* Run toast — fixed bottom-right. Inside the flow the job renders in
+       the step itself; the toast is what you get once you navigate away. */
     .run-toast {
       position: fixed; right: 20px; bottom: 20px; z-index: 50;
       width: 320px; max-width: calc(100vw - 40px);
-      background: rgba(22,22,24,0.92);
-      backdrop-filter: saturate(180%) blur(20px);
-      -webkit-backdrop-filter: saturate(180%) blur(20px);
-      border: 1px solid var(--line2);
-      border-radius: 12px;
-      box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+      background: var(--g7);
+      border-radius: var(--r-lg);
+      box-shadow: 0 0 0 1px var(--g6), 0 8px 24px rgba(23,25,26,0.28);
       overflow: hidden;
+      /* Dark display: re-point the text tokens so templates need no changes. */
+      --ink: var(--g0); --dim: var(--g3); --mute: var(--g4);
+      --good: #6CCB92; --bad: #FF8272;
     }
     .run-toast:empty { display: none; }
     .run-toast:not(:empty) { animation: toast-in 200ms ease-out; }
@@ -199,108 +371,69 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .progress-track {
-      position: relative; height: 3px; background: var(--s3); overflow: hidden;
+      position: relative; height: 4px; background: var(--g6); overflow: hidden;
     }
     .progress-bar {
-      position: absolute; top: 0; bottom: 0; width: 40%;
-      background: linear-gradient(90deg, transparent, #0a84ff 50%, transparent);
+      position: absolute; top: 0; bottom: 0; width: 30%;
+      background: var(--led);
       animation: progress-slide 1.4s ease-in-out infinite;
     }
     @keyframes progress-slide {
-      0%   { left: -45%; }
+      0%   { left: -35%; }
       100% { left: 100%; }
     }
     /* Determinate mode — bar fills left to right based on --progress (0-100%). */
     .progress-track.determinate .progress-bar {
       left: 0; width: var(--progress, 0%);
-      background: #0a84ff;
       animation: none;
       transition: width 300ms ease-out;
     }
     /* Completion states — full bar in green / red. */
     .progress-track.done .progress-bar {
-      left: 0; width: 100%; background: #30d158; animation: none;
+      left: 0; width: 100%; background: var(--good); animation: none;
     }
     .progress-track.failed .progress-bar {
-      left: 0; width: 100%; background: #ff453a; animation: none;
+      left: 0; width: 100%; background: var(--bad); animation: none;
     }
 
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); background-clip: padding-box; border: 2px solid transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(20,40,42,0.18); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(20,40,42,0.32); background-clip: padding-box; border: 2px solid transparent; }
   </style>
 </head>
-<body class="min-h-screen font-sans antialiased">
+<body class="min-h-screen font-sans antialiased overflow-x-hidden">
   {% if ENVIRONMENT == "staging" %}
-    <div class="bg-rose-700 text-white text-center py-1 text-xs tracking-wide">
+    <div class="text-center py-1 text-xs" style="background: #8f2b22; color: #fff">
       STAGING — niet productie
     </div>
   {% endif %}
 
-  <div class="flex min-h-screen">
+  {% block chrome %}
     {% if user.is_authenticated %}
-    <!-- Sidebar -->
-    <nav class="w-60 border-r hairline flex flex-col shrink-0 surface-1">
-      <div class="px-4 pt-5 pb-4">
-        <a href="{% url 'dashboard' %}" class="flex items-baseline gap-1.5">
-          <span class="text-[20px] font-semibold tracking-tight text-app-ink">{{ APP_NAME }}</span>
-        </a>
-        <div class="text-[11px] text-app-mute mt-0.5 tracking-wide">v0.3 (django-port)</div>
-      </div>
-
-      <div class="flex-1 py-1 overflow-y-auto">
-        <div class="nav-section">Collection</div>
-        <a href="{% url 'records:collection' %}" class="nav-item{% if active == 'collection' %} active{% endif %}">Records</a>
-        <a href="{% url 'records:tracks' %}" class="nav-item{% if active == 'tracks' %} active{% endif %}">Tracks</a>
-
-        <div class="nav-section mt-4">Actions</div>
-        <button type="button" class="nav-item nav-action w-full text-left"
-                hx-get="{% url 'records:action_discogs_sync' %}"
-                hx-target="#modal-root" hx-swap="innerHTML">
-          <span class="nav-glyph">⟳</span> Discogs sync
-        </button>
-        <button type="button" class="nav-item nav-action w-full text-left"
-                hx-get="{% url 'records:action_discogs_import' %}"
-                hx-target="#modal-root" hx-swap="innerHTML">
-          <span class="nav-glyph">⬇</span> Import Discogs csv
-        </button>
-        <button type="button" class="nav-item nav-action w-full text-left"
-                hx-get="{% url 'records:action_bpm_cascade' %}"
-                hx-target="#modal-root" hx-swap="innerHTML">
-          <span class="nav-glyph">♪</span> BPM lookup
-        </button>
-        <a href="{% url 'print_runs:index' %}" class="nav-item nav-action{% if active == 'print_runs' %} active{% endif %}">
-          <span class="nav-glyph">▦</span> Print runs
-        </a>
-      </div>
-
-      <div class="px-4 py-3 border-t hairline text-[11px] text-app-mute">
-        <div class="truncate text-app-ink" title="Signed in as {{ user.username }}">{{ user.username }}</div>
-        <form method="post" action="{% url 'account_logout' %}" class="mt-2">
-          {% csrf_token %}
-          <button type="submit" class="text-app-mute hover:text-app-ink transition-colors">Sign out</button>
-        </form>
-      </div>
-    </nav>
-    {% endif %}
-
-    <!-- Main -->
-    <div class="flex-1 flex flex-col min-w-0">
-      {% if user.is_authenticated %}
-      <header class="h-14 shrink-0 flex items-center justify-between px-7 border-b hairline vibrancy-strong sticky top-0 z-20">
-        <div class="text-[19px] text-app-ink font-semibold tracking-tight">{% block breadcrumb %}{% endblock %}</div>
-      </header>
+    <header class="topbar">
+      <a href="{% url 'home' %}" class="wordmark"><i class="led"></i>{{ APP_NAME }}</a>
+      <span class="crumb">{% block breadcrumb %}{% endblock %}</span>
+      <span class="flex-1"></span>
+      {% if FEEDBACK_ENABLED %}
+      <button type="button" class="btn btn-quiet h-7 px-2.5 text-[12px]"
+              hx-get="{% url 'feedback:feedback' %}" hx-target="#modal-root">Feedback</button>
       {% endif %}
-      <main class="flex-1 {% if user.is_authenticated %}px-7 py-6{% endif %} overflow-x-hidden">
-        {% block content %}{% endblock %}
-      </main>
-    </div>
-  </div>
+      <span class="text-[13px] text-app-dim">{{ user.username }}</span>
+      <form method="post" action="{% url 'account_logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="text-[13px] text-app-dim hover:text-app-ink transition-colors">Sign out</button>
+      </form>
+    </header>
+    {% endif %}
+  {% endblock %}
+
+  <main class="{% if user.is_authenticated %}px-6 py-6{% endif %}">
+    {% block content %}{% endblock %}
+  </main>
 
   {% if user.is_authenticated %}
-  <div id="modal-root"
-       hx-on:close-modal="this.innerHTML='';"></div>
+  <div id="modal-root" hx-on:close-modal="this.innerHTML='';"></div>
 
   <div id="run-banner" class="run-toast"
        hx-get="{% url 'run_banner' %}"

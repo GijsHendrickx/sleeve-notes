@@ -1,0 +1,95 @@
+{% extends "flow/_base.html" %}
+
+{% block title %}Get them — sleeve labels — {{ APP_NAME }}{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto">
+
+  <div class="flex flex-col gap-1.5 mb-5">
+    <h1 class="text-[22px] font-semibold tracking-tight">Get your sleeve labels</h1>
+    <p class="text-app-dim max-w-[62ch]">
+      {{ run.display_name }} is saved. You can come back to it and re-download any time.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-[minmax(240px,300px)_1fr] gap-6 items-start">
+
+    <div>
+      <div class="sheet" aria-label="Preview of an A4 sheet of labels">
+        {% for _ in per_page_range %}<i></i>{% endfor %}
+      </div>
+      <div class="text-app-mute text-[12px] num mt-2.5">
+        A4 · {{ per_page }} per sheet · {{ sheet_count }} sheet{{ sheet_count|pluralize }}
+      </div>
+    </div>
+
+    <div>
+      <div class="flex flex-wrap">
+        <div class="pr-5 mr-5 border-r hairline">
+          <b class="block text-[18px] font-semibold tracking-tight num">{{ record_count }}</b>
+          <span class="text-[12px] text-app-mute">records</span>
+        </div>
+        <div class="pr-5 mr-5 border-r hairline">
+          <b class="block text-[18px] font-semibold tracking-tight num">{{ track_count }}</b>
+          <span class="text-[12px] text-app-mute">tracks</span>
+        </div>
+        <div class="pr-5 mr-5 border-r hairline">
+          <b class="block text-[18px] font-semibold tracking-tight num">{{ with_bpm }}</b>
+          <span class="text-[12px] text-app-mute">with BPM</span>
+        </div>
+        <div>
+          <b class="block text-[18px] font-semibold tracking-tight num">{{ sheet_count }}</b>
+          <span class="text-[12px] text-app-mute">A4 sheets</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-3 mt-5">
+        <div class="card p-5 flex items-center gap-5 hairline-2">
+          <div class="flex-1 min-w-0 flex flex-col gap-1">
+            <h3 class="text-[15px] font-semibold">Download the PDF</h3>
+            <p class="text-app-dim text-[13px] max-w-[48ch]">
+              Print at home on A4 sticker sheets, then cut along the guides.
+            </p>
+          </div>
+          <a href="{% url 'print_runs:pdf_download' run.id %}" class="btn btn-primary btn-lg">
+            Download PDF
+          </a>
+        </div>
+
+        {% comment %}
+        The second outcome is why the flow ends here rather than on a file
+        download. Fulfilment isn't built yet (see roadmap.md), but the slot
+        belongs on screen — otherwise the last thing the app does is hand
+        you a file instead of a product.
+        {% endcomment %}
+        <div class="card p-5 flex items-center gap-5">
+          <div class="flex-1 min-w-0 flex flex-col gap-1">
+            <h3 class="text-[15px] font-semibold">
+              Order them printed <span class="pill pill-soon">Soon</span>
+            </h3>
+            <p class="text-app-dim text-[13px] max-w-[48ch]">
+              Kiss-cut on matte sticker stock, posted to your door.
+              We're testing print partners now.
+            </p>
+          </div>
+          <button type="button" class="btn btn-quiet btn-lg" disabled>Not open yet</button>
+        </div>
+      </div>
+
+      <p class="text-app-mute text-[12px] mt-4 max-w-[66ch]">{{ settings_summary }}</p>
+    </div>
+  </div>
+
+  <form method="post" action="{% url 'print_runs:step' run.id 4 %}">
+    {% csrf_token %}
+    <div class="actionbar ">
+      <a href="{% url 'print_runs:step' run.id 3 %}" class="btn btn-quiet">Back</a>
+      <span class="flex-1"></span>
+      {% if run.is_draft %}
+        <span class="summary">Finishing marks these {{ record_count }} record{{ record_count|pluralize }} as printed</span>
+      {% endif %}
+      <button type="submit" class="btn btn-primary">Done</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -9,8 +9,8 @@ services:
     name: sleeve-notes-web-staging
     runtime: docker
     plan: starter
-    branch: django-port
-    autoDeploy: true
+    branch: main
+    autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     region: frankfurt
     healthCheckPath: /healthz
@@ -50,8 +50,8 @@ services:
     name: sleeve-notes-worker-staging
     runtime: docker
     plan: starter
-    branch: django-port
-    autoDeploy: true
+    branch: main
+    autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: frankfurt

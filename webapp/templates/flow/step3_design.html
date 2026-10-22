@@ -1,0 +1,199 @@
+{% extends "flow/_base.html" %}
+{% load dict_extras %}
+
+{% block title %}Design — sleeve labels — {{ APP_NAME }}{% endblock %}
+
+{% block content %}
+{% comment %}
+The whole form drives the preview: any change POSTs the current state to
+step3_preview and swaps the label. The presets are radio inputs inside the
+same form, so the server decides which toggles a preset implies — the chips
+and the checkboxes can't drift apart.
+{% endcomment %}
+<form id="design-form" method="post" action="{% url 'print_runs:step' run.id 3 %}"
+      class="max-w-[1180px] mx-auto"
+      hx-post="{% url 'print_runs:step3_preview' run.id %}"
+      hx-trigger="change, input delay:400ms from:input[type=number]"
+      hx-target="#label-stage" hx-swap="outerHTML">
+  {% csrf_token %}
+
+  <div class="flex flex-col gap-1.5 mb-4">
+    <h1 class="text-[22px] font-semibold tracking-tight">Design the label</h1>
+    <p class="text-app-dim max-w-[62ch]">Every change shows up on the right straight away.</p>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[minmax(300px,380px)_1fr] gap-6 items-start">
+
+    <div class="flex flex-col gap-5">
+      <div class="flex flex-col gap-2.5">
+        <span class="section-title">Style</span>
+        <div class="flex flex-col gap-2" id="presets">
+          {% for key, label, desc in preset_options %}
+          <button type="button" class="preset" data-preset="{{ key }}"
+                  aria-pressed="{% if preset == key %}true{% else %}false{% endif %}">
+            <span class="mark" aria-hidden="true"></span>
+            <span>
+              <span class="font-medium block">{{ label }}</span>
+              <span class="text-app-mute text-[12px] block mt-0.5">{{ desc }}</span>
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-2.5">
+        <span class="section-title">Paper</span>
+        <div class="flex flex-col gap-2" id="stocks">
+          {% for key, label, desc, vals in stock_options %}
+          <button type="button" class="preset" data-stock="{{ key }}"
+                  aria-pressed="{% if stock == key %}true{% else %}false{% endif %}">
+            <span class="mark" aria-hidden="true"></span>
+            <span>
+              <span class="font-medium block">{{ label }}</span>
+              <span class="text-app-mute text-[12px] block mt-0.5">{{ desc }}</span>
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        <details id="custom-size" {% if stock == "custom" %}open{% endif %}>
+          <summary class="text-[13px] text-app-dim cursor-pointer hover:text-app-ink py-1">Custom size</summary>
+          <div class="flex flex-col gap-3 pt-2">
+            <div class="flex flex-wrap gap-3 items-end">
+              <label class="flex flex-col gap-1 text-[12px] text-app-mute">Width (mm)
+                <input name="sticker_w" type="number" step="0.1" min="20" max="210"
+                       value="{{ settings.sticker_w|floatformat:'-1' }}"
+                       class="field h-8 px-2 w-20 num text-[13px] text-right"></label>
+              <label class="flex flex-col gap-1 text-[12px] text-app-mute">Height (mm)
+                <input name="sticker_h" type="number" step="0.1" min="20" max="297"
+                       value="{{ settings.sticker_h|floatformat:'-1' }}"
+                       class="field h-8 px-2 w-20 num text-[13px] text-right"></label>
+              <label class="toggle h-8 items-center">
+                <input type="checkbox" name="tile" value="1" {% if settings.tile %}checked{% endif %}>
+                Tile edge-to-edge
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-3 items-end">
+              <label class="flex flex-col gap-1 text-[12px] text-app-mute">Tile columns
+                <input name="tile_cols" type="number" min="1" max="6" value="{{ settings.tile_cols }}"
+                       class="field h-8 px-2 w-16 num text-[13px] text-right"></label>
+              <label class="flex flex-col gap-1 text-[12px] text-app-mute">Tile rows
+                <input name="tile_rows" type="number" min="1" max="10" value="{{ settings.tile_rows }}"
+                       class="field h-8 px-2 w-16 num text-[13px] text-right"></label>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="flex flex-col gap-2.5">
+        <span class="section-title">Show on the label</span>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-1" id="toggles">
+          {% for name, label in toggle_options %}
+          <label class="toggle">
+            <input type="checkbox" name="{{ name }}" value="1"
+                   {% if settings|get_item:name %}checked{% endif %}>
+            {{ label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-3 min-w-0 lg:sticky lg:top-[76px]">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="seg" role="radiogroup" aria-label="Preview">
+          <label><input type="radio" name="view" value="sheet" {% if view == "sheet" %}checked{% endif %}><span>Sheet</span></label>
+          <label><input type="radio" name="view" value="label" {% if view == "label" %}checked{% endif %}><span>One label</span></label>
+        </div>
+        <select name="preview_idx" id="preview-idx" aria-label="Record to preview"
+                class="field h-8 px-2 text-[13px] max-w-[22rem] min-w-0 flex-1" {% if view != "label" %}hidden{% endif %}>
+          {% for i, name in release_choices %}
+          <option value="{{ i }}" {% if i == preview_idx %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% include "flow/_step3_preview.html" %}
+    </div>
+  </div>
+
+  <div class="actionbar ">
+    <a href="{% url 'print_runs:step' run.id 2 %}" class="btn btn-quiet">Back</a>
+    <span class="flex-1"></span>
+    {% include "flow/_step3_summary.html" %}
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
+
+{{ presets|json_script:"presets-data" }}
+{{ stocks|json_script:"stocks-data" }}
+<script>
+/* The checkboxes are the single source of truth for what's on the label.
+   A preset chip just bulk-sets them and lets the normal change handler
+   re-render the preview, so the panel and the label can never disagree. */
+(() => {
+  const PRESETS = JSON.parse(document.getElementById('presets-data').textContent);
+  const form = document.getElementById('design-form');
+  const chips = document.querySelectorAll('#presets .preset');
+  const boxes = () => form.querySelectorAll('#toggles input[type=checkbox]');
+
+  const syncChips = () => {
+    const state = {};
+    boxes().forEach(b => { state[b.name] = b.checked; });
+    chips.forEach(chip => {
+      const preset = PRESETS[chip.dataset.preset];
+      const match = Object.keys(preset).every(k => !!state[k] === preset[k]);
+      chip.setAttribute('aria-pressed', String(match));
+    });
+  };
+
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      const preset = PRESETS[chip.dataset.preset];
+      boxes().forEach(b => {
+        if (b.name in preset) b.checked = preset[b.name];
+      });
+      syncChips();
+      /* One request for the whole bulk-set, not one per checkbox. */
+      htmx.trigger(form, 'change');
+    });
+  });
+
+  form.addEventListener('change', e => {
+    if (e.target.matches('#toggles input[type=checkbox]')) syncChips();
+  });
+
+  syncChips();
+
+  /* Paper works the same way: a chip bulk-sets the real inputs, and the
+     lit chip is whatever the inputs currently match. */
+  const STOCKS = JSON.parse(document.getElementById('stocks-data').textContent);
+  const stockChips = document.querySelectorAll('#stocks .preset');
+  const field = n => form.elements[n];
+  const syncStock = () => {
+    const tile = field('tile').checked;
+    let active = null;
+    for (const [key, s] of Object.entries(STOCKS)) {
+      if (tile !== s.tile) continue;
+      const same = tile
+        ? +field('tile_cols').value === s.tile_cols && +field('tile_rows').value === s.tile_rows
+        : +field('sticker_w').value === s.sticker_w && +field('sticker_h').value === s.sticker_h;
+      if (same) { active = key; break; }
+    }
+    stockChips.forEach(ch => ch.setAttribute('aria-pressed', String(ch.dataset.stock === active)));
+    if (!active) document.getElementById('custom-size').open = true;
+  };
+  stockChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      const s = STOCKS[chip.dataset.stock];
+      field('tile').checked = s.tile;
+      ['sticker_w', 'sticker_h', 'tile_cols', 'tile_rows'].forEach(n => { field(n).value = s[n]; });
+      syncStock();
+      htmx.trigger(form, 'change');
+    });
+  });
+  form.addEventListener('change', e => {
+    if (e.target.matches('#custom-size input')) syncStock();
+    if (e.target.name === 'view') document.getElementById('preview-idx').hidden = e.target.value !== 'label';
+  });
+})();
+</script>
+{% endblock %}

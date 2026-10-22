@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sleevenotes
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: sleevenotes
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sleevenotes"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://sleevenotes:ci@localhost:5432/sleevenotes
+      DJANGO_SECRET_KEY: ci-only-not-secret
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          # Matches the Dockerfile, so CI tests what Render runs.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install . pip-audit
+      - name: Test-only encryption key
+        # Generated per run instead of committed, so no key ever sits in the repo.
+        run: echo "FIELD_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+      - name: Migrations are complete
+        working-directory: webapp
+        run: python manage.py makemigrations --check --dry-run
+      - name: Tests
+        working-directory: webapp
+        run: python manage.py test
+      - name: Known vulnerabilities
+        run: pip-audit --progress-spinner off

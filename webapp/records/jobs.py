@@ -19,11 +19,11 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from allauth.socialaccount.models import SocialAccount, SocialToken
 from django.contrib.auth import get_user_model
 from django_q.tasks import async_task
 
 from core.models import LockHeld, UserJobLock
+from discogs_provider.models import DiscogsConnection
 
 from records.services.bpm_cascade import run_bpm_cascade
 from records.services.discogs_sync import (
@@ -101,16 +101,15 @@ def _resolve_oauth(user) -> tuple[str, str, str, str]:
     """Return (consumer_key, consumer_secret, access_token, access_secret).
 
     Consumer creds always come from env (one app-wide pair). Access tokens
-    come from the user's allauth SocialToken row — workers have no HTTP
-    session, so env-injected tokens (legacy JobRunner pattern) don't apply.
+    come from the user's encrypted DiscogsConnection row — workers have no
+    HTTP session, so env-injected tokens (legacy JobRunner pattern) don't apply.
     """
     consumer_key = os.environ.get("DISCOGS_CONSUMER_KEY", "")
     consumer_secret = os.environ.get("DISCOGS_CONSUMER_SECRET", "")
     if not consumer_key or not consumer_secret:
         raise RuntimeError("DISCOGS_CONSUMER_KEY / _SECRET must be set in env.")
-    account = SocialAccount.objects.get(user=user, provider="discogs")
-    token = SocialToken.objects.get(account=account)
-    return consumer_key, consumer_secret, token.token, token.token_secret
+    conn = DiscogsConnection.objects.get(user=user)
+    return consumer_key, consumer_secret, conn.token, conn.token_secret
 
 
 # ─── Worker entrypoints ──────────────────────────────────────────────────────
@@ -169,11 +168,20 @@ def _run_discogs_sync(
             Path(csv_path).unlink(missing_ok=True)
 
 
-def _run_bpm_cascade(user_id: int, *, workers: int = 8, force: bool = False) -> dict:
+def _run_bpm_cascade(
+    user_id: int,
+    *,
+    workers: int = 8,
+    force: bool = False,
+    release_ids: list[int] | None = None,
+) -> dict:
     user = User.objects.get(pk=user_id)
     progress = _make_progress_logger(user)
     try:
-        result = run_bpm_cascade(user, workers=workers, force=force, log=progress)
+        result = run_bpm_cascade(
+            user, workers=workers, force=force,
+            release_ids=release_ids, log=progress,
+        )
     except Exception as e:
         UserJobLock.mark_failed(user, f"BPM lookup failed: {e}")
         raise
@@ -233,7 +241,12 @@ def enqueue_discogs_sync(
     return task_id
 
 
-def enqueue_bpm_cascade(user, *, workers: int = 8, force: bool = False) -> str:
+def enqueue_bpm_cascade(
+    user, *, workers: int = 8, force: bool = False,
+    release_ids: list[int] | None = None,
+) -> str:
+    """Queue the BPM cascade. ``release_ids`` scopes it to one sleeve-labels
+    set; None runs the whole collection (the CLI / library path)."""
     lock = UserJobLock.acquire(user, kind="bpm_cascade")
     try:
         task_id = async_task(
@@ -241,6 +254,7 @@ def enqueue_bpm_cascade(user, *, workers: int = 8, force: bool = False) -> str:
             user.id,
             workers=workers,
             force=force,
+            release_ids=release_ids,
             task_name=f"bpm_cascade:{user.id}",
         )
     except Exception:

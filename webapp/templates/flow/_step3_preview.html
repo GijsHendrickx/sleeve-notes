@@ -1,0 +1,27 @@
+{% comment %}
+The preview, rendered by the same engine path the PDF takes
+(derive_layout → render_*_svg). Swapped in on every form change, so what
+the user tweaks here is literally what comes out. The Sheet / One label
+switch and the record picker live outside this partial, so swapping it
+never steals focus from the control being used.
+{% endcomment %}
+<div id="label-stage" class="stage">
+  {% if preview.error %}
+    <div class="t-warn text-[13px] py-10 px-6 text-center max-w-[42ch]">
+      {{ preview.error }}
+    </div>
+  {% elif preview.view == "sheet" %}
+    <div class="sheet-preview sticker-preview">{{ preview.svg|safe }}</div>
+    <span class="text-app-mute text-[12px] num">
+      A4 · {{ preview.per_page }} per sheet
+      · {{ preview.label_mm.0|floatformat:"-1" }} × {{ preview.label_mm.1|floatformat:"-1" }} mm
+      {% if sheets > 1 %}· sheet 1 of {{ sheets }}{% endif %}
+    </span>
+  {% else %}
+    <div class="sticker-preview">{{ preview.svg|safe }}</div>
+    <span class="text-app-mute text-[12px] num">
+      {{ preview.label_mm.0|floatformat:"-1" }} × {{ preview.label_mm.1|floatformat:"-1" }} mm · actual proportions
+    </span>
+  {% endif %}
+</div>
+{% include "flow/_step3_summary.html" with oob=True %}

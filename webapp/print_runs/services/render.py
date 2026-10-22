@@ -39,26 +39,50 @@ Logger = Callable[[str], None]
 # ─── Print-run bookkeeping ───────────────────────────────────────────────────
 
 
+def saved_runs(user):
+    """The user's finished sleeve-label sets. Drafts are excluded — an
+    abandoned draft must never count as printed."""
+    return PrintRun.objects.filter(user=user, status=PrintRun.STATUS_SAVED)
+
+
 def already_printed_ids(user) -> set[int]:
-    """Discogs release ids that appear in any of the user's print runs."""
+    """Discogs release ids that appear in any of the user's saved sets."""
     out: set[int] = set()
-    for ids in PrintRun.objects.filter(user=user).values_list("release_ids", flat=True):
+    for ids in saved_runs(user).values_list("release_ids", flat=True):
         out.update(int(x) for x in (ids or []))
     return out
 
 
 def last_print_timestamp(user):
-    row = PrintRun.objects.filter(user=user).order_by("-created_at").first()
+    row = saved_runs(user).order_by("-created_at").first()
     return row.created_at if row else None
 
 
-def create_print_run(user, release_ids: list[int], settings: dict, name: str | None = None):
+def create_print_run(
+    user,
+    release_ids: list[int],
+    settings: dict,
+    name: str | None = None,
+    *,
+    status: str = PrintRun.STATUS_SAVED,
+    step: int = 1,
+):
     return PrintRun.objects.create(
         user=user,
         name=(name or ""),
         settings=normalize_settings(settings),
         release_ids=sorted({int(r) for r in release_ids}),
+        status=status,
+        step=step,
     )
+
+
+def open_draft(user):
+    """The user's current in-progress set, if any. At most one is kept —
+    starting a new set reuses it rather than littering drafts."""
+    return PrintRun.objects.filter(
+        user=user, status=PrintRun.STATUS_DRAFT,
+    ).order_by("-updated_at").first()
 
 
 def get_print_run(user, run_id):
@@ -261,6 +285,8 @@ def render_pdf(
 
 __all__ = (
     "DEFAULT_SETTINGS",
+    "open_draft",
+    "saved_runs",
     "RenderResult",
     "already_printed_ids",
     "build_bpm_lookup",

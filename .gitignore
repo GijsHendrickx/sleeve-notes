@@ -12,3 +12,4 @@ __pycache__/
 sparring-prompt.md
 webapp/staticfiles/
 webapp/db.sqlite3
+.playwright-mcp/

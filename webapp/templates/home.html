@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}{{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}{% endblock %}
+
+{% block content %}
+<div class="max-w-[940px] mx-auto flex flex-col gap-7 pb-16">
+
+  {% comment %}
+  One primary action, sized like one. Which action it is depends on
+  whether there's anything to make labels from yet — you can't pick
+  records you haven't synced.
+  {% endcomment %}
+  {% if lib_releases == 0 %}
+    <div class="start">
+      <div class="flex-1 min-w-0 flex flex-col gap-2">
+        <h2 class="text-[20px] font-semibold tracking-tight">Bring in your collection</h2>
+        <p class="text-app-dim max-w-[52ch]">
+          Sleeve Notes reads your Discogs collection, finds the BPM and key for every
+          track, and turns it into labels for your sleeves.
+        </p>
+      </div>
+      <button type="button" class="btn btn-primary btn-lg"
+              hx-get="{% url 'records:action_discogs_sync' %}"
+              hx-target="#modal-root" hx-swap="innerHTML">
+        Sync Discogs
+      </button>
+    </div>
+  {% else %}
+    <a href="{% url 'print_runs:start' %}" class="start">
+      <div class="flex-1 min-w-0 flex flex-col gap-2">
+        <h2 class="text-[20px] font-semibold tracking-tight">
+          {% if draft %}Continue your set{% else %}New sleeve labels{% endif %}
+        </h2>
+        <p class="text-app-dim max-w-[52ch]">
+          {% if draft %}
+            You left off at step {{ draft.step }}. Nothing is printed until you finish.
+          {% else %}
+            Pick records, fill in the missing BPMs, design the label, print or order.
+          {% endif %}
+        </p>
+        <div class="flex flex-wrap items-center gap-2 mt-0.5">
+          {% if new_count %}
+            <span class="pill pill-new">
+              {{ new_count }} new record{{ new_count|pluralize }} since your last print
+            </span>
+          {% endif %}
+          {% if last_print_ts %}
+            <span class="text-app-mute text-[12px]">Last print {{ last_print_ts|date:"j M Y" }}</span>
+          {% else %}
+            <span class="text-app-mute text-[12px]">You haven't printed anything yet</span>
+          {% endif %}
+        </div>
+      </div>
+      <span class="btn btn-primary btn-lg">{% if draft %}Resume{% else %}Start{% endif %}</span>
+    </a>
+  {% endif %}
+
+  {% if recent_runs %}
+  <div>
+    <div class="flex items-baseline gap-3 mb-2.5">
+      <h3 class="section-title">Your sleeve labels</h3>
+      <span class="flex-1"></span>
+      <a href="{% url 'print_runs:index' %}" class="btn btn-quiet">
+        All {{ run_count }} set{{ run_count|pluralize }}
+      </a>
+    </div>
+    <div class="card overflow-hidden">
+      {% for run in recent_runs %}
+      <div class="flex items-center gap-4 px-4 py-3 {% if not forloop.first %}border-t hairline{% endif %} row-hover">
+        <div class="min-w-0">
+          <a href="{% url 'print_runs:detail' run.id %}"
+             class="font-medium text-app-ink hover:underline">{{ run.name }}</a>
+          <div class="text-app-mute text-[12px] mt-0.5 num">
+            {{ run.created_at|date:"j M Y" }} · {{ run.release_count }} record{{ run.release_count|pluralize }} · {{ run.settings_summary }}
+          </div>
+        </div>
+        <span class="flex-1"></span>
+        <form method="post" action="{% url 'print_runs:duplicate' run.id %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-quiet">Duplicate</button>
+        </form>
+        <a href="{% url 'print_runs:pdf_download' run.id %}" class="btn btn-quiet">PDF</a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% comment %}
+  The library. Reference material you dip into — not a step, and not a
+  metrics dashboard. Records and Tracks keep their full editable grids.
+  {% endcomment %}
+  <div>
+    <div class="flex items-center gap-2 mb-2">
+      <h3 class="section-title">Library</h3>
+      <span class="flex-1"></span>
+      <button type="button" class="btn btn-quiet"
+              hx-get="{% url 'records:action_discogs_sync' %}"
+              hx-target="#modal-root" hx-swap="innerHTML">Sync Discogs</button>
+      <button type="button" class="btn btn-quiet"
+              hx-get="{% url 'records:action_discogs_import' %}"
+              hx-target="#modal-root" hx-swap="innerHTML">Import CSV</button>
+      <button type="button" class="btn btn-quiet"
+              hx-get="{% url 'records:action_bpm_cascade' %}"
+              hx-target="#modal-root" hx-swap="innerHTML">BPM lookup</button>
+    </div>
+    <div class="flex flex-wrap">
+      <a class="lib-item" href="{% url 'records:collection' %}">
+        <span class="lib-val num">{{ lib_releases }}</span>
+        <span class="lib-key">Records</span>
+      </a>
+      <a class="lib-item" href="{% url 'records:tracks' %}">
+        <span class="lib-val num">{{ lib_tracks }}</span>
+        <span class="lib-key">Tracks</span>
+      </a>
+      <a class="lib-item" href="{% url 'records:tracks' %}?filter=needs_attention">
+        <span class="lib-val num {% if lib_missing %}t-warn{% endif %}">{{ lib_missing }}</span>
+        <span class="lib-key">Without BPM</span>
+      </a>
+      <a class="lib-item" href="{% url 'records:tracks' %}?filter=has_override">
+        <span class="lib-val num">{{ lib_overrides }}</span>
+        <span class="lib-key">With override</span>
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

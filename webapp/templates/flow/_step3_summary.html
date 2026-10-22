@@ -1,0 +1,4 @@
+<span id="step3-summary" class="summary"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <b>{{ label_count }}</b> label{{ label_count|pluralize }}
+  {% if preview.label_mm %}· <b>{{ preview.label_mm.0|floatformat:"-1" }} × {{ preview.label_mm.1|floatformat:"-1" }} mm</b>{% endif %}
+</span>

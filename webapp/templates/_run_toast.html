@@ -26,14 +26,14 @@ in base.html with `:empty { display: none; }` so an empty response hides it.
     {% if progress_text %}
       <div class="text-app-dim text-[12px] mt-1">{{ progress_text }}</div>
     {% endif %}
-    <div class="text-app-mute text-[11px] mt-1">
+    <div class="text-app-mute text-[12px] mt-1">
       Running for {{ elapsed_s }}s{% if progress_pct is not None %} · {{ progress_pct }}%{% endif %}…
     </div>
   {% else %}
     {% if result_text %}
       <div class="text-app-dim text-[12px] mt-1">{{ result_text }}</div>
     {% endif %}
-    <div class="text-app-mute text-[11px] mt-1">Took {{ elapsed_s }}s.</div>
+    <div class="text-app-mute text-[12px] mt-1">Took {{ elapsed_s }}s.</div>
   {% endif %}
 </div>
 

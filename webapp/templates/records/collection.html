@@ -4,7 +4,7 @@
 {% block breadcrumb %}Records{% endblock %}
 
 {% block content %}
-<div class="flex h-[calc(100vh-7.5rem)] gap-5">
+<div class="flex h-[calc(100vh-8.5rem)] gap-5">
   <div class="flex-1 min-w-0 flex flex-col">
     <form method="get" action="{% url 'records:collection' %}"
           class="flex flex-wrap gap-2 items-center mb-4 text-sm">
@@ -36,7 +36,7 @@
 
     <div class="flex-1 overflow-auto card">
       <table class="dense w-full text-[13px]">
-        <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute sticky top-0 z-10">
+        <thead class="surface-2 text-[12px] text-app-mute sticky top-0 z-10">
           <tr class="border-b hairline">
             <th class="text-left w-14"></th>
             <th class="text-left">Artist</th>
@@ -56,19 +56,19 @@
             <td>
               {% if r.thumb_url %}
                 <img src="{{ r.thumb_url }}" alt="" loading="lazy" referrerpolicy="no-referrer"
-                     class="w-10 h-10 object-cover rounded-md border hairline" />
+                     class="w-10 h-10 object-cover rounded border hairline" />
               {% else %}
-                <div class="w-10 h-10 rounded-md border hairline surface-2"></div>
+                <div class="w-10 h-10 rounded border hairline surface-2"></div>
               {% endif %}
             </td>
             <td class="text-app-ink">{{ r.artist|default:"—" }}</td>
             <td class="text-app-dim">{{ r.title|default:"—" }}</td>
-            <td class="text-right text-app-mute font-mono">{{ r.year|default:"" }}</td>
+            <td class="text-right text-app-mute num">{{ r.year|default:"" }}</td>
             <td class="text-app-dim">{{ r.release_type|default:"" }}</td>
-            <td class="text-app-mute font-mono">{{ r.format|default:"" }}</td>
-            <td class="text-right font-mono">
+            <td class="text-app-mute num">{{ r.format|default:"" }}</td>
+            <td class="text-right num">
               {% if r.tracks_total > 0 %}
-                <span class="{% if r.tracks_with_bpm == r.tracks_total %}text-emerald-400{% elif r.tracks_with_bpm == 0 %}text-app-mute{% else %}text-amber-400{% endif %}">
+                <span class="{% if r.tracks_with_bpm == r.tracks_total %}t-good{% elif r.tracks_with_bpm == 0 %}text-app-mute{% else %}t-warn{% endif %}">
                   {{ r.tracks_with_bpm }}/{{ r.tracks_total }}
                 </span>
               {% else %}

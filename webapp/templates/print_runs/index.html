@@ -1,57 +1,70 @@
 {% extends "base.html" %}
 
-{% block title %}Print runs — {{ APP_NAME }}{% endblock %}
-{% block breadcrumb %}Print runs{% endblock %}
+{% block title %}Sleeve labels — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb %}Sleeve labels{% endblock %}
 
 {% block content %}
-<div class="flex items-center mb-4">
-  <p class="text-app-dim text-[13px]">
-    {{ run_count }} saved run{{ run_count|pluralize }}.
-  </p>
-  <a href="{% url 'print_runs:editor' %}" class="btn btn-primary ml-auto">
-    Create print run
-  </a>
-</div>
+<div class="max-w-[1080px] mx-auto">
 
-{% if rows %}
-<div class="card overflow-hidden">
-  <table class="dense w-full text-[13px]">
-    <thead class="surface-2 text-[11px] uppercase tracking-[0.06em] text-app-mute">
-      <tr class="border-b hairline">
-        <th class="text-left">Name</th>
-        <th class="text-left w-44">Created</th>
-        <th class="text-right w-24">Releases</th>
-        <th class="text-left">Settings</th>
-        <th class="w-24"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for run in rows %}
-      <tr class="border-t hairline align-middle hover:bg-app-s2/40">
-        <td>
-          <a href="{% url 'print_runs:detail' run.id %}" class="text-app-ink hover:text-sky-300">
-            {{ run.name|default:"Untitled run" }}
-          </a>
-        </td>
-        <td class="font-mono text-app-mute text-[12px]">{{ run.created_at|date:"Y-m-d H:i" }}</td>
-        <td class="text-right font-mono text-app-dim">{{ run.release_count }}</td>
-        <td class="text-app-dim text-[12px]">{{ run.settings_summary }}</td>
-        <td class="text-right whitespace-nowrap">
-          <a href="{% url 'print_runs:pdf_download' run.id %}"
-             class="btn btn-quiet h-7 px-2 text-[12px]" title="Download PDF">PDF</a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% else %}
-<div class="card p-10 text-center">
-  <div class="text-app-dim text-[14px] mb-2">No print runs yet.</div>
-  <div class="text-app-mute text-[12px] mb-5">
-    A print run remembers the exact releases and settings you used, so you can re-download later.
+  <div class="flex flex-wrap items-center gap-3 mb-4">
+    <p class="text-app-dim text-[13px]">
+      {{ run_count }} saved set{{ run_count|pluralize }}.
+    </p>
+    <span class="flex-1"></span>
+    {% if draft %}
+      <a href="{% url 'print_runs:step' draft.id draft.step %}" class="btn btn-quiet">
+        Resume draft (step {{ draft.step }})
+      </a>
+    {% endif %}
+    <a href="{% url 'print_runs:start' %}" class="btn btn-primary">New sleeve labels</a>
   </div>
-  <a href="{% url 'print_runs:editor' %}" class="btn btn-primary">Create your first print run →</a>
+
+  {% if rows %}
+  <div class="card overflow-hidden">
+    <table class="dense w-full text-[13px]">
+      <thead class="surface-2 text-[12px] text-app-mute">
+        <tr class="border-b hairline">
+          <th class="text-left">Name</th>
+          <th class="text-left w-44">Created</th>
+          <th class="text-right w-24">Records</th>
+          <th class="text-left">Settings</th>
+          <th class="w-52"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in rows %}
+        <tr class="border-t hairline align-middle row-hover">
+          <td>
+            <a href="{% url 'print_runs:detail' run.id %}" class="text-app-ink hover:underline">
+              {{ run.name }}
+            </a>
+          </td>
+          <td class="num text-app-mute text-[12px]">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="text-right num text-app-dim">{{ run.release_count }}</td>
+          <td class="text-app-dim text-[12px]">{{ run.settings_summary }}</td>
+          <td class="text-right whitespace-nowrap">
+            <form method="post" action="{% url 'print_runs:duplicate' run.id %}" class="inline">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-quiet h-7 px-2 text-[12px]"
+                      title="Start a new set from this one">Duplicate</button>
+            </form>
+            <a href="{% url 'print_runs:pdf_download' run.id %}"
+               class="btn btn-quiet h-7 px-2 text-[12px]" title="Download PDF">PDF</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card p-10 text-center">
+    <div class="text-app-dim text-[14px] mb-2">No sleeve labels yet.</div>
+    <div class="text-app-mute text-[12px] mb-5 max-w-[52ch] mx-auto">
+      A set remembers the exact records and layout you used, so you can
+      re-download it or duplicate it as the starting point for the next one.
+    </div>
+    <a href="{% url 'print_runs:start' %}" class="btn btn-primary">Make your first set</a>
+  </div>
+  {% endif %}
 </div>
-{% endif %}
 {% endblock %}
