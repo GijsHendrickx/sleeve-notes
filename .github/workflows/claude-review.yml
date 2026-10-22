@@ -1,0 +1,72 @@
+name: Claude review
+
+# Advisory review, not a gate: it comments, it can't push or merge.
+# Runs once when a PR opens; add the `claude-review` label to run it again
+# after pushing fixes. Not on every push, so tussencommits don't cost a review.
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened, labeled]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Forks and Dependabot don't get repo secrets, so the job could only fail.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'claude-review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this PR for Sleeve Notes. Read CLAUDE.md first; its conventions
+            are the bar. Report only problems with a concrete failure scenario
+            (input or state → wrong result). No style nits, no praise, no summary
+            of what the PR does. If you find nothing, say so in one line.
+
+            Look hardest at what is specific to this project:
+
+            1. Tenant isolation. Every query on a user-owned model (Release, Track,
+               BpmCache, Override, PrintRun, AuditEvent, Feedback, DiscogsConnection)
+               filters on the user. A new `<uuid:...>` route must be in UUID_ROUTES
+               in webapp/core/tests_tenant_isolation.py; a view taking ids from the
+               POST body or query string needs a case in BodyIdTests.
+            2. A wrong value on a printed sticker. Any path where an unverified or
+               mismatched BPM/key can land on a sticker without being marked as
+               such: match thresholds below fuzz 90, a new source without a second
+               opinion, text silently truncated or dropped by the layout.
+            3. Customer data. New fields or tables holding user data: are they
+               needed, and do they expire? Credentials go in EncryptedTextField.
+               Nothing personal to Sentry, logs or third parties.
+            4. Print history. Queries over printed sets must go through
+               saved_runs() / already_printed_ids(), or a draft counts as printed.
+            5. Background jobs. Idempotent and resumable; UserJobLock released in a
+               finally; progress lines carry [done/total].
+            6. Engine purity. No Django or ORM code in sleeve_notes/ beyond the CLI
+               delegators and django_setup.py.
+            7. Docs drift. A renamed UI label, flag or env var updated everywhere
+               (README, CLAUDE.md, .env.example, --help).
+
+            Put each finding as an inline comment on the line it concerns. Then
+            write one short top-level comment in Dutch listing the findings by
+            severity, or saying there are none.
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

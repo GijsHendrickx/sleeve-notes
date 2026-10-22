@@ -34,6 +34,12 @@ complete, test suite against Postgres 16 on Python 3.12 (same as the
 Dockerfile), and `pip-audit`. Dependabot (`.github/dependabot.yml`) opens a
 weekly PR for minor/patch bumps; majors come one by one.
 
+**Claude review** (`.github/workflows/claude-review.yml`) comments on every
+PR once when it opens; add the `claude-review` label to run it again after
+pushing fixes. Advisory only: it can't push or merge. It needs the
+`CLAUDE_CODE_OAUTH_TOKEN` repo secret (from `claude setup-token`) and the
+Claude GitHub App installed on the repo. Skips drafts, forks and Dependabot.
+
 **`pip-audit` red on a PR you didn't touch** means a new advisory for a
 dependency, not a bug in your change. Upgrade the package (check the fix
 version in the output), run the tests, and render one PDF to check
