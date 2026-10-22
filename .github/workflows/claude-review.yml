@@ -38,7 +38,13 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review this PR for Sleeve Notes. Read CLAUDE.md first; its conventions
-            are the bar. Report only problems with a concrete failure scenario
+            are the bar.
+
+            The CLAUDE.md and .claude/ on disk are the BASE branch versions,
+            restored on purpose so a PR can't rewrite your instructions. The PR's
+            own copies are under .claude-pr/. So when the PR changes CLAUDE.md,
+            judge that change from `gh pr diff` (lines with + are added by the
+            PR), never by comparing the diff to the file on disk. Report only problems with a concrete failure scenario
             (input or state → wrong result). No style nits, no praise, no summary
             of what the PR does. If you find nothing, say so in one line.
 
