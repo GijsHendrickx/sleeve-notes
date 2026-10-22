@@ -23,7 +23,7 @@ jobs:
       DATABASE_URL: postgres://sleevenotes:ci@localhost:5432/sleevenotes
       DJANGO_SECRET_KEY: ci-only-not-secret
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           # Matches the Dockerfile, so CI tests what Render runs.
