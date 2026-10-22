@@ -9,6 +9,11 @@ updates:
       # get looked at one by one.
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # Stay on the LTS track: 5.2 until 6.2 LTS (April 2027). That upgrade is
+      # a planned project (roadmap.md → Jobs-backend), not a weekly bump.
+      - dependency-name: django
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
