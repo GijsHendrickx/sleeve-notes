@@ -20,7 +20,10 @@ dependencies = [
     "reportlab>=4.1,<5",
     "qrcode>=7.4,<9",
     "requests-oauthlib>=1.3,<3",
-    "essentia>=2.1b6.dev1438",
+    # Exact pin: every build is 2.1b6.devNNNN, so a range can't hold, and
+    # MIN_ESSENTIA_CONFIDENCE is tuned to this build's confidence scale. The
+    # click/noise tests in records/tests.py fail if a bump shifts it.
+    "essentia==2.1b6.dev1438",
     "yt-dlp>=2026.8,<2027",
     # Django web app (webapp/)
     "django>=5.2,<5.3",
