@@ -12,9 +12,32 @@ production. The point is: in a 3 AM panic, you read this file, not your terminal
 
 ## Branches & deploy
 
-- `main` → staging (auto-deploys on push). There is no production service on
-  Render yet; when there is, it gets its own trigger so testers on staging
-  and real users don't share one deploy button.
+- `main` → staging. Render deploys only after CI is green
+  (`autoDeployTrigger: checksPass`), because testers use staging and a broken
+  `main` reaches them directly. Work on a branch and merge through a PR.
+- No production service yet, on purpose (see migration_plan.md, fase 6). The
+  agreed plan for when it exists:
+  - Production gets `autoDeployTrigger: off`; a `v*` git tag deploys it.
+  - Either a GitHub Action calls the Render API with the tag's exact commit
+    id (not the deploy hook: that deploys the branch's latest commit, which
+    may be past the tag), or production tracks a protected `production`
+    branch that you only fast-forward to a tag
+    (`git push origin v0.5.0:production`).
+  - Decide then whether `migrate` stays in the Dockerfile `CMD` or moves to
+    Render's pre-deploy command, so a failing migration doesn't take the
+    running app down.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every PR and on `main`: migrations
+complete, test suite against Postgres 16 on Python 3.12 (same as the
+Dockerfile), and `pip-audit`. Dependabot (`.github/dependabot.yml`) opens a
+weekly PR for minor/patch bumps; majors come one by one.
+
+**`pip-audit` red on a PR you didn't touch** means a new advisory for a
+dependency, not a bug in your change. Upgrade the package (check the fix
+version in the output), run the tests, and render one PDF to check
+ReportLab/Pillow still work.
 
 ## Common incidents
 

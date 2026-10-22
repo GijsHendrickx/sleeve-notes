@@ -102,6 +102,11 @@ Een thema dat per plaat twee kleuren uit de hoes haalt (`thumb_url` van Discogs)
 - **Materiaaladvies (Print fulfillment).** Mat in plaats van glanzend, want glans spiegelt boothlicht. En verwijderbare lijm, want verzamelaars willen geen lijmresten op een hoes die geld waard is. Ook de keuze: sticker op de hoes of op de buitenhoes (shrink/plastic).
 - **Afgeronde hoeken.** Die laten minder snel los bij veel in- en uitschuiven uit de krat. Voor een printpartner is dat gratis (snijlijn), voor thuisprint alleen een stippellijn.
 
+### Gevonden in een echte render (okt 2026)
+Twee gevallen waar de huidige layout de leesbaarheidsgarantie nu al breekt. Ze horen bij de terugvalregels van punt 2:
+- **Lange vinylposities overlappen de titel.** Bij Angelic "It's My Turn" staat `AAA1` over "It's" heen: de positiekolom heeft een vaste breedte.
+- **Lange titels krimpen tot onleesbaar en worden afgekapt.** Romanthony "Do You Think You Can Love Me" (vier remixen met lange namen) zakt ver onder de voorgestelde ondergrens van 6 pt en eindigt op "…". Dat is precies het stil afkappen dat punt 2 uitsluit.
+
 ### Volgorde binnen dit blok
 1. Hoes-preview (punt 1) en de contrastcheck: klein, en staat los van de rest.
 2. Designs als begrip in de engine (punt 2), met de huidige layout als eerste design "Label". Dit is het fundament voor de rest.
@@ -385,7 +390,8 @@ Gedaan:
 
 Nog open:
 - **Backups + PITR + één restore-oefening.** Infra, geen code; doen bij het hervatten van staging (Volgorde stap 2). `FIELD_ENCRYPTION_KEY` moet daar ook gezet zijn, anders start de app niet.
-- **Uptime-check op de worker** en **Dependabot + `pip-audit`**. Er is nog geen CI; die komen samen.
+- **Uptime-check op de worker.** Nog open.
+- ~~**Dependabot + `pip-audit`**~~ — **gedaan (22 okt 2026)**: CI (`.github/workflows/ci.yml`) draait tests + `pip-audit` op elke PR, en Render deployt staging alleen bij groene checks. De eerste audit vond 53 kwetsbaarheden in vijf pakketten (urllib3, Pillow, oauthlib, PyJWT, certifi). Ze waren alleen op te lossen met een major-upgrade, en de oude `urllib3<2`-pin blokkeerde de eerste. Na de upgrade zijn de tests, een echte PDF-render en een echte Discogs OAuth-call gecontroleerd.
 - *Restrisico, klein:* als een login pauzeert (signup-formulier bij een naamsbotsing, e-mailverificatie) zet allauth de hele `sociallogin` inclusief token geserialiseerd in de sessie, en sessies staan in de DB. Tijdelijk en zeldzaam met `AUTO_SIGNUP=True`. Alleen oppakken als we ooit e-mailverificatie of MFA aanzetten.
 
 ### 1. Tenantgrens structureel maken in plaats van disciplinair

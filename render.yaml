@@ -10,7 +10,7 @@ services:
     runtime: docker
     plan: starter
     branch: main
-    autoDeploy: true
+    autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     region: frankfurt
     healthCheckPath: /healthz
@@ -51,7 +51,7 @@ services:
     runtime: docker
     plan: starter
     branch: main
-    autoDeploy: true
+    autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: frankfurt
