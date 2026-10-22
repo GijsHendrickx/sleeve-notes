@@ -66,11 +66,30 @@ METADATA_SOURCES = ("songbpm", "deezer", "reccobeats", "beatport", "acousticbrai
 AUDIO_SOURCE = "audio_analysis"
 ALL_SOURCES = (*METADATA_SOURCES, AUDIO_SOURCE)
 
+# Beatport can't keep tokens since the Django port (see _load_beatport_tokens),
+# so it never completes a lookup. Requiring it would leave every cached track
+# "incomplete" and re-queue the whole collection on every run.
+REQUIRED_METADATA_SOURCES = tuple(s for s in METADATA_SOURCES if s != "beatport")
+
+# Audio is measured only when metadata gives at most this many BPMs.
+AUDIO_MAX_METADATA_HITS = 1
+
 
 def sources_required_for_cache() -> tuple[str, ...]:
     if os.environ.get("AUDIO_ANALYSIS_ENABLED", "").lower() in ("1", "true", "yes"):
-        return ALL_SOURCES
-    return METADATA_SOURCES
+        return (*REQUIRED_METADATA_SOURCES, AUDIO_SOURCE)
+    return REQUIRED_METADATA_SOURCES
+
+
+def cache_entry_complete(entry: dict) -> bool:
+    """True when re-running the cascade on this entry can't add anything."""
+    tried = set(entry.get("sources_tried") or [])
+    required = set(sources_required_for_cache())
+    if AUDIO_SOURCE in required and AUDIO_SOURCE not in tried:
+        bpm_hits = sum(1 for hit in (entry.get("sources") or {}).values() if hit.get("bpm"))
+        if bpm_hits > AUDIO_MAX_METADATA_HITS:
+            required.discard(AUDIO_SOURCE)
+    return required.issubset(tried)
 
 # Tie-breaker order when sources disagree (no consensus, raw or octave-aware).
 # Order is empirically driven by per-source outlier rates measured against the
@@ -953,25 +972,6 @@ def _audio_analysis_lookup(
         raise SourceUnavailable(str(exc)) from exc
 
 
-def _align_audio_bpm(audio_hit: dict, sources: dict[str, dict]) -> dict:
-    """Resolve common half/double and 3:2 meter readings against one known BPM."""
-    existing = [float(hit["bpm"]) for hit in sources.values() if hit.get("bpm")]
-    if len(existing) != 1 or not audio_hit.get("bpm"):
-        return audio_hit
-    measured = float(audio_hit["bpm"])
-    reference = existing[0]
-    candidates = (measured, measured * 2, measured / 2, measured * 1.5, measured / 1.5)
-    aligned = min(candidates, key=lambda value: abs(value - reference))
-    if abs(aligned - reference) > 2:
-        return audio_hit
-    out = dict(audio_hit)
-    out["measured_bpm"] = measured
-    out["bpm"] = int(round(aligned))
-    if aligned != measured:
-        out["meter_adjustment"] = round(aligned / measured, 3)
-    return out
-
-
 def cascade_all(
     artist: str,
     title: str,
@@ -1008,7 +1008,7 @@ def cascade_all(
                     sources[src] = hit
 
     bpm_hit_count = sum(1 for hit in sources.values() if hit.get("bpm"))
-    if AUDIO_SOURCE not in tried and bpm_hit_count <= 1:
+    if AUDIO_SOURCE not in tried and bpm_hit_count <= AUDIO_MAX_METADATA_HITS:
         try:
             audio_hit = _audio_analysis_lookup(artist, title, hints)
         except SourceUnavailable:
@@ -1017,8 +1017,12 @@ def cascade_all(
             new_errored.append(f"{AUDIO_SOURCE}: {exc}")
         else:
             tried.add(AUDIO_SOURCE)
+            # Stored as measured, never scaled towards the other source: an
+            # adjusted reading is no longer an independent second opinion, and
+            # strict agreement is what puts the trust dot on the sticker. Half/
+            # double readings still meet via _octave_consensus, without the dot.
             if audio_hit:
-                sources[AUDIO_SOURCE] = _align_audio_bpm(audio_hit, sources)
+                sources[AUDIO_SOURCE] = audio_hit
 
     out = {
         "sources": sources,
@@ -1219,10 +1223,7 @@ def build_track_result(
     sources = entry.get("sources") or {}
     bpm = derived["bpm"]
     if bpm is None:
-        all_tried = set(sources_required_for_cache()).issubset(
-            set(entry.get("sources_tried") or [])
-        )
-        reason = "exhausted" if all_tried else "incomplete"
+        reason = "exhausted" if cache_entry_complete(entry) else "incomplete"
     else:
         reason = "match"
 

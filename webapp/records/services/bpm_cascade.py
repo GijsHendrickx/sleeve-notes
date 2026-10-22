@@ -31,7 +31,7 @@ from sleeve_notes.fetch_bpm import (
     cascade_all,
     override_to_result,
     parse_key_to_camelot,
-    sources_required_for_cache,
+    cache_entry_complete,
 )
 
 
@@ -503,8 +503,7 @@ def run_bpm_cascade(
 
             ck = cache_key(artist, title)
             cached = None if force else load_cache_entry(user, ck)
-            tried = set((cached or {}).get("sources_tried") or [])
-            if not force and cached and set(sources_required_for_cache()).issubset(tried):
+            if not force and cached and cache_entry_complete(cached):
                 cached_hits += 1
                 continue
 

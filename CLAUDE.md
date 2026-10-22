@@ -114,7 +114,7 @@ sleeve-notes web            # runserver on 127.0.0.1:8000 + in-process Q2 cluste
 
 **ORM-bound logic lives in `webapp/<app>/services/`.** `discogs_sync.py` wraps the Discogs HTTP layer with Django writes; `bpm_cascade.py` wraps the cascade with overrides + BpmCache; `render.py` wraps the PDF/SVG generators with release/lookup helpers. CLI commands and views both call these.
 
-**Every long-running step must be idempotent and resumable.** Sync skips releases whose tracklist is already cached; the cascade skips tracks whose `BpmCache.sources_tried` already covers `ALL_SOURCES` (unless `force=True`). Background jobs commit at coarse intervals (sync: every 25 releases; cascade: per-track via `save_cache_entry` inside the thread pool) — never per row at the boundary, never only at the end.
+**Every long-running step must be idempotent and resumable.** Sync skips releases whose tracklist is already cached; the cascade skips tracks for which `fetch_bpm.cache_entry_complete()` is true (unless `force=True`). That rule leaves out sources that can't run (Beatport, while disabled) and audio for tracks that already have two metadata BPMs. A source that is required but can never land in `sources_tried` re-queues the entire collection on every run, silently: that happened with Beatport until Oct 2026. Background jobs commit at coarse intervals (sync: every 25 releases; cascade: per-track via `save_cache_entry` inside the thread pool) — never per row at the boundary, never only at the end.
 
 **Don't add type/code-style comments that explain WHAT the code does.** Well-named identifiers already do that. Reserve comments for non-obvious WHY: a workaround for a bug in an upstream library, a constraint that's easy to violate, a subtle invariant.
 

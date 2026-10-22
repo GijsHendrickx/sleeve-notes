@@ -228,6 +228,11 @@ def step(request, run_id, step: int):
     if step < 1 or step > STEP_COUNT:
         raise Http404
     run = _get_run(request, run_id)
+    # A saved set is what went to the printer; editing it would rewrite print
+    # history (already_printed_ids) and make "Download again" a different PDF.
+    # Duplicate is the way to change one.
+    if not run.is_draft:
+        return redirect("print_runs:detail", run_id=run.id)
     if request.method == "POST":
         return _handle_step_post(request, run, step)
     return _STEP_RENDERERS[step](request, run)
@@ -261,6 +266,8 @@ def _handle_step_post(request, run: PrintRun, step: int):
         return redirect("print_runs:step", run_id=run.id, step=4)
 
     # Step 4 posts only to finish.
+    if not run.release_ids:
+        return redirect("print_runs:step", run_id=run.id, step=1)
     run.status = PrintRun.STATUS_SAVED
     run.save(update_fields=["status", "updated_at"])
     return redirect("home")

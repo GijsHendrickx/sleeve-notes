@@ -299,7 +299,7 @@ Nog te doen, in volgorde:
 1. **Essentia + Beat This! in plaats van librosa** in `audio_analysis.measure_bpm`; onderlinge zelfdiagnose beslist (zie "Draai ze allebei").
 2. **Audiobronnen-keten**: Discogs-video → iTunes/Deezer-preview (iTunes `previewUrl` is keyless, 30s) → Hardwax per vinylpositie → Bandcamp → YouTube-zoek. Elke bron achter fuzz ≥90 plus aparte artiestcheck.
 3. **Audio als verificatie van `single`-hits**, niet alleen bij 0/1 metadata-hits: botsing wordt `disputed`.
-4. **×1,5 / ×⅔ in `_canonical_octave`** en `_octave_consensus` (Robert Hood "Minus").
+4. **×1,5 / ×⅔ in `_canonical_octave`** en `_octave_consensus` (Robert Hood "Minus"). Dit hoort in de consensus met een eigen confidence, **nooit** als het bijbuigen van een meting naar een andere bron. Dat deed `_align_audio_bpm` tot okt 2026. Een foute songbpm-match van 100 trok een audiometing van 67 mee (×1,5), en de sticker drukte 100 met de vertrouwensstip. Verwijderd na de eerste agent-review van PR #2.
 5. **Rekordbox/Serato/Traktor-import** en bestand-upload ("analyseer mijn rip") als gebruikerslaag; ReccoBeats kan ook een geüpload bestand analyseren (nauwkeurigheid onbekend).
 6. **Agent-fallback** voor wat overblijft: eerst programmatisch alle bronnen doorlopen, en pas als dat niets oplevert een AI-agent die de BPM echt op het web gaat opzoeken. Geopperd met N8N of vergelijkbare orchestratie.
    - *Tegenargument om eerst te beslechten:* dit is precies de plek waar een plausibel ogende maar foute BPM op de sticker belandt — zie "De belangrijkste waarschuwing" hierboven. Een agent heeft geen `confidence` en geen tweede stem. Als dit er komt, dan met bronvermelding per waarde en een zichtbare "ongeverifieerd"-status in stap 2, niet als stille zesde bron in de cascade.
@@ -312,6 +312,7 @@ Let op: `is_cached_release` eist nu ook `videos`, dus de eerstvolgende Discogs-s
 
 ### Open vragen
 - **Waar draait de analyse?** Essentia in de Django-Q2-worker betekent een zwaardere dependency en trage jobs (download + decode + analyse per track). Alternatief is een aparte analyse-worker of een on-demand "analyseer deze track"-knop in plaats van collectie-breed.
+- **Welke waarde wint** bij een dispuut? Vandaag staat `audio_analysis` vooraan in `SOURCE_PRIORITY`, dus bij een botsing drukt de sticker de audiometing, zonder stip. Dat is librosa op een YouTube-upload, die ondanks fuzz ≥90 en ±10% duur een remix of live-versie kan zijn. Opgemerkt in de agent-review van PR #2; bewust nog niet veranderd, want het hoort bij item 1–3.
 - **Welke waarde wint** als essentia en een metadata-bron elkaar tegenspreken? De meting suggereert dat essentia vaker gelijk heeft dan de losse bronnen, maar dat is op n=30 gemeten, niet op de echte collectie.
 - **Hardwax-matching op catalogusnummer** is nog niet getest — hun zoekfunctie op vrije tekst is zwak, catalogusnummer uit Discogs is waarschijnlijk de betere sleutel maar dat is niet gevalideerd.
 
