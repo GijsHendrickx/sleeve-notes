@@ -67,7 +67,7 @@ because every cache lives in the DB.
 
 ## Prerequisites
 
-- **Python 3.14+** (Essentia, the audio BPM engine, only ships wheels for 3.14)
+- **Python 3.12+**. The optional audio BPM measurement needs **Python 3.14 on Linux x86_64 or macOS 15+**, the only platforms Essentia has wheels for; install it with `pip install ".[audio]"`. Without it everything else works, and the audio source is skipped.
 - **macOS, Linux or WSL** — the tools are pure Python, but the workflow has been exercised on macOS
 - A **Discogs account with a public collection** *or* a Discogs CSV export of your collection
 - A printer that can print **A4 at 100% scale** (no "fit to page")
@@ -474,7 +474,7 @@ Your overrides go too — export them first via Django admin if needed.
 | **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). Coverage = "everything on Spotify" — limited for pre-Spotify vinyl-only releases. The Spotify track ID matched here is also persisted onto `tracks.spotify_track_id` so the web UI's listen icon can deep-link straight into Spotify. |
 | **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
-| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with Essentia (`RhythmExtractor2013`, multifeature). Results with fewer than 16 beats or an Essentia confidence below 1.5 (of ~5.3) are discarded. A measurement is stored as measured and never scaled towards another source, so it only earns the trust dot when it genuinely agrees. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
+| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with Essentia (`RhythmExtractor2013`, multifeature; needs the `[audio]` extra). Results with fewer than 16 beats or an Essentia confidence below 1.5 (of ~5.3) are discarded. A measurement is stored as measured and never scaled towards another source, so it only earns the trust dot when it genuinely agrees. An audio-only value prints like any single-source value (digits, no dot) and is listed under **Needs your eye** in step 2. Known blind spot: a confident 3:2 misreading (Robert Hood "Minus" measures 92.5 against a real 139), which only a metadata source can contradict. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
 

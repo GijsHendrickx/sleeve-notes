@@ -13,7 +13,7 @@ COPY pyproject.toml README.md ./
 COPY sleeve_notes/ ./sleeve_notes/
 COPY webapp/ ./webapp/
 
-RUN pip install .
+RUN pip install ".[audio]"
 
 WORKDIR /app/webapp
 

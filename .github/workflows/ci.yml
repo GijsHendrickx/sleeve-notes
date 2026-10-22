@@ -32,7 +32,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install . pip-audit
+        run: pip install ".[audio]" pip-audit
       - name: Test-only encryption key
         # Generated per run instead of committed, so no key ever sits in the repo.
         run: echo "FIELD_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"

@@ -1,3 +1,5 @@
+from importlib.util import find_spec
+from unittest import skipUnless
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase
@@ -170,6 +172,7 @@ def _click_track(bpm, seconds=40, sr=44100):
     return signal * 0.8
 
 
+@skipUnless(find_spec("essentia"), "needs the [audio] extra; CI installs it")
 class EssentiaMeasureTests(SimpleTestCase):
     """Runs the real engine on synthetic audio, so no network or fixtures."""
 
