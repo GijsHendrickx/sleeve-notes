@@ -57,7 +57,7 @@
             {% if t.audio_analysis %}
               <a href="{{ t.audio_analysis.url }}" target="_blank" rel="noopener"
                  class="ml-1 link text-[12px] hover:underline"
-                 title="Measured from {{ t.audio_analysis.video_title }} · stability {{ t.audio_analysis.analysis_confidence }}">audio</a>
+                 title="Measured from {{ t.audio_analysis.video_title }} · confidence {{ t.audio_analysis.analysis_confidence }}">audio</a>
             {% endif %}
           </td>
           <td class="num {% if t.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">

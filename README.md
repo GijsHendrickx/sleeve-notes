@@ -4,7 +4,7 @@ Generate a printable A4 PDF with one sticker per record from your Discogs collec
 
 The web UI is a four-step flow — **Records → BPM → Design → Get them** — that ends in a PDF (and, later, an order for printed stickers). Each finished set of **sleeve labels** is a saved "which records + which layout" recipe you can re-download, duplicate as the starting point for the next print, or delete. Collection views filter by `type` (Album / EP / Single / Compilation / Other) and `format` (12" / 10" / 7" / Other), both auto-classified from Discogs metadata at fetch time.
 
-BPM and key are looked up through four metadata sources (songbpm + Deezer + ReccoBeats/Spotify + AcousticBrainz; Beatport is [currently disabled](#beatport-one-time-auth)) and reconciled by consensus. Optionally, tracks with zero or one metadata BPM are measured from a strictly matched YouTube recording using librosa. When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
+BPM and key are looked up through four metadata sources (songbpm + Deezer + ReccoBeats/Spotify + AcousticBrainz; Beatport is [currently disabled](#beatport-one-time-auth)) and reconciled by consensus. Optionally, tracks with zero or one metadata BPM are measured from a strictly matched YouTube recording using Essentia (`RhythmExtractor2013`, the engine AcousticBrainz ran on). When two or more sources agree on a BPM (within ±1), the sticker prints a small filled dot **●** before the digits — your "trust this blind" signal. Single-source or disputed hits get just the digits. Tracks where no source returned a BPM get an **empty box** for a hand-written needle-drop value.
 
 ---
 
@@ -67,7 +67,7 @@ because every cache lives in the DB.
 
 ## Prerequisites
 
-- **Python 3.10+** (the codebase uses `str | None` PEP 604 syntax)
+- **Python 3.14+** (Essentia, the audio BPM engine, only ships wheels for 3.14)
 - **macOS, Linux or WSL** — the tools are pure Python, but the workflow has been exercised on macOS
 - A **Discogs account with a public collection** *or* a Discogs CSV export of your collection
 - A printer that can print **A4 at 100% scale** (no "fit to page")
@@ -474,7 +474,7 @@ Your overrides go too — export them first via Django admin if needed.
 | **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). Coverage = "everything on Spotify" — limited for pre-Spotify vinyl-only releases. The Spotify track ID matched here is also persisted onto `tracks.spotify_track_id` so the web UI's listen icon can deep-link straight into Spotify. |
 | **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
-| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with librosa. Results with fewer than 16 beats or an unstable beat grid are discarded. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
+| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with Essentia (`RhythmExtractor2013`, multifeature). Results with fewer than 16 beats or an Essentia confidence below 1.5 (of ~5.3) are discarded. A measurement is stored as measured and never scaled towards another source, so it only earns the trust dot when it genuinely agrees. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
 
 **Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
 
