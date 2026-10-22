@@ -23,7 +23,7 @@ dependencies = [
     "librosa>=0.11,<1",
     "yt-dlp>=2026.8,<2027",
     # Django web app (webapp/)
-    "django>=5.2,<5.3",
+    "django>=5.2,<6.2",
     "django-environ>=0.11,<1",
     "psycopg[binary]>=3.1,<4",
     "gunicorn>=22,<23",
