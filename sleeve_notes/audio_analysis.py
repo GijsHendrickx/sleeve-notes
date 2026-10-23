@@ -77,6 +77,18 @@ def _production_tag(fragment: str) -> str | None:
     return " ".join(sorted(named)) or None
 
 
+def core_title(title: str) -> str:
+    """The song name alone: no bracket groups, no " - Remastered 2011" tail."""
+    core = _GROUP_RE.sub(" ", title or "")
+    head, sep, tail = core.rpartition(" - ")
+    if sep and all(
+        w in _TEMPO_NEUTRAL or w in _PRODUCTION_WORDS or _NEUTRAL_TOKEN_RE.fullmatch(w)
+        for w in _normalized(tail).split()
+    ):
+        core = head
+    return _normalized(core)
+
+
 def _base_words(title: str) -> set[str]:
     return set(_normalized(_GROUP_RE.sub(" ", title or "")).split())
 
@@ -197,11 +209,11 @@ def find_itunes_preview(
 ) -> dict | None:
     """A keyless 30-second preview, matched on artist and title separately.
 
-    token_set_ratio lets a title carry extra words, which is right for
-    "Hasta Luego Trinidad (Long Version)" but would pass "Threee (Deetron
-    Remix)" for "Threee"; same_version() rejects the remix, and the duration
-    confirms the length variant when both sides have one (43% of Discogs
-    tracks don't).
+    Two checks on the title, because 43% of Discogs tracks have no duration
+    to fall back on. The song name is compared symmetrically, so "Love" is
+    not "Love Is the Message"; the bracket tags go through same_version(), so
+    "(Long Version)" passes and "(Deetron Remix)" doesn't. The artist stays
+    subset-tolerant: iTunes adds "feat. X" where Discogs often doesn't.
     """
     if rl is not None:
         rl.wait("itunes", ITUNES_RATE_S)
@@ -224,7 +236,7 @@ def find_itunes_preview(
         track_name = item.get("trackName") or ""
         score = min(
             float(fuzz.token_set_ratio(_normalized(artist), _normalized(item.get("artistName") or ""))),
-            float(fuzz.token_set_ratio(_normalized(title), _normalized(track_name))),
+            float(fuzz.token_sort_ratio(core_title(title), core_title(track_name))),
         )
         if score < MIN_MATCH_SCORE or not same_version(title, track_name):
             continue

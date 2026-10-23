@@ -176,3 +176,11 @@ class VersionGuardTests(SimpleTestCase):
         get.return_value = _itunes_response([radio, long])
         match = find_itunes_preview("Magazine 60", "Hasta Luego Trinidad", 287)
         self.assertEqual(match["preview_url"], "https://audio.example/long.m4a")
+
+    @mock.patch("sleeve_notes.audio_analysis.requests.get")
+    def test_itunes_song_name_must_match_both_ways(self, get):
+        from sleeve_notes.audio_analysis import find_itunes_preview
+
+        longer = {**ITUNES_HIT, "artistName": "Artist", "trackName": "Love Is the Message", "trackTimeMillis": None}
+        get.return_value = _itunes_response([longer])
+        self.assertIsNone(find_itunes_preview("Artist", "Love"))
