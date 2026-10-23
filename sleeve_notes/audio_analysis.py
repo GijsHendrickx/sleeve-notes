@@ -17,7 +17,7 @@ from rapidfuzz import fuzz
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 MIN_MATCH_SCORE = 90.0
 MIN_BEAT_COUNT = 16
-MIN_BEAT_STABILITY = 0.75
+MIN_ESSENTIA_CONFIDENCE = 1.5
 MAX_VIDEO_DURATION_S = 15 * 60
 ANALYSIS_START_S = 30
 ANALYSIS_DURATION_S = 120
@@ -164,33 +164,25 @@ def _to_analysis_wav(source: Path, target: Path) -> None:
 
 
 def measure_bpm(path: Path) -> tuple[float, float, int]:
+    """Return (bpm, confidence, beat_count) from Essentia's RhythmExtractor2013.
+
+    Multifeature is the method AcousticBrainz ran on. Its confidence runs 0 to
+    ~5.3; in the Sep 2026 benchmark every correct reading scored above 1.7 and
+    both wrong ones below 0.6. It does not catch a confident 3:2 misreading
+    (Robert Hood "Minus": 92.5 at 3.13 against a real 139) — that is left to the
+    cascade's consensus with the metadata sources.
+    """
     try:
-        import librosa
-        import numpy as np
+        import essentia.standard as es
     except ImportError as exc:
-        raise AudioAnalysisUnavailable("librosa is not installed") from exc
+        raise AudioAnalysisUnavailable("essentia is not installed") from exc
 
     try:
-        audio, sample_rate = librosa.load(path, sr=44100, mono=True)
-        onset = librosa.onset.onset_strength(y=audio, sr=sample_rate, aggregate=np.median)
-        tempo, beats = librosa.beat.beat_track(
-            onset_envelope=onset,
-            sr=sample_rate,
-            trim=False,
-            units="time",
-        )
-        bpm = float(np.atleast_1d(tempo)[0])
-        intervals = np.diff(beats)
-        if len(intervals) == 0:
-            return bpm, 0.0, len(beats)
-        median = float(np.median(intervals))
-        stable = intervals[np.abs(intervals - median) <= 0.12 * median]
-        stability = float(len(stable) / len(intervals))
-        if len(stable) >= MIN_BEAT_COUNT - 1:
-            bpm = float(60.0 / np.mean(stable))
+        audio = es.MonoLoader(filename=str(path), sampleRate=44100)()
+        bpm, beats, confidence, _, _ = es.RhythmExtractor2013(method="multifeature")(audio)
     except Exception as exc:
         raise AudioAnalysisUnavailable(f"audio analysis failed: {exc}") from exc
-    return bpm, stability, len(beats)
+    return float(bpm), float(confidence), len(beats)
 
 
 def youtube_audio_lookup(
@@ -210,14 +202,14 @@ def youtube_audio_lookup(
         source = _download_audio(video["id"], tmp_path)
         wav = tmp_path / "analysis.wav"
         _to_analysis_wav(source, wav)
-        bpm, stability, beat_count = measure_bpm(wav)
+        bpm, confidence, beat_count = measure_bpm(wav)
 
-    if stability < MIN_BEAT_STABILITY or beat_count < MIN_BEAT_COUNT or not (50 <= bpm <= 250):
+    if confidence < MIN_ESSENTIA_CONFIDENCE or beat_count < MIN_BEAT_COUNT or not (50 <= bpm <= 250):
         return None
     return {
         "bpm": int(round(bpm)),
         "score": round(video["score"], 1),
-        "analysis_confidence": round(stability, 2),
+        "analysis_confidence": round(confidence, 2),
         "beat_count": beat_count,
         "url": f"https://www.youtube.com/watch?v={video['id']}",
         "video_id": video["id"],

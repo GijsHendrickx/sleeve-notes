@@ -30,7 +30,7 @@ production. The point is: in a 3 AM panic, you read this file, not your terminal
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and on `main`: migrations
-complete, test suite against Postgres 16 on Python 3.12 (same as the
+complete, test suite against Postgres 16 on Python 3.14 (same as the
 Dockerfile), and `pip-audit`. Dependabot (`.github/dependabot.yml`) opens a
 weekly PR for minor/patch bumps; majors come one by one.
 

@@ -29,7 +29,7 @@ so the user gets visual confirmation even when the value didn't change.
     {% if r.audio_analysis %}
       <a href="{{ r.audio_analysis.url }}" target="_blank" rel="noopener"
          class="ml-1 link text-[12px] hover:underline"
-         title="Measured from {{ r.audio_analysis.video_title }} · stability {{ r.audio_analysis.analysis_confidence }}">audio</a>
+         title="Measured from {{ r.audio_analysis.video_title }} · confidence {{ r.audio_analysis.analysis_confidence }}">audio</a>
     {% endif %}
   </td>
   <td class="num {% if just_synced %}flash-sync{% endif %} {% if r.key_camelot %}text-app-ink{% else %}text-app-mute{% endif %}">

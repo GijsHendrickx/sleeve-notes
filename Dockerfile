@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -13,7 +13,7 @@ COPY pyproject.toml README.md ./
 COPY sleeve_notes/ ./sleeve_notes/
 COPY webapp/ ./webapp/
 
-RUN pip install .
+RUN pip install ".[audio]"
 
 WORKDIR /app/webapp
 

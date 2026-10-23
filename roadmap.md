@@ -296,7 +296,19 @@ Belangrijkste bijvangst: bij Theo Parrish "Falling Up" (bronnen 116 vs 126) en O
 Gedaan: Spotify/ReccoBeats 429/5xx geeft nu `SourceUnavailable` (geen cache-vervuiling meer); Discogs `videos` worden opgeslagen (`Release.videos`) en zijn de eerste route voor audio-analyse, gematcht op titel (≥90) + duur (±10%).
 
 Nog te doen, in volgorde:
-1. **Essentia + Beat This! in plaats van librosa** in `audio_analysis.measure_bpm`; onderlinge zelfdiagnose beslist (zie "Draai ze allebei").
+1. ~~**Essentia + Beat This! in plaats van librosa**~~ — **Essentia gedaan (22 okt 2026), Beat This! bewust uitgesteld.** Gemeten op drie Deezer-previews uit de benchmark:
+   | track (ref) | librosa | Essentia (conf) | Beat This! (stabiel) |
+   |---|---|---|---|
+   | Overmono "So U Kno" (130) | 130,0 | 129,6 (3,67) | 130,0 (64/64) |
+   | Robert Hood "Minus" (139) | **92,5** | **92,5** (3,13) | 138,6 (69/69) |
+   | Skee Mask "Rev8617" (135) | **106,4** | 135,0 (1,72) | weigert (0/36) |
+   | piekgeheugen per proces | 386 MB | 197 MB | 515 MB |
+
+   librosa gaf twee van drie fout en de oude stabiliteitsdrempel liet beide door; Essentia is lichter, sneller en beter. Drempel: confidence ≥ 1,5.
+   - *Waarom Beat This! nog niet:* torch past niet in een Render-starter (512 MB). Het vraagt een groter worker-plan (~$18 per maand meer), een image die ~800 MB groter is (CPU-torch) en een checkpoint van 81 MB in de image. Dat komt pas als metingen op de echte collectie laten zien dat audio vaak de doorslag geeft.
+   - *Correctie op "Draai ze allebei":* bij "Minus" zien béíde engines er gezond uit (Essentia conf 3,13, Beat This! 69/69 stabiel) en zijn ze het oneens. 92,5 × 1,5 = 138,75, dus het is een maatsoort-dubbelzinnigheid. "Volg de gezonde zelfdiagnose" beslist dat niet. Bij twee engines wordt de regel: eens → klaar; één weigert → de ander; beide gezond maar oneens → `disputed`.
+   - *Restrisico nu:* een zelfverzekerde 3:2-fout van Essentia. Tegen metadata wordt die `disputed` (items 3 en 4); bij vinyl-only tracks zonder metadata komt hij als enkele bron, zonder stip, op de sticker.
+   - *Lokaal:* Essentia heeft alleen wheels voor Python 3.14 (macOS 15+, Linux x86_64). Docker en CI zijn daarom naar 3.14 gegaan. Op een Apple Silicon-Mac bouw je de image met `--platform linux/amd64`.
 2. **Audiobronnen-keten**: Discogs-video → iTunes/Deezer-preview (iTunes `previewUrl` is keyless, 30s) → Hardwax per vinylpositie → Bandcamp → YouTube-zoek. Elke bron achter fuzz ≥90 plus aparte artiestcheck.
 3. **Audio als verificatie van `single`-hits**, niet alleen bij 0/1 metadata-hits: botsing wordt `disputed`.
 4. **×1,5 / ×⅔ in `_canonical_octave`** en `_octave_consensus` (Robert Hood "Minus"). Dit hoort in de consensus met een eigen confidence, **nooit** als het bijbuigen van een meting naar een andere bron. Dat deed `_align_audio_bpm` tot okt 2026. Een foute songbpm-match van 100 trok een audiometing van 67 mee (×1,5), en de sticker drukte 100 met de vertrouwensstip. Verwijderd na de eerste agent-review van PR #2.

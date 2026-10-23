@@ -1,3 +1,5 @@
+from importlib.util import find_spec
+from unittest import skipUnless
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase
@@ -145,3 +147,73 @@ class AudioAnalysisSourceTests(SimpleTestCase):
 
         self.assertEqual(result["sources"]["audio_analysis"]["bpm"], 128)
         self.assertIn("audio_analysis", result["sources_tried"])
+
+
+def _write_wav(path, signal, sr=44100):
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes((np.clip(signal, -1, 1) * 32767).astype("<i2").tobytes())
+
+
+def _click_track(bpm, seconds=40, sr=44100):
+    import numpy as np
+
+    signal = np.zeros(sr * seconds)
+    for beat in np.arange(0, seconds, 60 / bpm):
+        i = int(beat * sr)
+        n = np.arange(min(2000, len(signal) - i))
+        signal[i:i + len(n)] += np.sin(2 * np.pi * 1000 * n / sr) * np.exp(-n / 300)
+    return signal * 0.8
+
+
+@skipUnless(find_spec("essentia"), "needs the [audio] extra; CI installs it")
+class EssentiaMeasureTests(SimpleTestCase):
+    """Runs the real engine on synthetic audio, so no network or fixtures."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_click_track_measures_its_tempo_confidently(self):
+        from sleeve_notes.audio_analysis import MIN_ESSENTIA_CONFIDENCE, measure_bpm
+
+        _write_wav(self.dir / "click.wav", _click_track(128))
+        bpm, confidence, beats = measure_bpm(self.dir / "click.wav")
+
+        self.assertAlmostEqual(bpm, 128, delta=1)
+        self.assertGreaterEqual(confidence, MIN_ESSENTIA_CONFIDENCE)
+
+    def test_noise_falls_below_the_confidence_gate(self):
+        import numpy as np
+
+        from sleeve_notes.audio_analysis import MIN_ESSENTIA_CONFIDENCE, measure_bpm
+
+        noise = np.random.default_rng(0).normal(0, 0.3, 44100 * 40)
+        _write_wav(self.dir / "noise.wav", noise)
+        _, confidence, _ = measure_bpm(self.dir / "noise.wav")
+
+        self.assertLess(confidence, MIN_ESSENTIA_CONFIDENCE)
+
+    @patch.dict("os.environ", {"AUDIO_ANALYSIS_ENABLED": "true"})
+    @patch("sleeve_notes.audio_analysis._to_analysis_wav")
+    @patch("sleeve_notes.audio_analysis._download_audio")
+    @patch("sleeve_notes.audio_analysis.measure_bpm")
+    def test_low_confidence_reading_is_not_returned_as_a_bpm(self, measure, _download, _convert):
+        from sleeve_notes.audio_analysis import youtube_audio_lookup
+
+        measure.return_value = (143.3, 0.21, 68)
+        video = {"id": "abcdefghijk", "title": "Artist - Title", "score": 95.0, "origin": "discogs"}
+        with patch("sleeve_notes.audio_analysis.find_discogs_video", return_value=video):
+            self.assertIsNone(youtube_audio_lookup("Artist", "Title", discogs_videos=[]))
