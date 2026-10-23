@@ -43,6 +43,72 @@ def _normalized(value: str) -> str:
     return " ".join("".join(c if c.isalnum() else " " for c in value.lower()).split())
 
 
+# Fuzzy scores can't tell a remix from the original: "Droogs" sits fully
+# inside "Droogs (Paleman Remix)". What decides a BPM is whether it is a
+# different production. A long, radio, 12" or remastered version keeps the
+# tempo; someone else's remix, a dub, rework or live take may not.
+_PRODUCTION_WORDS = {
+    "mix", "remix", "rmx", "rework", "dub", "vip", "bootleg", "live",
+    "acapella", "accapella", "apella",
+}
+_TEMPO_NEUTRAL = {
+    "original", "extended", "long", "short", "radio", "edit", "single", "album",
+    "version", "vocal", "instrumental", "club", "main", "full", "length", "inch",
+    "remaster", "remastered", "mono", "stereo", "digital", "the", "a",
+}
+_NEUTRAL_TOKEN_RE = re.compile(r"(19|20)\d\ds?|\d{1,2}(inch)?|[a-z]")
+# The closing bracket is optional: Discogs has titles like 'Freaky (The "Bar Heads" Mix'.
+_GROUP_RE = re.compile(r"[\(\[]([^\)\]]*)(?:[\)\]]|$)")
+TAG_MATCH_SCORE = 85.0
+
+
+def _production_tag(fragment: str) -> str | None:
+    """"paleman mix" for "(Paleman Remix)", None for "(Extended Mix)"."""
+    words = _normalized(fragment).split()
+    if not any(w in _PRODUCTION_WORDS for w in words):
+        return None
+    words = ["mix" if w in ("remix", "rmx") else "acapella" if w in ("accapella", "apella") else w for w in words]
+    named = [w for w in words if w not in _TEMPO_NEUTRAL and not _NEUTRAL_TOKEN_RE.fullmatch(w)]
+    if named == ["mix"]:
+        # "(Remix)" without a name is still a remix; "(Extended Mix)" is not.
+        return "mix" if any(w in ("remix", "rmx") for w in _normalized(fragment).split()) else None
+    if "mix" in named and len(named) > 1 and any(w in ("dub", "acapella", "live") for w in named):
+        named.remove("mix")
+    return " ".join(sorted(named)) or None
+
+
+def _base_words(title: str) -> set[str]:
+    return set(_normalized(_GROUP_RE.sub(" ", title or "")).split())
+
+
+def production_signature(title: str, base: set[str] | None = None) -> frozenset[str]:
+    """The production tags in a title, from brackets and a trailing " - X".
+
+    The trailing part is skipped when it holds the song title itself, as in
+    a video called "Nicole Moudaber - Her Dub Material": that "Dub" is the
+    song, not a dub.
+    """
+    title = title or ""
+    fragments = _GROUP_RE.findall(title)
+    outside = _GROUP_RE.sub(" ", title)
+    if " - " in outside:
+        tail = outside.rsplit(" - ", 1)[1]
+        if not (base and base <= set(_normalized(tail).split())):
+            fragments.append(tail)
+    return frozenset(t for t in (_production_tag(f) for f in fragments) if t)
+
+
+def same_version(title: str, candidate_title: str) -> bool:
+    """Same production tags on both sides; remixer names compared fuzzily,
+    because Discogs and uploaders spell them differently ("Errick" / "Errik")."""
+    base = _base_words(title)
+    ours = production_signature(title, base)
+    theirs = production_signature(candidate_title, base)
+    if len(ours) != len(theirs):
+        return False
+    return all(any(fuzz.ratio(a, b) >= TAG_MATCH_SCORE for b in theirs) for a in ours)
+
+
 def youtube_match_score(artist: str, title: str, video_title: str) -> float:
     """Require both artist and title to occur strongly in the video title."""
     candidate = _normalized(video_title)
@@ -74,7 +140,7 @@ def find_discogs_video(
         if not m:
             continue
         score = float(fuzz.partial_ratio(needle, _normalized(v.get("title") or "")))
-        if score < MIN_MATCH_SCORE:
+        if score < MIN_MATCH_SCORE or not same_version(title, v.get("title") or ""):
             continue
         vid_dur = v.get("duration")
         if duration_s and vid_dur and abs(vid_dur - duration_s) > DURATION_TOLERANCE * duration_s:
@@ -118,7 +184,7 @@ def find_youtube_video(artist: str, title: str) -> dict | None:
         if not video_id:
             continue
         score = youtube_match_score(artist, title, video_title)
-        if score < MIN_MATCH_SCORE:
+        if score < MIN_MATCH_SCORE or not same_version(title, video_title):
             continue
         candidate = {"id": video_id, "title": video_title, "score": score}
         if best is None or score > best[0]:
@@ -131,9 +197,11 @@ def find_itunes_preview(
 ) -> dict | None:
     """A keyless 30-second preview, matched on artist and title separately.
 
-    token_set_ratio per field rather than partial_ratio on a joined string:
-    iTunes keeps artist and track name apart, and comparing them apart keeps
-    "Threee (Deetron Mix)" from matching "Threee (Deetron Beeetz)".
+    token_set_ratio lets a title carry extra words, which is right for
+    "Hasta Luego Trinidad (Long Version)" but would pass "Threee (Deetron
+    Remix)" for "Threee"; same_version() rejects the remix, and the duration
+    confirms the length variant when both sides have one (43% of Discogs
+    tracks don't).
     """
     if rl is not None:
         rl.wait("itunes", ITUNES_RATE_S)
@@ -153,11 +221,12 @@ def find_itunes_preview(
         preview_url = item.get("previewUrl")
         if not preview_url:
             continue
+        track_name = item.get("trackName") or ""
         score = min(
             float(fuzz.token_set_ratio(_normalized(artist), _normalized(item.get("artistName") or ""))),
-            float(fuzz.token_set_ratio(_normalized(title), _normalized(item.get("trackName") or ""))),
+            float(fuzz.token_set_ratio(_normalized(title), _normalized(track_name))),
         )
-        if score < MIN_MATCH_SCORE:
+        if score < MIN_MATCH_SCORE or not same_version(title, track_name):
             continue
         length = (item.get("trackTimeMillis") or 0) / 1000
         if duration_s and length and abs(length - duration_s) > DURATION_TOLERANCE * duration_s:
