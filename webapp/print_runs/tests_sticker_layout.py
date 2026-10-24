@@ -175,6 +175,12 @@ class WrapTextTests(SimpleTestCase):
         self.assertTrue(lines[-1].endswith("…"))
         self.assertTrue(truncated)
 
+    def test_terminates_when_the_column_is_narrower_than_one_glyph(self):
+        for max_w in (2, 0, -10):
+            lines, truncated = L.wrap_text("A Bc", max_w, "Helvetica", 10, 2)
+            self.assertEqual(len(lines), 2)
+            self.assertTrue(truncated)
+
     def test_hard_breaks_a_word_wider_than_the_line(self):
         lines, truncated = L.wrap_text("Supercalifragilistic", 30, "Helvetica", 10, 5)
         self.assertEqual("".join(lines), "Supercalifragilistic")

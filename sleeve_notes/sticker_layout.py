@@ -202,8 +202,10 @@ def wrap_text(
             continue
         if current:
             lines.append(current)
-        while not fits(word):
-            cut = len(word) - 1
+        # At least one character per line, so a column narrower than one
+        # glyph (or negative, on a tiny sticker) still terminates.
+        while word and not fits(word):
+            cut = max(1, len(word) - 1)
             while cut > 1 and not fits(word[:cut]):
                 cut -= 1
             lines.append(word[:cut])
