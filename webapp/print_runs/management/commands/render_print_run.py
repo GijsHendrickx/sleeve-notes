@@ -173,18 +173,19 @@ class Command(BaseCommand):
                 f"  {result.missing_bpm_count} tracks have an empty BPM box for handwriting."
             )
         wrapped_only = [
-            i for i in result.fallback_release_ids if i not in result.truncated_release_ids
+            i for i in result.fallback_release_ids if i not in result.lossy_release_ids
         ]
         if wrapped_only:
             self.stdout.write(
                 f"  {len(wrapped_only)} release(s) have a track title wrapped onto a "
                 "second line to stay readable."
             )
-        if result.truncated_release_ids:
-            ids = ", ".join(str(i) for i in result.truncated_release_ids)
+        if result.lossy_release_ids:
+            ids = ", ".join(str(i) for i in result.lossy_release_ids)
             self.stdout.write(
-                f"  {len(result.truncated_release_ids)} release(s) still had text cut off "
-                f"with \"…\" (Discogs ids: {ids})."
+                f"  {len(result.lossy_release_ids)} release(s) don't fully fit: text cut off "
+                f"with \"…\" or running past the sticker edge (Discogs ids: {ids}). "
+                "Try a larger sticker."
             )
 
         if run is not None:
