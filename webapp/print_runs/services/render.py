@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -210,6 +210,11 @@ class RenderResult:
     extra_stickers: int
     missing_bpm_count: int
     layout: L.LayoutConfig
+    # Discogs release ids whose sticker needed the layout fallback (a title
+    # wrapped onto a second line), and the subset that still doesn't fully
+    # fit: text cut off with "…", or the track list running past the edge.
+    fallback_release_ids: list[int] = field(default_factory=list)
+    lossy_release_ids: list[int] = field(default_factory=list)
 
 
 def render_pdf(
@@ -242,6 +247,15 @@ def render_pdf(
     c = canvas.Canvas(buffer, pagesize=A4)
     c.setTitle("Discogs DJ Stickers")
     drawer = PdfDrawer(c)
+    fallback_ids: list[int] = []
+    lossy_ids: list[int] = []
+
+    def note_fit(release: dict, fit: L.StickerFit) -> None:
+        if fit.uses_fallback and release["id"] not in fallback_ids:
+            fallback_ids.append(release["id"])
+        if not fit.lossless and release["id"] not in lossy_ids:
+            lossy_ids.append(release["id"])
+
     sticker_count = L.draw_sticker_pages(
         drawer, releases, bpm_lookup, layout,
         on_page_break=lambda _page: c.showPage(),
@@ -254,6 +268,7 @@ def render_pdf(
         show_duration=s["show_duration"],
         show_track_title=s["show_track_title"],
         show_sides=s["show_sides"],
+        on_sticker_fit=note_fit,
     )
     c.save()
     pdf_bytes = buffer.getvalue()
@@ -280,6 +295,8 @@ def render_pdf(
         extra_stickers=max(0, extra),
         missing_bpm_count=missing,
         layout=layout,
+        fallback_release_ids=fallback_ids,
+        lossy_release_ids=lossy_ids,
     )
 
 
