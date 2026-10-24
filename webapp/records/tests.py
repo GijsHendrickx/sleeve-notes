@@ -36,7 +36,7 @@ class AudioAnalysisSourceTests(SimpleTestCase):
             },
         )
 
-        self.assertEqual(result["bpm_source_labels"], ["YouTube audio analysis"])
+        self.assertEqual(result["bpm_source_labels"], ["Audio analysis"])
         self.assertEqual(result["audio_analysis"]["analysis_confidence"], 0.97)
 
     @patch.dict("os.environ", {"AUDIO_ANALYSIS_ENABLED": "false"})
@@ -211,9 +211,9 @@ class EssentiaMeasureTests(SimpleTestCase):
     @patch("sleeve_notes.audio_analysis._download_audio")
     @patch("sleeve_notes.audio_analysis.measure_bpm")
     def test_low_confidence_reading_is_not_returned_as_a_bpm(self, measure, _download, _convert):
-        from sleeve_notes.audio_analysis import youtube_audio_lookup
+        from sleeve_notes.audio_analysis import audio_lookup
 
         measure.return_value = (143.3, 0.21, 68)
         video = {"id": "abcdefghijk", "title": "Artist - Title", "score": 95.0, "origin": "discogs"}
         with patch("sleeve_notes.audio_analysis.find_discogs_video", return_value=video):
-            self.assertIsNone(youtube_audio_lookup("Artist", "Title", discogs_videos=[]))
+            self.assertIsNone(audio_lookup("Artist", "Title", discogs_videos=[]))

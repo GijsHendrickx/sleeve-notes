@@ -14,7 +14,7 @@ Voorstel op basis van afhankelijkheden, okt 2026. Kernidee: **eerst de app veili
 
 1. ~~**Hardening vóór testers**~~ — **gedaan (21 okt 2026)**: Discogs-tokens versleuteld, Sentry zonder PII, tenant-isolatietest. Wat overblijft (backups + restore-oefening, workercheck, Dependabot) staat onder "Hardening & onderhoudslast → Uitvoeringsstatus" en hoort bij het herstellen van staging in stap 2.
 2. **Staging herstellen + feedbackformulier.** Code-kant **gedaan (21 okt 2026)**: `render.yaml` deployt van `main`, de Docker-build is gerepareerd, en het feedbackformulier staat er. Wat overblijft is dashboardwerk: zie "Feedback van testers → Uitvoeringsstatus".
-3. **BPM-kwaliteit**: de genummerde lijst onder "BPM-bronnen onderzoek → Uitvoeringsstatus", items 1–5, in die volgorde.
+3. **BPM-kwaliteit**: de genummerde lijst onder "BPM-bronnen onderzoek → Uitvoeringsstatus". Items 1–3 gedaan (okt 2026). Item 4 (×1,5) komt zelden voor: 1 van 94 audio-metingen stond in een 3:2-verhouding tot de metadata, 2 in ×2. Item 5 (Rekordbox-import) hangt aan testers, niet aan code. **Volgorde na deze meting:** item 4 nu (klein, maar laag in waarde); item 5 en stap 4 (gedeelde BPM-cache) wachten op testers, want beide hebben pas waarde met meer dan één gebruiker. Stap 6 (agent-fallback) is gemeten en heeft weinig waarde: na de audioketen blijven 16 van 445 tracks (3,6%) zonder enige audiobron, vooral acapella's (die geen BPM hebben) en remixen.
 4. **Gedeelde BPM-cache** (item 7 in diezelfde lijst). Pas zinvol zodra er meer dan één gebruiker is, en pas na stap 1.
 5. **Huisstijl.** Na de eerste testerfeedback, zodat die feedback over de flow gaat en niet over kleur.
 6. **Agent-fallback voor BPM** (item 6). Als laatste, en pas nadat gemeten is hoeveel tracks er na 3 en 4 nog openstaan.
@@ -309,8 +309,29 @@ Nog te doen, in volgorde:
    - *Correctie op "Draai ze allebei":* bij "Minus" zien béíde engines er gezond uit (Essentia conf 3,13, Beat This! 69/69 stabiel) en zijn ze het oneens. 92,5 × 1,5 = 138,75, dus het is een maatsoort-dubbelzinnigheid. "Volg de gezonde zelfdiagnose" beslist dat niet. Bij twee engines wordt de regel: eens → klaar; één weigert → de ander; beide gezond maar oneens → `disputed`.
    - *Restrisico nu:* een zelfverzekerde 3:2-fout van Essentia. Tegen metadata wordt die `disputed` (items 3 en 4); bij vinyl-only tracks zonder metadata komt hij als enkele bron, zonder stip, op de sticker.
    - *Lokaal:* Essentia heeft alleen wheels voor Python 3.14 (macOS 15+, Linux x86_64). Docker en CI zijn daarom naar 3.14 gegaan. Op een Apple Silicon-Mac bouw je de image met `--platform linux/amd64`.
-2. **Audiobronnen-keten**: Discogs-video → iTunes/Deezer-preview (iTunes `previewUrl` is keyless, 30s) → Hardwax per vinylpositie → Bandcamp → YouTube-zoek. Elke bron achter fuzz ≥90 plus aparte artiestcheck.
-3. **Audio als verificatie van `single`-hits**, niet alleen bij 0/1 metadata-hits: botsing wordt `disputed`.
+2. ~~**Audiobronnen-keten**~~ — **gedaan in kleinere vorm (23 okt 2026)**: Discogs-video → **iTunes-preview** → YouTube-zoek. Deezer-preview, Hardwax en Bandcamp zijn geschrapt, op basis van een meting op de echte collectie in plaats van de benchmark van 30 tracks.
+
+   **Wie bereikt audio überhaupt?** 227 van de 445 tracks (51%) hebben 0 of 1 metadata-BPM: 97 zonder, 130 met één bron. In de benchmark was dat 10%. Op deze collectie is audio dus voor de helft van de tracks de enige tweede stem, geen randgeval.
+
+   **Dekking per bron op die 227**, met strikte match (artiest en titel elk fuzz ≥ 90, duur ±10%):
+   | bron | dekking | extra na de bronnen ervoor | eens met de ene metadata-BPM (na gate) |
+   |---|---|---|---|
+   | Discogs-video | 174 (76%) | 174 | 13/15 (steekproef); 15/15 downloads gelukt, ~3 s per stuk |
+   | iTunes-preview | 155 (68%) | **+35** | 78/94 (83%) |
+   | Deezer-preview | 122 (53%) | +0 | 69/80 (86%) |
+   | Hard Wax, per vinylpositie | 9 (3%) | +0 | – |
+   | Bandcamp | 90 (39%) | +2 | matcht verkeerde versies ("diapason-mixed", "disco-dynasty-edit"); de zoek-API geeft geen duur |
+   | geen enkele bron | 16 | – | bijna allemaal remixen, acapella's, radio-edits |
+
+   Discogs-video + iTunes dekken samen 209/227 (92%). Wat overblijft vindt alleen YouTube-zoek misschien nog (vereist `YOUTUBE_API_KEY`).
+   - *Versieregel (na de agent-review van PR #13):* fuzzy titelscores laten een remix door waarvan de titel het origineel bevat ("Droogs" zit helemaal in "Droogs (Paleman Remix)"), en 43% van de tracks heeft geen Discogs-duur om dat op te vangen. Daarom moeten alle drie de routes het eens zijn over de **productie-tags**: remix-, dub-, rework-, live- en acapella-groepen met hun naam erbij, fuzzy vergeleken, omdat namen verschillend gespeld worden ("Errick" / "Errik"). Lengte- en remaster-tags tellen niet mee, want die houden het tempo gelijk: "(Long Version)", "(Extended Mix)", "(12\" Version)", "[2011 Remaster]".
+   - *Effect, opnieuw gemeten:* Discogs-video 170 van 173 behouden. De 3 die afvallen waren fout: een acapella-video bij een dub, een "Progressive Remix" bij het origineel, en een ambigue "1979 Re-Mix". "Libera (Benjamin Fröhlich Remix)" zat eerst aan de originele "Libera"-video vast en krijgt nu de remix. Voor iTunes wordt daarnaast de songnaam zonder haakjes **symmetrisch** vergeleken (tweede review): "Freak!" van Trevor Rockcliffe matchte eerst "Freak Like This". iTunes houdt 145 van de 155; de 9 die afvallen zijn live-opnames, een Axwell-remix, afwijkende duren en "Freak Like This", plus 2 onterecht ('Mutation Mix "Skywalker"', "More, More, More, Pt.1"). **Samen nu 205/227 (90%).**
+   - *Eerste poging, verworpen:* een symmetrische titelvergelijking. Die verloor 70 van de 173 goede video-matches (YouTube-titels vol posities, catalogusnummers, "HQ HD"), en wees "Hasta Luego Trinidad (Long Version)" af, terwijl dat met 288 s tegen 287 s juist de goede opname was.
+   - *Correctie op het onderzoek:* "yt-dlp geeft HTTP 403" gold niet voor de Discogs-video's van deze collectie: 15/15 downloads lukten. Blijven volgen, want YouTube verandert dit vaker.
+   - *Bijvangst:* audio lost ook remix-collapse op. AcousticBrainz gaf alle vier de Vapourspace-remixen 134; audio meet 142,8 / 134,7 / 135,8 / 134,9.
+   - *Hardwax afgevoerd als bron:* 8 van de 116 releases, en geen enkele track die niet al door een andere bron gedekt werd. Het idee "enige route naar naamloze B-kanten" klopt op deze collectie niet: de gaten zijn remixen, geen white labels. Heroverwegen als een tester een collectie vol white labels heeft.
+   - *Juridisch grijs:* iTunes-previews zijn bedoeld om af te spelen, niet om te analyseren. Hetzelfde geldt voor Deezer-previews en YouTube. We slaan geen audio op, alleen het getal.
+3. ~~**Audio als verificatie van `single`-hits**~~ — **gedaan, als bijeffect van PR #2.** Audio draait voor tracks met 0 of 1 metadata-hit; sinds `_align_audio_bpm` weg is, wordt een botsing tussen audio en die ene bron `disputed` (geen stip).
 4. **×1,5 / ×⅔ in `_canonical_octave`** en `_octave_consensus` (Robert Hood "Minus"). Dit hoort in de consensus met een eigen confidence, **nooit** als het bijbuigen van een meting naar een andere bron. Dat deed `_align_audio_bpm` tot okt 2026. Een foute songbpm-match van 100 trok een audiometing van 67 mee (×1,5), en de sticker drukte 100 met de vertrouwensstip. Verwijderd na de eerste agent-review van PR #2.
 5. **Rekordbox/Serato/Traktor-import** en bestand-upload ("analyseer mijn rip") als gebruikerslaag; ReccoBeats kan ook een geüpload bestand analyseren (nauwkeurigheid onbekend).
 6. **Agent-fallback** voor wat overblijft: eerst programmatisch alle bronnen doorlopen, en pas als dat niets oplevert een AI-agent die de BPM echt op het web gaat opzoeken. Geopperd met N8N of vergelijkbare orchestratie.
@@ -326,7 +347,15 @@ Let op: `is_cached_release` eist nu ook `videos`, dus de eerstvolgende Discogs-s
 - **Waar draait de analyse?** Essentia in de Django-Q2-worker betekent een zwaardere dependency en trage jobs (download + decode + analyse per track). Alternatief is een aparte analyse-worker of een on-demand "analyseer deze track"-knop in plaats van collectie-breed.
 - **Welke waarde wint** bij een dispuut? Vandaag staat `audio_analysis` vooraan in `SOURCE_PRIORITY`, dus bij een botsing drukt de sticker de audiometing, zonder stip. Dat is librosa op een YouTube-upload, die ondanks fuzz ≥90 en ±10% duur een remix of live-versie kan zijn. Opgemerkt in de agent-review van PR #2; bewust nog niet veranderd, want het hoort bij item 1–3.
 - **Welke waarde wint** als essentia en een metadata-bron elkaar tegenspreken? De meting suggereert dat essentia vaker gelijk heeft dan de losse bronnen, maar dat is op n=30 gemeten, niet op de echte collectie.
-- **Hardwax-matching op catalogusnummer** is nog niet getest — hun zoekfunctie op vrije tekst is zwak, catalogusnummer uit Discogs is waarschijnlijk de betere sleutel maar dat is niet gevalideerd.
+- ~~**Hardwax-matching op catalogusnummer**~~ — **getest (okt 2026): werkt niet.** Zoeken op catalogusnummer gaf voor geen enkele release een resultaat (Hardwax noteert vaak alleen het nummer, "X 004"; reissues hebben een ander catno). Zoeken op "artiest titel" plus titelmatch vond 8/116. Zie item 2.
+
+### Efficiënter en betrouwbaarder ophalen (besproken 23 okt 2026)
+
+**Alleen het audiofragment ophalen** — De huidige implementatie downloadt de volledige audiostream en knipt daarna 120 seconden vanaf seconde 30 uit. Onderzoek gedeeltelijk downloaden via yt-dlp `--download-sections` + ffmpeg. Begin met een fragment van 30–45 seconden buiten de intro; haal bij twijfel een tweede fragment elders op en verleng alleen indien nodig. Fragmentlengte en selectie zijn hypotheses: vergelijk tegen de huidige 120 seconden met onafhankelijk gecontroleerde BPM's, meet ook werkelijk gedownloade bytes, latency en fouten. Twee fragmenten van dezelfde opname zijn geen twee onafhankelijke bronnen.
+
+**Extra onderzoek bij onzekerheid** — Audio wordt nu alleen gestart bij hoogstens één metadata-hit, ook als twee hits elkaar tegenspreken. Laat ontbrekende BPM, zwakke versiematch en conflicten bepalen of aanvullende bronnen/audio nodig zijn. Overweeg gefaseerde metadata-lookups met een stopregel bij voldoende betrouwbaar bewijs; houd hervatbaarheid en de cache-compleetheidsregel daarmee consistent.
+
+**Bronkeuze op bewijs** — Audio niet automatisch laten winnen bij een dispuut. Weeg eerst de juiste opname/versie, dan onafhankelijke overeenstemming en meetkwaliteit. Bewaar fragmentlocatie, ruwe BPM en analyseversie. Presenteer onopgeloste halve/dubbele tempo's of conflicten als controlepunt. Beoordeel bronkwaliteit tegen handmatig gecontroleerde referenties, niet uitsluitend overeenstemming met andere bronnen.
 
 ## UX proposals (from the Oct 2026 interface research)
 

@@ -102,7 +102,7 @@ SOURCE_PRIORITY = (
 )
 
 SOURCE_LABELS = {
-    "audio_analysis": "YouTube audio analysis",
+    "audio_analysis": "Audio analysis",
     "songbpm": "SongBPM",
     "reccobeats": "ReccoBeats",
     "deezer": "Deezer",
@@ -958,15 +958,15 @@ _LOOKUP_FNS = {
 
 
 def _audio_analysis_lookup(
-    artist: str, title: str, hints: dict | None,
+    artist: str, title: str, hints: dict | None, rl: "RateLimiter | None" = None,
 ) -> dict | None:
-    from sleeve_notes.audio_analysis import AudioAnalysisUnavailable, youtube_audio_lookup
+    from sleeve_notes.audio_analysis import AudioAnalysisUnavailable, audio_lookup
 
     hints = hints or {}
     try:
-        return youtube_audio_lookup(
+        return audio_lookup(
             artist, title,
-            discogs_videos=hints.get("videos"), duration_s=hints.get("duration_s"),
+            discogs_videos=hints.get("videos"), duration_s=hints.get("duration_s"), rl=rl,
         )
     except AudioAnalysisUnavailable as exc:
         raise SourceUnavailable(str(exc)) from exc
@@ -1010,7 +1010,7 @@ def cascade_all(
     bpm_hit_count = sum(1 for hit in sources.values() if hit.get("bpm"))
     if AUDIO_SOURCE not in tried and bpm_hit_count <= AUDIO_MAX_METADATA_HITS:
         try:
-            audio_hit = _audio_analysis_lookup(artist, title, hints)
+            audio_hit = _audio_analysis_lookup(artist, title, hints, rl)
         except SourceUnavailable:
             new_unavailable.append(AUDIO_SOURCE)
         except Exception as exc:

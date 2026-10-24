@@ -55,8 +55,8 @@
               {% if f.audio_analysis.url %}
                 <a href="{{ f.audio_analysis.url }}" target="_blank" rel="noopener"
                    class="link hover:underline"
-                   title="Matched video: {{ f.audio_analysis.video_title }}">
-                  {{ f.sources|default:"YouTube audio analysis" }}
+                   title="Measured from: {{ f.audio_analysis.matched_title }}">
+                  {{ f.sources|default:"Audio analysis" }}
                 </a>
                 {% if f.audio_analysis.analysis_confidence %}
                   <span class="num text-app-dim">· {{ f.audio_analysis.analysis_confidence }}</span>

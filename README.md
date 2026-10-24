@@ -163,8 +163,9 @@ BEATPORT_PASSWORD=...
 # youtube.com/results instead of resolving to a specific video.
 YOUTUBE_API_KEY=...
 
-# Optional: measure YouTube audio only when metadata returns zero or one BPM.
-# Requires ffmpeg (included in Docker; install separately for local CLI use).
+# Optional: measure the track's audio when metadata returns zero or one BPM,
+# from the release's Discogs video, else an iTunes preview, else YouTube search.
+# Needs the [audio] extra and ffmpeg (both included in Docker).
 AUDIO_ANALYSIS_ENABLED=true
 
 ```
@@ -474,9 +475,9 @@ Your overrides go too — export them first via Django admin if needed.
 | **ReccoBeats** | ✓ | ✓ | Drop-in replacement for the deprecated Spotify audio-features endpoint. Returns `key` (pitch class 0–11) and `mode` (0=minor / 1=major). Requires `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` for the name→ID step (no user OAuth). Coverage = "everything on Spotify" — limited for pre-Spotify vinyl-only releases. The Spotify track ID matched here is also persisted onto `tracks.spotify_track_id` so the web UI's listen icon can deep-link straight into Spotify. |
 | **Beatport v4** | ✓ | ✓ | Editorial BPM + key supplied by the labels themselves. Uses the public Swagger client_id; tokens stored in `kv['beatport_tokens']` (see next section). |
 | **AcousticBrainz** | ✓ | ✓ | Open dataset reached via MusicBrainz recording IDs. Frozen since 2022 but excellent for older electronic releases. |
-| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Uses YouTube Data API search with separate ≥90 artist/title matching, downloads at most 30 MB with yt-dlp, and measures a 120-second mono excerpt locally with Essentia (`RhythmExtractor2013`, multifeature; needs the `[audio]` extra). Results with fewer than 16 beats or an Essentia confidence below 1.5 (of ~5.3) are discarded. A measurement is stored as measured and never scaled towards another source, so it only earns the trust dot when it genuinely agrees. An audio-only value prints like any single-source value (digits, no dot) and is listed under **Needs your eye** in step 2. Known blind spot: a confident 3:2 misreading (Robert Hood "Minus" measures 92.5 against a real 139), which only a metadata source can contradict. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
+| **Audio analysis** | ✓ | — | Optional fallback (`AUDIO_ANALYSIS_ENABLED=true`). Finds the recording in order: the release's own Discogs video (title ≥90 plus duration), an iTunes preview (artist ≥90, song name compared symmetrically ≥90, plus duration when both sides have one), then YouTube Data API search. Every route also requires the same version words on both sides, so "Droogs" never matches "Droogs (Paleman Remix)". Downloads at most 30 MB with yt-dlp (videos) or a 30-second preview, and measures up to 120 seconds of mono audio locally with Essentia (`RhythmExtractor2013`, multifeature; needs the `[audio]` extra). Results with fewer than 16 beats or an Essentia confidence below 1.5 (of ~5.3) are discarded. A measurement is stored as measured and never scaled towards another source, so it only earns the trust dot when it genuinely agrees. An audio-only value prints like any single-source value (digits, no dot) and is listed under **Needs your eye** in step 2. Known blind spot: a confident 3:2 misreading (Robert Hood "Minus" measures 92.5 against a real 139), which only a metadata source can contradict. Runs only with zero or one metadata BPM, so it fills gaps and verifies single-source values without consuming YouTube quota for well-covered tracks. |
 
-**Validation:** every hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Plausibility window: 50 ≤ BPM ≤ 250.
+**Validation:** every metadata hit is fuzzy-matched against artist + title (rapidfuzz, min score 70). This stops a same-titled but unrelated track from being accepted by mistake. Audio analysis is stricter (≥90, plus the production-tag check above), because a wrong recording there produces a confident wrong number. Plausibility window: 50 ≤ BPM ≤ 250.
 
 **Retry behaviour:** HTTP calls use a tight `tenacity` retry (`wait_exponential(1, 5)` × 2 attempts). A flaky source costs at most ~5 s — the cascade then falls through to the other four, so one slow API can't stall the run.
 
