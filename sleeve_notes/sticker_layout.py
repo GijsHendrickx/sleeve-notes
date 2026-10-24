@@ -2,7 +2,7 @@
 
 This module owns the geometry, fonts, and ordering of every visual element
 on a sticker. The PDF renderer in ``generate_sticker_pdf.py`` and the SVG
-preview renderer in ``web/services/preview.py`` are both thin adapters
+preview renderer in ``preview.py`` are both thin adapters
 around the ``Drawer`` protocol defined here, so a layout change only ever
 needs to be made once.
 
