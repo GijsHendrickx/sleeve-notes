@@ -13,7 +13,8 @@ the SVG adapter is responsible for flipping Y.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from reportlab.lib.pagesizes import A4
@@ -51,6 +52,11 @@ SECTION_GAP = 3.0
 HEADER_H = HEADER_ARTIST_PT + 2 + HEADER_TITLE_PT + 4
 
 TRACK_FONT_CANDIDATES = (10.0, 9.0, 8.0, 7.5, 7.0, 6.5, 6.0)
+# The readability floor from roadmap.md "Stickerontwerp" punt 2. Track text
+# never goes below it; what doesn't fit at the floor takes the fallback.
+TRACK_FONT_FLOOR = TRACK_FONT_CANDIDATES[-1]
+TITLE_MAX_LINES = 2
+POS_MIN_SAMPLE = "AA1"
 MAX_SIDES_PER_STICKER = 2
 MAX_TRACKS_PER_STICKER = 8
 
@@ -175,6 +181,42 @@ def ellipsize(text: str, max_w: float, font_name: str, font_size: float) -> str:
     return (text.rstrip() + ellipsis) if text else ellipsis
 
 
+def wrap_text(
+    text: str, max_w: float, font_name: str, font_size: float, max_lines: int
+) -> tuple[list[str], bool]:
+    """Greedy word wrap into at most ``max_lines`` lines of ``max_w``.
+
+    Returns ``(lines, truncated)``. Only when the text needs more than
+    ``max_lines`` does the last line end in "…", and ``truncated`` is then
+    True, so a caller can never lose text without knowing it.
+    """
+    def fits(t: str) -> bool:
+        return stringWidth(t, font_name, font_size) <= max_w
+
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}" if current else word
+        if fits(candidate):
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        while not fits(word):
+            cut = len(word) - 1
+            while cut > 1 and not fits(word[:cut]):
+                cut -= 1
+            lines.append(word[:cut])
+            word = word[cut:]
+        current = word
+    if current:
+        lines.append(current)
+    if len(lines) <= max_lines:
+        return lines or [""], False
+    rest = " ".join(lines[max_lines - 1:])
+    return lines[: max_lines - 1] + [ellipsize(rest, max_w, font_name, font_size)], True
+
+
 def group_tracks_by_side(tracks: list[dict]) -> dict[str, list[dict]]:
     sides: dict[str, list[dict]] = {}
     for t in tracks:
@@ -197,15 +239,22 @@ def label_for_track(t: dict, compilation: bool, release_artist: str) -> str:
 
 
 def column_widths(
-    track_font: float, inner_w: float
+    track_font: float, inner_w: float, positions: list[str] | tuple[str, ...] = ()
 ) -> tuple[float, float, float, float, float]:
-    """Return (pos, middle, duration, key, bpm) column widths."""
+    """Return (pos, middle, duration, key, bpm) column widths.
+
+    The position column is at least as wide as "AA1" (so ordinary stickers
+    keep their alignment) and grows to the widest position on the sticker:
+    vinyl uses AAA1 and longer, and a fixed width drew those over the title.
+    """
     bpm_size = bpm_font_for(track_font)
     bpm_digits_w = stringWidth("888", "Helvetica-Bold", bpm_size)
     bpm_col_w = bpm_digits_w + bpm_size * 0.6 + 2
     key_col_w = stringWidth("12B", "Helvetica-Bold", track_font) + 4
     dur_col_w = stringWidth("88:88", "Helvetica", track_font) + 4
-    pos_col_w = stringWidth("AA1", "Courier-Bold", track_font) + 4
+    pos_col_w = max(
+        stringWidth(p, "Courier-Bold", track_font) for p in (POS_MIN_SAMPLE, *positions)
+    ) + 4
     middle_w = inner_w - pos_col_w - dur_col_w - key_col_w - bpm_col_w - 4
     return pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w
 
@@ -232,44 +281,139 @@ def split_release_into_stickers(release: dict) -> list[dict[str, list[dict]]]:
     return stickers or [{}]
 
 
-def fit_track_font(
+@dataclass(frozen=True)
+class TrackLines:
+    """How one track's title is set: the lines drawn, and whether text was lost."""
+    position: str
+    lines: tuple[str, ...]
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class TrackFit:
+    """The track-block layout chosen for one sticker.
+
+    ``wrapped`` and ``truncated`` hold track positions. A wrapped title is
+    the fallback and loses nothing; a truncated one ends in "…" and is the
+    only way text is ever dropped. ``overflows`` means even the floor
+    size, unwrapped, is taller than the sticker: a small stock such as
+    3 x 7 with a long tracklist.
+    """
+    font: float
+    pos_col_w: float
+    middle_w: float
+    tracks: tuple[TrackLines, ...] = ()
+    overflows: bool = False
+
+    @property
+    def wrapped(self) -> tuple[str, ...]:
+        return tuple(t.position for t in self.tracks if len(t.lines) > 1)
+
+    @property
+    def truncated(self) -> tuple[str, ...]:
+        return tuple(t.position for t in self.tracks if t.truncated)
+
+
+def _track_block_h(size: float, side_count: int, line_count: int) -> float:
+    return (
+        side_count * (SIDE_LABEL_PT + 3)
+        + max(side_count - 1, 0) * SECTION_GAP
+        + line_count * size * LINE_GAP
+    )
+
+
+def fit_tracks(
     sides_map: dict[str, list[dict]],
     compilation: bool,
     release_artist: str,
     inner_w: float,
     inner_h: float,
     show_sides: bool = True,
-) -> tuple[float, bool]:
+    show_track_title: bool = True,
+) -> TrackFit:
+    """Pick the track font and set every title, by fixed rules.
+
+    1. The largest size in ``TRACK_FONT_CANDIDATES`` at which every title
+       fits on one line and the block fits vertically.
+    2. Otherwise the floor size, and titles that are still too wide wrap
+       onto a second line, in track order, while vertical room lasts.
+    3. Only what doesn't fit after that ends in "…", and is reported in
+       ``truncated``.
+
+    Wrapping happens at the floor, not at a larger size, so a longer title
+    never gets bigger text than a shorter one: the result is monotone and
+    the same rule holds on every sticker.
+    """
+    ordered = [t for side in sorted(sides_map) for t in sides_map[side]]
     side_count = len(sides_map) if show_sides else 0
-    total = sum(len(v) for v in sides_map.values())
-    if total == 0:
-        return TRACK_FONT_CANDIDATES[0], False
+    positions = [t.get("position", "") or "" for t in ordered] if show_sides else []
+    labels = [label_for_track(t, compilation, release_artist) for t in ordered]
+    if not show_track_title:
+        labels = ["" for _ in labels]
 
-    labels = [
-        label_for_track(t, compilation, release_artist)
-        for tracks in sides_map.values()
-        for t in tracks
-    ]
-
-    last_fit_vertically = TRACK_FONT_CANDIDATES[-1]
-    for size in TRACK_FONT_CANDIDATES:
-        line_h = size * LINE_GAP
-        content_h = (
-            side_count * (SIDE_LABEL_PT + 3)
-            + max(side_count - 1, 0) * SECTION_GAP
-            + total * line_h
-        )
-        if content_h > inner_h:
-            continue
-        last_fit_vertically = size
-        pos_col_w, middle_w, _, _, _ = column_widths(size, inner_w)
+    def columns(size: float) -> tuple[float, float]:
+        pos_col_w, middle_w, _, _, _ = column_widths(size, inner_w, positions)
         if not show_sides:
-            middle_w += pos_col_w
-        max_w = max((stringWidth(lbl, "Helvetica", size) for lbl in labels), default=0)
-        if max_w <= middle_w:
-            return size, False
+            return 0.0, middle_w + pos_col_w
+        return pos_col_w, middle_w
 
-    return last_fit_vertically, True
+    def single_lines() -> tuple[TrackLines, ...]:
+        return tuple(
+            TrackLines(t.get("position", "") or "", (lbl,)) for t, lbl in zip(ordered, labels)
+        )
+
+    if not ordered:
+        pos_col_w, middle_w = columns(TRACK_FONT_CANDIDATES[0])
+        return TrackFit(TRACK_FONT_CANDIDATES[0], pos_col_w, middle_w)
+
+    for size in TRACK_FONT_CANDIDATES:
+        if _track_block_h(size, side_count, len(ordered)) > inner_h:
+            continue
+        pos_col_w, middle_w = columns(size)
+        if all(stringWidth(lbl, "Helvetica", size) <= middle_w for lbl in labels):
+            return TrackFit(size, pos_col_w, middle_w, single_lines())
+
+    size = TRACK_FONT_FLOOR
+    pos_col_w, middle_w = columns(size)
+    base_h = _track_block_h(size, side_count, len(ordered))
+    overflows = base_h > inner_h
+    # Small epsilon: the block height is a sum of floats and an exact fit
+    # must not lose its last spare line to rounding.
+    spare_lines = max(0, int((inner_h - base_h) / (size * LINE_GAP) + 1e-6))
+    tracks: list[TrackLines] = []
+    for t, lbl in zip(ordered, labels):
+        pos = t.get("position", "") or ""
+        max_lines = min(TITLE_MAX_LINES, 1 + spare_lines)
+        lines, truncated = wrap_text(lbl, middle_w, "Helvetica", size, max_lines)
+        spare_lines -= len(lines) - 1
+        tracks.append(TrackLines(pos, tuple(lines), truncated))
+    return TrackFit(size, pos_col_w, middle_w, tuple(tracks), overflows)
+
+
+@dataclass(frozen=True)
+class StickerFit:
+    """What ``draw_sticker`` had to do to make one sticker fit.
+
+    Returned so callers can surface stickers that run on the fallback
+    (step 3's "platen die op de terugval draaien") without re-deriving
+    the layout. ``lossless`` is the readability promise: nothing was cut.
+    """
+    tracks: TrackFit | None
+    header_truncated: tuple[str, ...] = field(default=())
+
+    @property
+    def uses_fallback(self) -> bool:
+        return bool(
+            self.header_truncated
+            or (self.tracks and (self.tracks.wrapped or self.tracks.truncated or self.tracks.overflows))
+        )
+
+    @property
+    def lossless(self) -> bool:
+        return not (
+            self.header_truncated
+            or (self.tracks and (self.tracks.truncated or self.tracks.overflows))
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +492,7 @@ def draw_sticker(
     show_duration: bool = True,
     show_track_title: bool = True,
     show_sides: bool = True,
-) -> None:
+) -> StickerFit:
     draw_sticker_border(drawer, x, y, layout)
 
     inner_x = x + PAD_X
@@ -397,8 +541,17 @@ def draw_sticker(
         )
         title_text_w = header_inner_w - rpm_bot_w - 4
 
-    artist_line = ellipsize(header_artist or "V/A", artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
+    artist_full = header_artist or "V/A"
+    artist_line = ellipsize(artist_full, artist_text_w, "Helvetica-Bold", HEADER_ARTIST_PT)
     title_line = ellipsize(title_text, title_text_w, "Helvetica", HEADER_TITLE_PT)
+    header_truncated = tuple(
+        name
+        for name, shown, full, visible in (
+            ("artist", artist_line, artist_full, show_artist),
+            ("title", title_line, title_text, show_title),
+        )
+        if visible and shown != full
+    )
 
     if show_artist:
         drawer.text(
@@ -412,19 +565,20 @@ def draw_sticker(
         )
 
     if not side_labels:
-        return
+        return StickerFit(None, header_truncated)
 
     compilation = bool(release.get("compilation"))
     release_artist = release.get("artist") or ""
-    track_font, must_ellipsize = fit_track_font(
-        sides_map, compilation, release_artist, inner_w, inner_h, show_sides=show_sides
+    fit = fit_tracks(
+        sides_map, compilation, release_artist, inner_w, inner_h,
+        show_sides=show_sides, show_track_title=show_track_title,
     )
+    track_font = fit.font
     bpm_size = bpm_font_for(track_font)
     line_h = track_font * LINE_GAP
-    pos_col_w, middle_w, dur_col_w, key_col_w, bpm_col_w = column_widths(track_font, inner_w)
-    if not show_sides:
-        middle_w += pos_col_w
-        pos_col_w = 0
+    _, _, dur_col_w, key_col_w, bpm_col_w = column_widths(track_font, inner_w)
+    pos_col_w = fit.pos_col_w
+    set_titles = iter(fit.tracks)
 
     bpm_right = inner_x + inner_w
     key_right = bpm_right - bpm_col_w
@@ -445,9 +599,7 @@ def draw_sticker(
         for t in tracks:
             pos = t.get("position", "")
             duration = t.get("duration", "") or ""
-            label = label_for_track(t, compilation, release_artist)
-            if stringWidth(label, "Helvetica", track_font) > middle_w or must_ellipsize:
-                label = ellipsize(label, middle_w, "Helvetica", track_font)
+            title_lines = next(set_titles).lines
 
             bpm_info = bpm_tracks_by_pos.get(pos, {}) or {}
             bpm = bpm_info.get("bpm")
@@ -462,10 +614,11 @@ def draw_sticker(
                     font="Courier-Bold", size=track_font, color=BLACK,
                 )
             if show_track_title:
-                drawer.text(
-                    inner_x + pos_col_w, baseline, label,
-                    font="Helvetica", size=track_font, color=BLACK,
-                )
+                for i, line in enumerate(title_lines):
+                    drawer.text(
+                        inner_x + pos_col_w, baseline - i * line_h, line,
+                        font="Helvetica", size=track_font, color=BLACK,
+                    )
             if show_duration:
                 drawer.text(
                     dur_right - 4, baseline, duration,
@@ -499,10 +652,12 @@ def draw_sticker(
                         stroke=GREY, stroke_width=0.4,
                     )
 
-            cursor_y -= line_h
+            cursor_y -= line_h * len(title_lines)
 
         if show_sides and idx != len(side_labels) - 1:
             cursor_y -= SECTION_GAP
+
+    return StickerFit(fit, header_truncated)
 
 
 def draw_sticker_pages(
@@ -520,12 +675,15 @@ def draw_sticker_pages(
     show_duration: bool = True,
     show_track_title: bool = True,
     show_sides: bool = True,
+    on_sticker_fit: Callable[[dict, StickerFit], None] | None = None,
 ) -> int:
     """Draw all releases across as many pages as needed.
 
     ``on_page_break`` is invoked between pages with the page number that
     just finished (1-based). PDF adapter calls ``c.showPage()``; SVG
     adapter would typically only render one page anyway.
+    ``on_sticker_fit`` receives each release with the ``StickerFit`` of
+    every sticker drawn for it.
     """
     origins = sticker_origins(layout)
     slot = 0
@@ -538,7 +696,7 @@ def draw_sticker_pages(
             x, y = origins[slot]
             if not layout.tile_mode:
                 draw_crop_marks(drawer, x, y, layout)
-            draw_sticker(
+            fit = draw_sticker(
                 drawer, x, y, release, sides_map, bpm_tracks, layout, len(stickers),
                 qr=qr,
                 show_artist=show_artist,
@@ -550,6 +708,8 @@ def draw_sticker_pages(
                 show_track_title=show_track_title,
                 show_sides=show_sides,
             )
+            if on_sticker_fit is not None:
+                on_sticker_fit(release, fit)
             slot += 1
             total_stickers += 1
             if slot >= len(origins):

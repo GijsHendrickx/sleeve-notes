@@ -172,6 +172,20 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"  {result.missing_bpm_count} tracks have an empty BPM box for handwriting."
             )
+        wrapped_only = [
+            i for i in result.fallback_release_ids if i not in result.truncated_release_ids
+        ]
+        if wrapped_only:
+            self.stdout.write(
+                f"  {len(wrapped_only)} release(s) have a track title wrapped onto a "
+                "second line to stay readable."
+            )
+        if result.truncated_release_ids:
+            ids = ", ".join(str(i) for i in result.truncated_release_ids)
+            self.stdout.write(
+                f"  {len(result.truncated_release_ids)} release(s) still had text cut off "
+                f"with \"…\" (Discogs ids: {ids})."
+            )
 
         if run is not None:
             run.pdf_hash = result.pdf_hash
