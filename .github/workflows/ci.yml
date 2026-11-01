@@ -24,7 +24,7 @@ jobs:
       DJANGO_SECRET_KEY: ci-only-not-secret
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           # Matches the Dockerfile, so CI tests what Render runs. Essentia only
           # ships wheels for 3.14.
